@@ -1,5 +1,7 @@
 use crate::models::WindowsEventEntry;
+#[cfg(windows)]
 use windows_sys::Win32::Foundation::{ERROR_INSUFFICIENT_BUFFER, ERROR_NO_MORE_ITEMS, GetLastError};
+#[cfg(windows)]
 use windows_sys::Win32::System::EventLog::{
     EvtClose, EvtNext, EvtQuery, EvtRender, EvtQueryChannelPath, EvtQueryReverseDirection,
     EvtRenderEventXml,
@@ -69,8 +71,8 @@ fn message_from_xml(xml: &str) -> String {
     let joined = parts.join(" | ");
     if joined.is_empty() {
         "No event data rendered (run elevated for full event content)".to_string()
-    } else if joined.len() > 500 {
-        joined[..500].to_string()
+    } else if joined.chars().count() > 500 {
+        joined.chars().take(500).collect()
     } else {
         joined
     }
@@ -78,6 +80,7 @@ fn message_from_xml(xml: &str) -> String {
 
 /// Queries real Windows Event Log (System + Security, last 7 days) via EvtQuery.
 /// Returns an empty vec on any failure — never fabricates events.
+#[cfg(windows)]
 pub fn get_windows_event_logs(limit: usize) -> Vec<WindowsEventEntry> {
     const QUERY_XML: &str = r#"<QueryList>
   <Query Id="0" Path="System">
@@ -210,4 +213,156 @@ pub fn get_windows_event_logs(limit: usize) -> Vec<WindowsEventEntry> {
 
     entries.truncate(limit);
     entries
+}
+
+#[cfg(not(windows))]
+pub fn get_windows_event_logs(limit: usize) -> Vec<WindowsEventEntry> {
+    if limit == 0 { return Vec::new(); }
+    match collect_journal_logs(limit) {
+        Ok(entries) if !entries.is_empty() => entries,
+        Ok(_) => vec![collection_status("NOTICE", "No journal entries were returned; journal visibility may be restricted.")],
+        Err(error) => {
+            tracing::warn!(%error, "Linux journal collection unavailable");
+            vec![collection_status("WARNING", &error)]
+        }
+    }
+}
+
+/// The compatibility API represents collection diagnostics explicitly, rather
+/// than disguising them as kernel events. event_id=0 is not a Windows event ID.
+#[cfg(not(windows))]
+fn collection_status(level: &str, message: &str) -> WindowsEventEntry {
+    WindowsEventEntry {
+        timestamp: chrono::Utc::now().to_rfc3339(),
+        provider: "NET0ZE log collector".into(), event_id: 0,
+        level: level.into(), message: message.into(), channel: "collection-status".into(),
+    }
+}
+
+#[cfg(not(windows))]
+fn collect_journal_logs(limit: usize) -> Result<Vec<WindowsEventEntry>, String> {
+    let mut command = std::process::Command::new("journalctl");
+    command.args(["--no-pager", "--output=json", "--lines"])
+        .arg(limit.min(1000).to_string()).env("SYSTEMD_COLORS", "0");
+    let output = bounded_output(&mut command, std::time::Duration::from_secs(3))?;
+    if !output.status.success() {
+        return Err(format!("journalctl exited with {}: {}", output.status,
+            String::from_utf8_lossy(&output.stderr).trim()));
+    }
+    let text = String::from_utf8(output.stdout).map_err(|_| "journalctl returned invalid UTF-8".to_string())?;
+    let mut entries = Vec::new();
+    for line in text.lines().rev().filter(|line| !line.trim().is_empty()) {
+        entries.push(parse_journal_entry(line).ok_or_else(|| "journalctl returned an unsupported or malformed record".to_string())?);
+    }
+    if !output.stderr.is_empty() {
+        entries.insert(0, collection_status("WARNING", &format!("journalctl diagnostic: {}", String::from_utf8_lossy(&output.stderr).trim())));
+    }
+    entries.truncate(limit.min(1000));
+    Ok(entries)
+}
+
+/// Concurrent bounded pipe readers prevent pipe deadlocks; deadline includes
+/// process execution and pipe draining. The child is killed/reaped on failure.
+#[cfg(not(windows))]
+fn bounded_output(command: &mut std::process::Command, timeout: std::time::Duration) -> Result<std::process::Output, String> {
+    use std::{io::Read, process::Stdio, sync::mpsc, time::Instant};
+    let mut child = command.stdin(Stdio::null()).stdout(Stdio::piped()).stderr(Stdio::piped())
+        .spawn().map_err(|e| format!("Cannot start journalctl: {e}"))?;
+    let (sender, receiver) = mpsc::channel();
+    let pipes: Vec<(bool, Box<dyn Read + Send>, u64)> = vec![
+        (true, Box::new(child.stdout.take().unwrap()), 8 * 1024 * 1024),
+        (false, Box::new(child.stderr.take().unwrap()), 16 * 1024),
+    ];
+    for (stdout, pipe, cap) in pipes {
+        let sender = sender.clone();
+        std::thread::spawn(move || {
+            let mut data = Vec::new();
+            let result = pipe.take(cap + 1).read_to_end(&mut data)
+                .map_err(|e| e.to_string()).and_then(|_| {
+                    if data.len() as u64 > cap { Err("journalctl output exceeded collection limit".into()) } else { Ok(data) }
+                });
+            let _ = sender.send((stdout, result));
+        });
+    }
+    drop(sender);
+    let deadline = Instant::now() + timeout;
+    let result = (|| {
+        let mut stdout = None;
+        let mut stderr = None;
+        loop {
+            while let Ok((is_stdout, data)) = receiver.try_recv() {
+                if is_stdout { stdout = Some(data?); } else { stderr = Some(data?); }
+            }
+            if let Some(status) = child.try_wait().map_err(|e| e.to_string())? {
+                if stdout.is_some() && stderr.is_some() {
+                    return Ok(std::process::Output { status, stdout: stdout.take().unwrap(), stderr: stderr.take().unwrap() });
+                }
+            }
+            if Instant::now() >= deadline { return Err("journalctl collection timed out".into()); }
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+    })();
+    if result.is_err() { let _ = child.kill(); let _ = child.wait(); }
+    result
+}
+
+#[cfg(not(windows))]
+fn parse_journal_entry(line: &str) -> Option<WindowsEventEntry> {
+    let record: serde_json::Value = serde_json::from_str(line).ok()?;
+    let micros = record["__REALTIME_TIMESTAMP"].as_str()?.parse::<i64>().ok()?;
+    Some(WindowsEventEntry {
+        timestamp: chrono::DateTime::from_timestamp_micros(micros)?.to_rfc3339(),
+        provider: record["SYSLOG_IDENTIFIER"].as_str().or(record["_COMM"].as_str()).unwrap_or("journal").to_string(),
+        event_id: 0,
+        level: match record["PRIORITY"].as_str() {
+            Some("0" | "1" | "2") => "CRITICAL", Some("3") => "ERROR", Some("4") => "WARNING",
+            Some("5") => "NOTICE", Some("6") => "INFO", Some("7") => "DEBUG", _ => "UNKNOWN",
+        }.to_string(),
+        message: journal_message(&record["MESSAGE"] )?,
+        channel: record["_SYSTEMD_UNIT"].as_str().unwrap_or("journal").to_string(),
+    })
+}
+
+#[cfg(not(windows))]
+fn journal_message(value: &serde_json::Value) -> Option<String> {
+    if let Some(text) = value.as_str() { return Some(text.to_string()); }
+    // journald JSON uses byte arrays for non-printable/binary values.
+    let bytes: Option<Vec<u8>> = value.as_array()?.iter()
+        .map(|v| v.as_u64().and_then(|n| u8::try_from(n).ok())).collect();
+    Some(String::from_utf8_lossy(&bytes?).into_owned())
+}
+
+#[cfg(all(test, not(windows)))]
+mod journal_tests {
+    #[test]
+    fn collector_times_out_and_reports_failures_explicitly() {
+        let start = std::time::Instant::now();
+        let result = super::bounded_output(std::process::Command::new("sleep").arg("5"), std::time::Duration::from_millis(50));
+        assert!(result.unwrap_err().contains("timed out"));
+        assert!(start.elapsed() < std::time::Duration::from_secs(2));
+        let status = super::collection_status("WARNING", "journal unavailable");
+        assert_eq!(status.channel, "collection-status");
+        assert_eq!(status.provider, "NET0ZE log collector");
+    }
+    #[test]
+    fn collector_bounds_output_and_preserves_exit_status() {
+        let result = super::bounded_output(&mut std::process::Command::new("false"), std::time::Duration::from_secs(1)).unwrap();
+        assert!(!result.status.success());
+        let result = super::bounded_output(&mut std::process::Command::new("yes"), std::time::Duration::from_secs(2));
+        assert!(result.unwrap_err().contains("exceeded collection limit"));
+    }
+    #[test]
+    fn journal_binary_message_and_unknown_priority_are_preserved() {
+        let event = super::parse_journal_entry(r#"{"__REALTIME_TIMESTAMP":"1728000000000000","MESSAGE":[65,0,66]}"#).unwrap();
+        assert_eq!(event.message, "A\0B");
+        assert_eq!(event.level, "UNKNOWN");
+        assert!(super::parse_journal_entry(r#"{"MESSAGE":"missing timestamp"}"#).is_none());
+    }
+    #[test]
+    fn structured_journal_preserves_severity_and_message() {
+        let event = super::parse_journal_entry(r#"{"__REALTIME_TIMESTAMP":"1728000000000000","PRIORITY":"3","SYSLOG_IDENTIFIER":"fixture","MESSAGE":"multi word\nmessage"}"#).unwrap();
+        assert_eq!(event.level, "ERROR");
+        assert_eq!(event.message, "multi word\nmessage");
+        assert!(super::parse_journal_entry("-- No entries --").is_none());
+    }
 }

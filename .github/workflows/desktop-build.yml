@@ -1,0 +1,60 @@
+name: Windows and Linux desktop builds
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main, master]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  desktop:
+    name: NET0ZE ${{ matrix.platform }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+            platform: windows
+          - os: ubuntu-22.04
+            platform: linux
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Linux native dependencies
+        if: matrix.platform == 'linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev build-essential libssl-dev libayatana-appindicator3-dev librsvg2-dev patchelf libpcap-dev
+      - name: Windows Npcap SDK
+        if: matrix.platform == 'windows'
+        shell: pwsh
+        run: |
+          Invoke-WebRequest https://npcap.com/dist/npcap-sdk-1.13.zip -OutFile "$env:RUNNER_TEMP/npcap-sdk.zip"
+          Expand-Archive "$env:RUNNER_TEMP/npcap-sdk.zip" -DestinationPath "$env:RUNNER_TEMP/npcap-sdk"
+          $lib = Get-ChildItem "$env:RUNNER_TEMP/npcap-sdk" -Recurse -Filter wpcap.lib | Where-Object { $_.Directory.Name -eq 'x64' } | Select-Object -First 1
+          if (-not $lib) { throw 'Npcap x64 import library missing' }
+          "LIBPCAP_LIBDIR=$($lib.Directory.FullName)" >> $env:GITHUB_ENV
+      - run: npm ci
+      - run: npm run test:release
+      - run: node --test scripts/ipc-contract.test.mjs
+      - run: npm run test:geo
+      - name: Native Linux unit tests
+        if: matrix.platform == 'linux'
+        env:
+          XDG_DATA_HOME: ${{ runner.temp }}/netoze-test-data
+        run: cargo test --manifest-path src-tauri/Cargo.toml --lib -- --test-threads=1
+      - name: Build native desktop installers
+        run: npm run dist:${{ matrix.platform }}
+      - uses: actions/upload-artifact@v4
+        with:
+          name: NET0ZE-${{ matrix.platform }}-x64
+          path: releases/${{ matrix.platform }}/
+          if-no-files-found: error

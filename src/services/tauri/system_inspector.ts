@@ -81,11 +81,11 @@ export async function getHostIdentity(): Promise<HostIdentity> {
     }
   }
   return {
-    hostname: 'DESKTOP-NET0ZE',
-    os_family: 'windows',
-    os_version: 'Windows 11 x64',
-    architecture: 'x86_64',
-    app_version: '2.0.0',
+    hostname: 'Unavailable',
+    os_family: 'unknown',
+    os_version: 'Native desktop required',
+    architecture: 'Browser sandbox',
+    app_version: 'unknown',
   };
 }
 

@@ -60,6 +60,7 @@ export async function getDetailedNetworkInterfaces(): Promise<DetailedAdapterInf
       return await invoke<DetailedAdapterInfo[]>('get_detailed_network_interfaces');
     } catch (err) {
       console.warn('Failed to invoke native get_detailed_network_interfaces:', err);
+      throw new Error(String(err));
     }
   }
 
@@ -76,6 +77,7 @@ export async function getActiveTcpConnections(): Promise<TcpConnectionEntry[]> {
       return await invoke<TcpConnectionEntry[]>('get_active_tcp_connections');
     } catch (err) {
       console.warn('Failed to invoke native get_active_tcp_connections:', err);
+      throw new Error(String(err));
     }
   }
 

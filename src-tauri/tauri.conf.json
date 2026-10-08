@@ -4,6 +4,8 @@
   "version": "2.0.0",
   "identifier": "io.netoze.desktop",
   "build": {
+    "beforeDevCommand": "npm run dev",
+    "beforeBuildCommand": "npm run build",
     "frontendDist": "../dist",
     "devUrl": "http://127.0.0.1:5173"
   },
@@ -17,7 +19,8 @@
         "fullscreen": false,
         "decorations": true,
         "transparent": false,
-        "additionalBrowserArgs": "--remote-debugging-port=9222"
+        "theme": "Dark",
+        "backgroundColor": "#050505"
       }
     ],
     "security": {
@@ -30,7 +33,7 @@
     "icon": ["icons/32x32.png", "icons/128x128.png", "icons/icon.ico"],
     "publisher": "NET0ZE Security Team",
     "shortDescription": "NET0ZE Desktop NTA & IDS Platform",
-    "longDescription": "Real-time Network Traffic Analysis, TLS JA4 Fingerprinting, Rule Evaluation, Attack Graph, and Forensic Workbench for Windows.",
+    "longDescription": "Real-time Network Traffic Analysis, TLS JA4 Fingerprinting, Rule Evaluation, Attack Graph, and Forensic Workbench for Windows and Linux.",
     "resources": {
       "resources/WebView2Loader.dll": "WebView2Loader.dll"
     },

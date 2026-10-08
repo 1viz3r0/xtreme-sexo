@@ -7,7 +7,6 @@ use tauri::Emitter;
 const CONNECTIVITY_ENDPOINTS: &[(&str, &str)] = &[
     ("generate_204 (gstatic)", "https://www.gstatic.com/generate_204"),
     ("connectivitycheck (google)", "https://connectivitycheck.gstatic.com/generate_204"),
-    ("msftconnecttest", "http://www.msftconnecttest.com/connecttest.txt"),
 ];
 
 pub struct ConnectivityState {
@@ -88,7 +87,7 @@ pub async fn probe() -> (bool, String, u64, String) {
         let Ok(client) = client else { continue };
         let started = Instant::now();
         match client.get(*url).send().await {
-            Ok(resp) if resp.status().is_success() => {
+            Ok(resp) if resp.status() == reqwest::StatusCode::NO_CONTENT => {
                 let latency_ms = started.elapsed().as_millis() as u64;
                 return (
                     true,

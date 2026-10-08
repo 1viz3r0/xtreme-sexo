@@ -60,6 +60,14 @@ pub struct PortScannerState {
     pub last_scan_target: Arc<Mutex<Option<String>>>,
 }
 
+fn bounded_extra_ports(extra_ports: &[u16]) -> Vec<u16> {
+    let mut ports = Vec::with_capacity(extra_ports.len().min(64));
+    for port in extra_ports.iter().take(64) {
+        if port != &0 && !ports.contains(port) { ports.push(*port); }
+    }
+    ports
+}
+
 impl PortScannerState {
     pub fn new() -> Self {
         Self {
@@ -76,30 +84,29 @@ impl PortScannerState {
     /// Synchronous low-volume TCP connect scan of common ports for one host.
     /// Skips private-network scanning unless the host is in a private range.
     pub fn scan(&self, ip: &str, extra_ports: &[u16]) -> Vec<PortScanEntry> {
-        if self.is_running() {
+        if self.running.compare_exchange(false, true, Ordering::SeqCst, Ordering::SeqCst).is_err() {
             return vec![];
         }
-        self.running.store(true, Ordering::SeqCst);
         *self.last_scan_target.lock().unwrap() = Some(ip.to_string());
 
         let now = now_ms();
         let mut results: Vec<PortScanEntry> = Vec::new();
-        let mut ports: Vec<u16> = COMMON_PORTS.to_vec();
-        for p in extra_ports {
-            if p != &0 && !ports.contains(p) {
-                ports.push(*p);
-            }
-        }
+        // Keep the native service bounded even when called outside the IPC
+        // command (for example by a future internal caller). Do not build an
+        // unbounded de-duplicated vector before applying the scan limit.
+        let ports = if extra_ports.is_empty() { COMMON_PORTS.to_vec() } else { bounded_extra_ports(extra_ports) };
 
-        for port in ports {
+        for port in ports.into_iter().take(64) {
             let addr = (ip, port).to_socket_addrs().map(|mut it| it.next());
             let Ok(Some(sock_addr)) = addr else { continue };
             let started = std::time::Instant::now();
-            let connected = TcpStream::connect_timeout(&sock_addr, Duration::from_millis(600))
-                .map(|_| true)
-                .unwrap_or(false);
+            let connected = TcpStream::connect_timeout(&sock_addr, Duration::from_millis(600));
             let _ = started;
-            let state = if connected { "OPEN" } else { "CLOSED" };
+            let state = match connected {
+                Ok(_) => "OPEN",
+                Err(error) if error.kind() == std::io::ErrorKind::ConnectionRefused => "CLOSED",
+                Err(_) => "UNKNOWN",
+            };
             results.push(PortScanEntry {
                 ip: ip.to_string(),
                 port,
@@ -140,5 +147,19 @@ impl PortScannerState {
                 v6.is_loopback() || (seg0 & 0xfe00) == 0xfc00 || (seg0 & 0xffc0) == 0xfe80
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn extra_port_requests_are_bounded_before_deduplication() {
+        let requested: Vec<u16> = (1..=u16::MAX).collect();
+        let ports = bounded_extra_ports(&requested);
+        assert_eq!(ports.len(), 64);
+        assert_eq!(ports[0], 1);
+        assert_eq!(ports[63], 64);
     }
 }

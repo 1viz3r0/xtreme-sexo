@@ -23,5 +23,5 @@
     "noFallthroughCasesInSwitch": true
   },
   "include": ["src"],
-  "exclude": ["src/lib/countryIndex.test.ts", "src/lib/geo.test.ts"]
+  "exclude": ["src/**/*.test.ts"]
 }

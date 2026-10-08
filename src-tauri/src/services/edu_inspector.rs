@@ -80,12 +80,8 @@ pub fn get_field_explanation(field_id: &str, current_value: &str) -> EduExplanat
             short_description: "A 36-character human-readable fingerprint representing TLS ClientHello features.".to_string(),
             detailed_explanation: "JA4 creates a deterministic fingerprint of TLS client implementations by inspecting ClientHello parameters (protocol, TLS version, SNI indicator, cipher count, extension count, ALPN, cipher hash, and extension hash). GREASE values are filtered out to ensure consistency.".to_string(),
             current_value: clean_val.clone(),
-            interpretation: if clean_val.contains("8daaf6152771") {
-                "JA4 fingerprint matches configured threat intelligence feed.".to_string()
-            } else {
-                format!("Observed TLS ClientHello fingerprint: {}", clean_val)
-            },
-            status_level: if clean_val.contains("8daaf6152771") { "SUSPICIOUS".to_string() } else { "OBSERVED".to_string() },
+            interpretation: format!("Provided TLS ClientHello fingerprint: {}. Feed-match evidence is not supplied to this explanation.", clean_val),
+            status_level: "OBSERVED".to_string(),
             evidence: vec![format!("JA4 fingerprint: {}", clean_val)],
             related_entities: vec!["tls_version".to_string(), "sni".to_string(), "alpn".to_string()],
             analyst_next_steps: vec![
@@ -165,6 +161,7 @@ mod tests {
     #[test]
     fn test_ja4_explanation() {
         let exp = get_field_explanation("ja4", "t13d8daaf6152771_a1b2_c3d4");
-        assert_eq!(exp.status_level, "SUSPICIOUS");
+        assert_eq!(exp.status_level, "OBSERVED");
+        assert!(!exp.interpretation.contains("matches configured"));
     }
 }

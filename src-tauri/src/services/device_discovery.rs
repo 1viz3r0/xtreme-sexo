@@ -25,14 +25,43 @@ pub fn parse_arp_line(line: &str) -> Option<(String, String)> {
     if ip.parse::<IpAddr>().is_err() {
         return None;
     }
-    let mac = mac.to_lowercase();
-    if mac == "ff-ff-ff-ff-ff-ff" || mac == "00-00-00-00-00-00" {
-        return None;
-    }
-    let mac = mac.replace('-', ":");
+    let mac = normalize_mac(mac)?;
     Some((ip.to_string(), mac))
 }
 
+fn normalize_mac(mac: &str) -> Option<String> {
+    let mac = mac.to_lowercase().replace('-', ":");
+    let octets: Vec<_> = mac.split(':').collect();
+    if octets.len() != 6 || octets.iter().any(|b| b.len() != 2 || u8::from_str_radix(b, 16).is_err())
+        || mac == "ff:ff:ff:ff:ff:ff" || mac == "00:00:00:00:00:00" { return None; }
+    Some(mac)
+}
+
+/// Linux kernel ARP cache: IP, hardware type, flags, MAC, mask, device.
+fn parse_proc_arp_line(line: &str) -> Option<(String, String)> {
+    let fields: Vec<_> = line.split_whitespace().collect();
+    if fields.len() != 6 { return None; }
+    let ip = fields[0].parse::<std::net::Ipv4Addr>().ok()?;
+    let flags = u32::from_str_radix(fields[2].trim_start_matches("0x"), 16).ok()?;
+    if flags & 0x2 == 0 { return None; } // ATF_COM: ignore unresolved neighbors.
+    Some((ip.to_string(), normalize_mac(fields[3])?))
+}
+
+#[cfg(target_os = "linux")]
+pub fn read_arp_table() -> Vec<(String, String)> {
+    use std::io::Read;
+    let result = (|| -> std::io::Result<String> {
+        let mut text = String::new();
+        std::fs::File::open("/proc/net/arp")?.take(1024 * 1024).read_to_string(&mut text)?;
+        Ok(text)
+    })();
+    match result {
+        Ok(text) => text.lines().filter_map(parse_proc_arp_line).take(4096).collect(),
+        Err(error) => { tracing::warn!(%error, "Kernel ARP cache unavailable"); Vec::new() }
+    }
+}
+
+#[cfg(not(target_os = "linux"))]
 pub fn read_arp_table() -> Vec<(String, String)> {
     let Ok(output) = std::process::Command::new("arp").arg("-a").output() else {
         return vec![];
@@ -41,6 +70,28 @@ pub fn read_arp_table() -> Vec<(String, String)> {
     text.lines()
         .filter_map(parse_arp_line)
         .collect::<Vec<_>>()
+}
+
+#[cfg(test)]
+mod neighbor_tests {
+    use super::*;
+    #[test]
+    fn kernel_neighbors_require_complete_valid_records() {
+        assert_eq!(parse_proc_arp_line("192.168.1.1 0x1 0x2 aa:bb:cc:dd:ee:ff * eth0"),
+            Some(("192.168.1.1".into(), "aa:bb:cc:dd:ee:ff".into())));
+        for line in ["IP address HW type Flags HW address Mask Device",
+            "192.168.1.2 0x1 0x0 00:00:00:00:00:00 * eth0",
+            "192.168.1.2 0x1 0x2 invalid * eth0",
+            "192.168.1.2 aa-bb-cc-dd-ee-ff dynamic"] {
+            assert!(parse_proc_arp_line(line).is_none(), "{line}");
+        }
+    }
+    #[test]
+    fn windows_neighbors_validate_mac() {
+        assert!(parse_arp_line("192.168.1.1 aa-bb-cc-dd-ee-ff dynamic").is_some());
+        assert!(parse_arp_line("192.168.1.1 ff:ff:ff:ff:ff:ff static").is_none());
+        assert!(parse_arp_line("192.168.1.1 invalid dynamic").is_none());
+    }
 }
 
 fn mac_vendor_hint(mac: &str) -> Option<String> {

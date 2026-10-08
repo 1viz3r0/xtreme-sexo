@@ -1,34 +1,18 @@
-import React, { useEffect, useRef, useState, useMemo } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { Globe3D } from './Globe3D';
 import type { LocationNode, CountryGeo } from './Globe3D';
 import { CountryDetailPanel, type CountryStats } from './CountryDetailPanel';
-import { CountryMapView } from './CountryMapView';
 import { SearchModal } from './SearchModal';
 import { loadCountryVector, loadAdmin1, type CountryVector, type GeoRegion } from '../lib/geoMap';
 import type { GeoSearchResult } from '../lib/geoSearch';
-import { ArrowRight, RefreshCw, ShieldAlert } from 'lucide-react';
 import type { TabType } from './Sidebar';
-import { getActiveFlows, getFlowSummary, type FlowRecord, type FlowSummaryStats, subscribeToFlowStream } from '../services/tauri/flows';
-import { getCaptureMetrics, type CaptureMetrics } from '../services/tauri/capture';
-import { subscribeToCaptureStats, subscribeToCaptureStatus } from '../services/tauri/capture';
-import { getDetectionSummary, getDetections, type DetectionSummary, type DetectionFinding } from '../services/tauri/detections';
-import {
-  getConnectivityStatus,
-  getGeoipForActiveFlows,
-  getGeoipLookup,
-  getPublicIp,
-  getThreatIntelStatus,
-  evaluateFlowsForThreats,
-  getThreatMatches,
-  getDevices,
-  subscribeToConnectivity,
-  subscribeToThreatIntelStatus,
-  type ConnectivityStatus,
-  type GeoIpEntry,
-  type ThreatIntelStatus,
-  type ThreatMatchEntry,
-  type DeviceEntry
-} from '../services/tauri/intel';
+import { getGlobalIntelSnapshot, type GlobalIntelSnapshot } from '../services/tauri/globalIntel';
+import { isTauriEnvironment } from '../services/tauri/isTauri';
+import type { GeoIpEntry, ThreatMatchEntry } from '../services/tauri/intel';
+import { getPcapInterfaces, startPacketCapture, stopPacketCapture, type NpcapInterface } from '../services/tauri/capture';
+import { getDetailedSystemInfo, type DetailedSystemInfo } from '../services/tauri/system';
+import { getDetailedNetworkInterfaces, type DetailedAdapterInfo } from '../services/tauri/network';
+import { OverviewSummary } from './OverviewSummary';
 
 interface GlobalIntelViewProps {
   selectedNode: LocationNode | null;
@@ -49,14 +33,6 @@ interface FlowRow {
   risk: string;
 }
 
-const STATUS_COLOR: Record<string, string> = {
-  ONLINE: 'text-emerald-400 bg-emerald-950/70 border-emerald-800',
-  DEGRADED: 'text-amber-400 bg-amber-950/70 border-amber-800',
-  OFFLINE: 'text-rose-400 bg-rose-950/70 border-rose-800',
-  CONNECTING: 'text-cyan-400 bg-cyan-950/70 border-cyan-800',
-  STALE: 'text-slate-400 bg-slate-900/70 border-slate-700',
-};
-
 export const GlobalIntelView: React.FC<GlobalIntelViewProps> = ({
   selectedNode,
   setSelectedNode,
@@ -64,110 +40,46 @@ export const GlobalIntelView: React.FC<GlobalIntelViewProps> = ({
   openSearchToken
 }) => {
   const [isAutoRotate, setIsAutoRotate] = useState<boolean>(true);
-  const [flows, setFlows] = useState<FlowRecord[]>([]);
-  const [summary, setSummary] = useState<FlowSummaryStats | null>(null);
-  const [metrics, setMetrics] = useState<CaptureMetrics | null>(null);
-  const [detSummary, setDetSummary] = useState<DetectionSummary | null>(null);
-  const [detections, setDetections] = useState<DetectionFinding[]>([]);
-  const [connectivity, setConnectivity] = useState<ConnectivityStatus | null>(null);
-  const [threatStatus, setThreatStatus] = useState<ThreatIntelStatus | null>(null);
-  const [geoip, setGeoip] = useState<GeoIpEntry[]>([]);
-  const [threatMatches, setThreatMatches] = useState<ThreatMatchEntry[]>([]);
-  const [devices, setDevices] = useState<DeviceEntry[]>([]);
+  const [snapshot, setSnapshot] = useState<GlobalIntelSnapshot | null>(null);
+  const [refreshError, setRefreshError] = useState<string | null>(null);
+  const desktopAvailable = isTauriEnvironment();
+  const flows = snapshot?.flows ?? [];
+  const summary = snapshot?.flow_summary ?? null;
+  const metrics = snapshot?.capture ?? null;
+  const detSummary = snapshot?.detection_summary ?? null;
+  const detections = snapshot?.detections ?? [];
+  const connectivity = snapshot?.connectivity ?? null;
+  const threatStatus = snapshot?.threat_intel ?? null;
+  const geoip = snapshot?.geoip ?? [];
+  const threatMatches = snapshot?.threat_matches ?? [];
+  const devices = snapshot?.devices ?? [];
   const [isDetailPanelOpen, setIsDetailPanelOpen] = useState<boolean>(false);
   const [selectedCountry, setSelectedCountry] = useState<CountryGeo | null>(null);
-  const [telemetry, setTelemetry] = useState<{ rx: number; tx: number; rtt: number }>({ rx: 0, tx: 0, rtt: 0 });
-  const rxSamplesRef = useRef<number[]>([]);
-  const txSamplesRef = useRef<number[]>([]);
-  const [rxSamples, setRxSamples] = useState<number[]>([]);
-  const [txSamples, setTxSamples] = useState<number[]>([]);
   const [isRefreshing, setIsRefreshing] = useState(false);
-  const mountedRef = useRef(true);
-  const [hubInfo, setHubInfo] = useState<GeoIpEntry | null>(null);
-
-// Telemetry state for Globe3D
-const [captureStatus, setCaptureStatus] = useState<string>('UNAVAILABLE');
-const [captureMetrics, setCaptureMetrics] = useState<{
-  packets_per_sec: number;
-  bytes_per_sec: number;
-  packets_captured: number;
-  bytes_captured: number;
-  status: string;
-}>({
-  packets_per_sec: 0,
-  bytes_per_sec: 0,
-  packets_captured: 0,
-  bytes_captured: 0,
-  status: 'UNAVAILABLE',
-});
-const [activeFlows, setActiveFlows] = useState<LocationNode[]>([]);
+  const [interfaces, setInterfaces] = useState<NpcapInterface[]>([]);
+  const [systemInfo, setSystemInfo] = useState<DetailedSystemInfo | null>(null);
+  const [networkInfo, setNetworkInfo] = useState<DetailedAdapterInfo[] | null>(null);
+  const [selectedFinding, setSelectedFinding] = useState<string | null>(null);
+  const [selectedInterface, setSelectedInterface] = useState('');
+  const [captureActionError, setCaptureActionError] = useState<string | null>(null);
+  const [captureActionBusy, setCaptureActionBusy] = useState(false);
+  const refreshRef = useRef<() => void>(() => {});
+  const inFlightRef = useRef<Promise<GlobalIntelSnapshot> | null>(null);
+  const captureStatus = !desktopAvailable || !snapshot ? 'UNAVAILABLE'
+    : refreshError ? 'STALE'
+    : snapshot.capture_availability.state !== 'AVAILABLE' ? 'UNAVAILABLE' : metrics!.status;
+  const captureMetrics = metrics ? { ...metrics, status: captureStatus } : {
+    packets_per_sec: 0,
+    bytes_per_sec: 0,
+    packets_captured: 0,
+    bytes_captured: 0,
+    status: 'UNAVAILABLE',
+  };
 
   const [selectedRegion, setSelectedRegion] = useState<GeoRegion | null>(null);
   const [countryVector, setCountryVector] = useState<CountryVector | null>(null);
   const [regions, setRegions] = useState<GeoRegion[]>([]);
-  const [focusRequest, setFocusRequest] = useState<{ type: 'region' | 'city'; code?: string; lat: number; lng: number } | null>(null);
   const [isSearchOpen, setIsSearchOpen] = useState<boolean>(false);
-
-useEffect(() => {
-    mountedRef.current = true;
-    return () => {
-      mountedRef.current = false;
-    };
-  }, []);
-
-// Capture telemetry subscriptions
-  useEffect(() => {
-    let unsubscribeStats: () => void = () => {};
-    let unsubscribeStatus: () => void = () => {};
-    let unsubscribeFlows: () => void = () => {};
-
-    subscribeToCaptureStats((metrics: {
-      packets_per_sec: number;
-      bytes_per_sec: number;
-      packets_captured: number;
-      bytes_captured: number;
-      status: string;
-    }) => {
-      setCaptureMetrics(metrics);
-    }).then((_u: () => void) => (unsubscribeStats = _u));
-    subscribeToCaptureStatus((status: string) => setCaptureStatus(status)).then(
-      (_u: () => void) => (unsubscribeStatus = _u)
-    );
-    subscribeToFlowStream((flow: FlowRecord) => {
-      setActiveFlows((prev) => {
-        const exists = prev.some((f) => f.id === flow.flow_id);
-        if (!exists) {
-          return [...prev, {
-            id: flow.flow_id,
-            name: `${flow.src_ip}:${flow.src_port} -> ${flow.dst_ip}:${flow.dst_port}`,
-            country: '',
-            lat: 0,
-            lng: 0,
-            pkts: flow.packet_count.toString(),
-            rtt: '',
-            status: 'low',
-            color: '#3fb3ff',
-            activeFlowsCount: 1,
-            threatLevel: flow.severity || 'low',
-            ip: flow.src_ip,
-          }];
-        }
-        return prev;
-      });
-    }).then((_u: () => void) => (unsubscribeFlows = _u));
-
-    return () => {
-      unsubscribeStats();
-      unsubscribeStatus();
-      unsubscribeFlows();
-    };
-  }, []);
-
-// Convert FlowRecord[] to LocationNode[] for globe display
-  const locationNodes = useMemo(() => {
-    if (activeFlows.length === 0) return [];
-    return activeFlows.map((n): LocationNode => ({ ...n, lat: n.lat ?? 0, lng: n.lng ?? 0 }));
-  }, [activeFlows]);
 
   // Navbar search button opens the geo search modal.
   useEffect(() => {
@@ -181,7 +93,6 @@ useEffect(() => {
       setCountryVector(null);
       setRegions([]);
       setSelectedRegion(null);
-      setFocusRequest(null);
       return;
     }
     setCountryVector(null);
@@ -229,168 +140,132 @@ useEffect(() => {
       fromSearch(result.iso2, result.name, result.lat, result.lng, result.flag);
     } else if (result.kind === 'region') {
       fromSearch(result.country, result.name, result.lat, result.lng);
-      setFocusRequest({ type: 'region', code: result.code ?? undefined, lat: result.lat, lng: result.lng });
     } else {
       fromSearch(result.country, result.name, result.lat, result.lng);
-      setFocusRequest({ type: 'city', lat: result.lat, lng: result.lng });
     }
   };
 
-  // Resolve THIS NET0ZE instance's own public position (real GeoIP of the machine's public IP).
-  // Used to draw the self node + hub arcs. Falls back silently (no hub) when offline.
+  // One local-only read loop. Reuse a pending request across StrictMode effect
+  // cleanup/setup; each effect owns its timer and ignores late results.
   useEffect(() => {
+    if (!desktopAvailable) return;
     let cancelled = false;
-    let attempts = 0;
-    const resolveHub = async () => {
+    let refreshing = false;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const refresh = async () => {
+      if (cancelled || refreshing || document.visibilityState === 'hidden') return;
+      refreshing = true;
+      clearTimeout(timer);
+      setIsRefreshing(true);
       try {
-        const ip = await getPublicIp();
-        if (!ip || cancelled) {
-          if (!ip && !cancelled && ++attempts < 5) setTimeout(resolveHub, 30000);
-          return;
-        }
-        const info = await getGeoipLookup(ip);
+        const request = inFlightRef.current ?? getGlobalIntelSnapshot(100);
+        inFlightRef.current = request;
+        const next = await request;
         if (cancelled) return;
-        if (info && info.latitude != null && info.longitude != null) {
-          setHubInfo(info);
-        } else if (++attempts < 5) {
-          setTimeout(resolveHub, 30000);
+        setSnapshot(next);
+        setRefreshError(null);
+      } catch (error) {
+        if (!cancelled) {
+          setRefreshError(error instanceof Error ? error.message : String(error));
         }
-      } catch {
-        if (!cancelled && ++attempts < 5) setTimeout(resolveHub, 30000);
+      } finally {
+        inFlightRef.current = null;
+        refreshing = false;
+        if (!cancelled) {
+          setIsRefreshing(false);
+          timer = setTimeout(() => { void refresh(); }, 3000);
+        }
       }
     };
-    resolveHub();
+    refreshRef.current = () => { void refresh(); };
+    void refresh();
     return () => {
       cancelled = true;
+      clearTimeout(timer);
+      refreshRef.current = () => {};
     };
-  }, []);
+  }, [desktopAvailable]);
 
-  const refreshCore = async () => {
-    const [f, s, m, ds, det, conn, devs] = await Promise.all([
-      getActiveFlows(50),
-      getFlowSummary(),
-      getCaptureMetrics(),
-      getDetectionSummary(),
-      getDetections(20),
-      getConnectivityStatus(),
-      getDevices(),
-    ]);
-    if (!mountedRef.current) return; // race guard: view unmounted during refresh
-    setFlows(f);
-    setSummary(s);
-    setMetrics(m);
-    setDetSummary(ds);
-    setDetections(det);
-    setDevices(devs);
-    if (conn) setConnectivity(conn);
-  };
-
-  const refreshIntel = async () => {
-    const [geo, matches, tStatus] = await Promise.all([
-      getGeoipForActiveFlows(),
-      evaluateFlowsForThreats(),
-      getThreatIntelStatus(),
-    ]);
-    if (!mountedRef.current) return;
-    if (geo.length > 0) setGeoip(geo);
-    if (matches.length > 0) setThreatMatches(matches);
-    if (tStatus) setThreatStatus(tStatus);
-    const persisted = await getThreatMatches(50);
-    if (!mountedRef.current) return;
-    if (persisted.length > 0) setThreatMatches(persisted);
-  };
+  const handleRefresh = () => refreshRef.current();
 
   useEffect(() => {
-    refreshCore();
-    refreshIntel();
+    if (!desktopAvailable) return;
+    getPcapInterfaces().then((items) => {
+      setInterfaces(items);
+      setSelectedInterface((current) => current || items.find((item) => !item.is_loopback)?.id || items[0]?.id || '');
+    }).catch((error) => setCaptureActionError(error instanceof Error ? error.message : String(error)));
+  }, [desktopAvailable]);
 
-    const coreInterval = setInterval(refreshCore, 3000);
-    const intelInterval = setInterval(refreshIntel, 15000);
-    const deviceInterval = setInterval(async () => {
-      const d = await getDevices();
-      setDevices(d);
-    }, 30000);
+  // One bounded passive host read; never scans, captures, or calls external GeoIP.
+  useEffect(() => {
+    if (!desktopAvailable) return;
+    let cancelled = false;
+    Promise.all([getDetailedSystemInfo(), getDetailedNetworkInterfaces()]).then(([system, network]) => {
+      if (!cancelled) { setSystemInfo(system); setNetworkInfo(network); }
+    }).catch(() => { if (!cancelled) setNetworkInfo(null); });
+    return () => { cancelled = true; };
+  }, [desktopAvailable]);
 
-    let unsubTelemetry: (() => void) | null = null;
-    let unsubConn: (() => void) | null = null;
-    let unsubThreat: (() => void) | null = null;
-
-    (async () => {
-      const { listen } = await import('@tauri-apps/api/event');
-      unsubTelemetry = await listen<{ rx_kbps: number; tx_kbps: number; rtt_avg_ms: number }>(
-        'system-telemetry',
-        (e) => {
-          const { rx_kbps, tx_kbps, rtt_avg_ms } = e.payload;
-          setTelemetry({ rx: rx_kbps, tx: tx_kbps, rtt: rtt_avg_ms });
-          const rxS = [...rxSamplesRef.current.slice(-19), rx_kbps];
-          const txS = [...txSamplesRef.current.slice(-19), tx_kbps];
-          rxSamplesRef.current = rxS;
-          txSamplesRef.current = txS;
-          setRxSamples(rxS);
-          setTxSamples(txS);
-        }
-      );
-      unsubConn = await subscribeToConnectivity((s) => setConnectivity(s));
-      unsubThreat = await subscribeToThreatIntelStatus((s) => setThreatStatus(s));
-    })();
-
-    return () => {
-      clearInterval(coreInterval);
-      clearInterval(intelInterval);
-      clearInterval(deviceInterval);
-      unsubTelemetry?.();
-      unsubConn?.();
-      unsubThreat?.();
-    };
-  }, []);
-
-  const handleRefresh = async () => {
-    setIsRefreshing(true);
-    await Promise.all([refreshCore(), refreshIntel()]);
-    setIsRefreshing(false);
+  const handleCaptureAction = async () => {
+    setCaptureActionBusy(true);
+    setCaptureActionError(null);
+    try {
+      if (captureRunning) await stopPacketCapture();
+      else if (selectedInterface) await startPacketCapture(selectedInterface);
+      else throw new Error('No capture interface is available');
+      handleRefresh();
+    } catch (error) {
+      setCaptureActionError(error instanceof Error ? error.message : String(error));
+    } finally {
+      setCaptureActionBusy(false);
+    }
   };
 
   // Build real globe nodes from GeoIP + threat matches + flow aggregates
   const geoByIp = new Map(geoip.map((g) => [g.ip, g]));
-  const threatByIp = new Map(threatMatches.map((t) => [t.ip, t]));
-  const flowAgg: Record<string, { pkts: number; flows: number; rtt: number }> = {};
+  const threatByIp = new Map<string, ThreatMatchEntry>();
+  for (const match of threatMatches) {
+    const prior = threatByIp.get(match.ip);
+    if (!prior || severityRank(match.severity) > severityRank(prior.severity)) threatByIp.set(match.ip, match);
+  }
+  const flowAgg: Record<string, { pkts: number; flows: number; rtt: number; severity: string }> = {};
   for (const f of flows) {
-    const key = f.dst_ip;
-    const agg = (flowAgg[key] = flowAgg[key] || { pkts: 0, flows: 0, rtt: 0 });
-    agg.pkts += f.packet_count;
-    agg.flows += 1;
-    if (f.rtt_ms > 0) agg.rtt = f.rtt_ms;
+    for (const key of new Set([f.src_ip, f.dst_ip])) {
+      const agg = (flowAgg[key] = flowAgg[key] || { pkts: 0, flows: 0, rtt: 0, severity: 'INFO' });
+      agg.pkts += f.packet_count;
+      agg.flows += 1;
+      if (f.rtt_ms > 0) agg.rtt = f.rtt_ms;
+      if (severityRank(f.severity) > severityRank(agg.severity)) agg.severity = f.severity;
+    }
   }
 
   const globeNodes: LocationNode[] = geoip
-    .filter((g) => g.latitude !== null && g.longitude !== null)
+    .filter(hasCoordinates)
     .map((g) => {
       const threat = threatByIp.get(g.ip);
       const agg = flowAgg[g.ip];
-      const status: LocationNode['status'] = threat
-        ? threat.severity === 'HIGH'
-          ? 'critical'
-          : 'high'
-        : 'low';
+      const severity = highestSeverity(threat?.severity, agg?.severity);
+      const status = nodeSeverity(severity);
       return {
         id: g.ip,
         name: `${g.city}, ${g.country}`,
         country: g.country,
-        lat: g.latitude ?? 0,
-        lng: g.longitude ?? 0,
+        lat: g.latitude,
+        lng: g.longitude,
         pkts: agg ? `${agg.pkts} pkt` : '0 pkt',
         rtt: agg && agg.rtt > 0 ? `RTT ${agg.rtt}ms` : 'RTT n/a',
         status,
-        color: status === 'critical' ? '#ff3355' : status === 'high' ? '#ff9900' : '#00e676',
+        color: severity === 'UNKNOWN' ? '#94a3b8' : status === 'critical' ? '#ff3355' : status === 'high' ? '#ff9900' : status === 'medium' ? '#fbbf24' : '#00e676',
         activeFlowsCount: agg?.flows ?? 0,
-        threatLevel: threat ? threat.severity : 'STABLE',
+        threatLevel: severity,
         ip: g.ip,
       };
     });
 
-  // This NET0ZE instance itself (real public IP via GeoIP) — first entry, distinct cyan
+  // A hub is available only when a cached self-device IP has real coordinates.
+  const hubInfo = geoip.find((g) => hasCoordinates(g) && devices.some((d) => d.is_self && d.ip === g.ip)) ?? null;
   const selfNode: LocationNode | null =
-    hubInfo && hubInfo.latitude != null && hubInfo.longitude != null
+    hubInfo && hasCoordinates(hubInfo)
       ? {
           id: hubInfo.ip,
           name: `${hubInfo.city ?? 'Local'}, ${hubInfo.country ?? 'THIS NET0ZE NODE'} (SELF)`,
@@ -406,7 +281,14 @@ useEffect(() => {
           ip: hubInfo.ip,
         }
       : null;
-  if (selfNode) globeNodes.unshift(selfNode);
+  if (selfNode) {
+    const index = globeNodes.findIndex((node) => node.id === selfNode.id);
+    if (index >= 0) globeNodes.splice(index, 1);
+    globeNodes.unshift(selfNode);
+  }
+  const locationNodes = captureIsRunning(captureStatus)
+    ? globeNodes.filter((node) => node.id !== selfNode?.id && node.activeFlowsCount > 0)
+    : [];
 
   // Real per-country aggregation from observed flows + GeoIP + threat matches
   const countryStatsFor = (iso: string): CountryStats | null => {
@@ -427,7 +309,7 @@ useEffect(() => {
     let rttN = 0;
     const remoteIps = new Set<string>();
     for (const f of flows) {
-      if (!ips.has(f.dst_ip)) continue;
+      if (!ips.has(f.dst_ip) && !ips.has(f.src_ip)) continue;
       flowsN += 1;
       packets += f.packet_count;
       bytes += f.total_bytes;
@@ -435,11 +317,11 @@ useEffect(() => {
         rttSum += f.rtt_ms;
         rttN += 1;
       }
-      remoteIps.add(f.dst_ip);
+      if (ips.has(f.dst_ip)) remoteIps.add(f.dst_ip);
+      if (ips.has(f.src_ip)) remoteIps.add(f.src_ip);
     }
-    const sevs = threatMatches.filter((t) => ips.has(t.ip)).map((t) => t.severity);
-    const rank: Record<string, number> = { CRITICAL: 4, HIGH: 3, MEDIUM: 2, LOW: 1, INFO: 0 };
-    const topSev = sevs.length ? [...sevs].sort((a, b) => (rank[b] ?? 0) - (rank[a] ?? 0))[0] : null;
+    const sevs = threatMatches.filter((t) => ips.has(t.ip)).map((t) => t.severity.toUpperCase());
+    const topSev = sevs.length ? [...sevs].sort((a, b) => severityRank(b) - severityRank(a))[0] : null;
     return {
       flows: flowsN,
       packets,
@@ -450,7 +332,7 @@ useEffect(() => {
       remoteIps: [...remoteIps].slice(0, 5),
       sources: [...sources],
       resolvedAt: resolvedAt || null,
-      updatedAt: Date.now(),
+      updatedAt: snapshot ? Date.parse(snapshot.collected_at) : 0,
     };
   };
 
@@ -467,22 +349,9 @@ useEffect(() => {
       bytes: formatBytes(f.total_bytes),
       status: f.tcp_state,
       location: location ? `${location.city}, ${location.country}` : 'Unresolved',
-      risk: threat ? threat.severity : 'LOW',
+      risk: highestSeverity(threat?.severity, threatByIp.get(f.src_ip)?.severity, f.severity),
     };
   });
-
-  const threatTypeCounts = (() => {
-    const counts = new Map<string, number>();
-    for (const d of detections) {
-      counts.set(d.category, (counts.get(d.category) || 0) + 1);
-    }
-    const colors = ['#ff3355', '#ff9900', '#0088ff', '#00e676'];
-    return [...counts.entries()].slice(0, 4).map(([name, count], idx) => ({
-      name,
-      count,
-      color: colors[idx % colors.length],
-    }));
-  })();
 
   const sev = detSummary ?? {
     total_findings_count: 0,
@@ -495,422 +364,60 @@ useEffect(() => {
     resolved_count: 0,
   };
 
-  const connState = connectivity?.state || 'CONNECTING';
-  const captureRunning = metrics?.status === 'RUNNING';
-  const avgRtt = telemetry.rtt > 0 ? telemetry.rtt : summary?.avg_rtt_ms ?? 0;
+  const connState = refreshError ? 'STALE' : connectivity?.state || 'UNAVAILABLE';
+  const captureRunning = captureIsRunning(captureStatus);
+  const avgRtt = summary?.avg_rtt_ms ?? 0;
+  const emptyAlertMessage = !desktopAvailable ? 'Alerts unavailable in browser mode'
+    : refreshError ? 'Alerts unavailable — snapshot refresh failed'
+    : !snapshot ? 'Loading detection snapshot…'
+    : !captureRunning ? 'No recorded alerts — capture is not running or unavailable'
+    : 'No alerts recorded in this session';
 
+  const recentFindings = detections.slice(0, 5);
+  const globeMessage = !desktopAvailable
+    ? 'Browser mode: local endpoints and telemetry are unavailable. Bundled country geography is reference data only.'
+    : !snapshot
+      ? refreshError ? 'Endpoint snapshot unavailable — refresh failed.' : 'Loading endpoint snapshot…'
+      : refreshError
+        ? 'Showing the last successful endpoint snapshot; refresh is stale.'
+        : globeNodes.length === 0
+          ? 'No observed endpoints with coordinates in this session.'
+          : null;
   return (
     <div className="flex-1 flex flex-col h-full overflow-y-auto bg-[#060913] text-slate-200">
-      {/* Upper Layout: Left Column | Center 3D Globe | Right Column */}
+      <OverviewSummary system={systemInfo} interfaces={networkInfo} snapshot={snapshot} unavailable={!desktopAvailable ? 'Native desktop required' : refreshError ? 'Snapshot stale' : null} onNavigate={setActiveTab} />
+      <div className="mx-3 mt-2 rounded border border-[#17243c] bg-[#081022] px-3 py-2 text-[10px] font-mono text-slate-500" role="status">
+         {snapshot ? `Current-session snapshot • ${new Date(snapshot.collected_at).toLocaleTimeString()}` : !desktopAvailable ? 'Browser mode — local telemetry unavailable' : refreshError ? 'Snapshot unavailable — refresh failed' : 'Loading current-session snapshot…'}
+         {refreshError && <span className="ml-2 text-amber-400">last successful snapshot is stale</span>}
+         <button onClick={handleRefresh} disabled={!desktopAvailable || isRefreshing} className="float-right text-slate-200 hover:underline disabled:cursor-not-allowed disabled:opacity-50">{isRefreshing ? 'Refreshing…' : desktopAvailable ? 'Refresh' : 'Refresh unavailable'}</button>
+      </div>
       <div className="grid grid-cols-12 gap-3 p-3 flex-1 min-h-[560px]">
-        {/* Left Metrics Column */}
         <div className="col-span-12 lg:col-span-3 flex flex-col gap-3">
-          {/* Capture Engine Card */}
-          <div className="cyber-card p-3.5 flex flex-col gap-2">
-            <div className="flex items-center justify-between">
-              <span className="text-[10px] font-mono font-semibold tracking-wider text-slate-400 uppercase">
-                CAPTURE ENGINE
-              </span>
-              <button
-                onClick={handleRefresh}
-                className="flex items-center gap-1 text-[11px] font-mono text-cyan-400 hover:underline cursor-pointer"
-              >
-                <RefreshCw className={`w-3 h-3 ${isRefreshing ? 'animate-spin' : ''}`} />
-                Refresh
-              </button>
-            </div>
-            <div className="flex items-baseline justify-between">
-              <span className={`text-xl font-extrabold font-mono ${captureRunning ? 'text-emerald-400' : 'text-slate-400'}`}>
-                {metrics?.status || 'STOPPED'}
-              </span>
-              <span className={`px-2 py-0.5 text-[10px] font-bold border rounded ${STATUS_COLOR[connState] || STATUS_COLOR.STALE}`}>
-                {connState}
-              </span>
-            </div>
-            <div className="text-[11px] font-mono text-slate-400 truncate">
-              {metrics?.selected_interface || 'No interface selected'}
-            </div>
-            <div className="grid grid-cols-3 gap-1.5 pt-1 border-t border-[#17243c] text-center">
-              <div className="flex flex-col">
-                <span className="text-[9px] text-slate-500 uppercase">Packets</span>
-                <span className="text-sm font-bold font-mono text-cyan-400">{metrics?.packets_captured ?? 0}</span>
-              </div>
-              <div className="flex flex-col">
-                <span className="text-[9px] text-slate-500 uppercase">Dropped</span>
-                <span className="text-sm font-bold font-mono text-amber-400">{metrics?.dropped_packets ?? 0}</span>
-              </div>
-              <div className="flex flex-col">
-                <span className="text-[9px] text-slate-500 uppercase">Flows</span>
-                <span className="text-sm font-bold font-mono text-emerald-400">{summary?.active_flows_count ?? 0}</span>
-              </div>
-            </div>
+          <div className="cyber-card p-3 flex flex-col gap-2">
+            <div className="flex items-center justify-between"><b className="text-[10px] tracking-wider text-slate-400">CAPTURE</b><span className={`text-[10px] ${captureRunning ? 'text-emerald-400' : 'text-slate-400'}`}>{captureStatus}</span></div>
+            <div className="flex gap-1.5"><select value={selectedInterface} onChange={(e) => setSelectedInterface(e.target.value)} disabled={!desktopAvailable || captureRunning || captureActionBusy} aria-label="Capture interface" className="min-w-0 flex-1 rounded border border-[#292929] bg-[#141414] px-2 py-1 text-[10px] font-mono"><option value="">No interface available</option>{interfaces.map((item) => <option key={item.id} value={item.id}>{item.name || item.id}</option>)}</select><button onClick={() => void handleCaptureAction()} disabled={!desktopAvailable || captureActionBusy || (!captureRunning && !selectedInterface)} className="rounded border border-[#525252] px-2 py-1 text-[10px] text-slate-200 hover:bg-[#252525] disabled:opacity-40">{captureActionBusy ? 'WORKING…' : captureRunning ? 'STOP' : 'START'}</button></div>
+            {captureActionError && <div className="text-[10px] text-rose-300">{captureActionError}</div>}
+            <div className="grid grid-cols-3 gap-1 border-t border-[#17243c] pt-2 text-center"><span>Packets<br/><b className="text-cyan-400">{metrics?.packets_captured ?? 0}</b></span><span>Dropped<br/><b className="text-amber-400">{metrics?.dropped_packets ?? 0}</b></span><span>Flows<br/><b className="text-emerald-400">{summary?.active_flows_count ?? 0}</b></span></div>
+            <details className="text-[10px] text-slate-500"><summary>Capture permissions</summary><p className="mt-1">Select an active adapter. Wi-Fi monitor mode is only needed for 802.11 management frames; permissions may be required by the OS.</p></details>
           </div>
-
-          {/* Active Systems (real discovered devices) */}
-          <div className="cyber-card p-3.5 flex flex-col gap-2">
-            <span className="text-[10px] font-mono font-semibold tracking-wider text-slate-400 uppercase">
-              DISCOVERED DEVICES
-            </span>
-            <div className="flex items-baseline justify-between">
-              <span className="text-2xl font-bold font-mono text-white">
-                <span className="text-emerald-400">{devices.length}</span>
-                <span className="text-slate-500 text-base"> on LAN</span>
-              </span>
-            </div>
-            <div className="w-full bg-[#101b30] h-2 rounded-full overflow-hidden border border-[#1b2b48]">
-              <div className="bg-emerald-400 h-full" style={{ width: `${Math.min(100, devices.length * 4)}%` }} />
-            </div>
-            <div className="text-[10px] font-mono text-slate-500">
-              {devices.length > 0
-                ? `${devices.filter((d) => d.active).length} active • ${devices.filter((d) => !d.is_self).length} remote`
-                : 'Run capture to discover peers (ARP + flow observation)'}
-            </div>
-          </div>
-
-          {/* RTT Gap */}
-          <div className="cyber-card p-3.5 flex items-center justify-between">
-            <div className="flex flex-col">
-              <span className="text-[10px] font-mono font-semibold tracking-wider text-slate-400 uppercase">
-                AVG TCP RTT
-              </span>
-              <span className="text-xl font-bold font-mono text-emerald-400">
-                {avgRtt > 0 ? `${avgRtt.toFixed(1)}ms` : 'n/a'}
-              </span>
-            </div>
-            <div className="flex flex-col items-end gap-0.5">
-              <span className="px-2.5 py-1 text-xs font-semibold text-cyan-400 bg-cyan-950/70 border border-cyan-800/60 rounded">
-                {connectivity?.latency_ms ? `${connectivity.latency_ms}ms to internet` : 'offline'}
-              </span>
-              <span className="text-[9px] font-mono text-slate-500 max-w-[130px] truncate">
-                {connectivity?.source || ''}
-              </span>
-            </div>
-          </div>
-
-          {/* Telemetry Ingress / Egress (real adapter rates) */}
-          <div className="cyber-card p-3.5 flex flex-col gap-3 flex-1">
-            <span className="text-[10px] font-mono font-semibold tracking-wider text-slate-400 uppercase">
-              TELEMETRY INGRESS / EGRESS
-            </span>
-
-            <div className="flex flex-col gap-1">
-              <div className="flex justify-between text-xs font-mono">
-                <span className="text-slate-400">Ingress</span>
-                <span className="text-cyan-400 font-bold">{formatKbps(telemetry.rx)}</span>
-              </div>
-              <div className="h-5 w-full flex items-end gap-1">
-                {rxSamples.length > 0 ? (
-                  rxSamples.map((val, idx) => (
-                    <div key={idx} className="flex-1 bg-cyan-500/80 rounded-t-sm" style={{ height: `${Math.min(100, (val / Math.max(64, ...rxSamples)) * 100)}%` }} />
-                  ))
-                ) : (
-                  <div className="w-full text-[10px] font-mono text-slate-600">waiting for telemetry samples…</div>
-                )}
-              </div>
-            </div>
-
-            <div className="flex flex-col gap-1">
-              <div className="flex justify-between text-xs font-mono">
-                <span className="text-slate-400">Egress</span>
-                <span className="text-emerald-400 font-bold">{formatKbps(telemetry.tx)}</span>
-              </div>
-              <div className="h-5 w-full flex items-end gap-1">
-                {txSamples.length > 0 ? (
-                  txSamples.map((val, idx) => (
-                    <div key={idx} className="flex-1 bg-emerald-500/80 rounded-t-sm" style={{ height: `${Math.min(100, (val / Math.max(64, ...txSamples)) * 100)}%` }} />
-                  ))
-                ) : (
-                  <div className="w-full text-[10px] font-mono text-slate-600">waiting for telemetry samples…</div>
-                )}
-              </div>
-            </div>
-          </div>
+          <div className="cyber-card p-3"><b className="text-[10px] tracking-wider text-slate-400">OBSERVED DEVICES</b><div className="mt-2 text-xl font-bold">{snapshot ? devices.length : 'Unavailable'}</div><div className="text-[10px] text-slate-500">Cached observations; no discovery scan performed.</div></div>
+          <div className="cyber-card p-3"><b className="text-[10px] tracking-wider text-slate-400">CONNECTIVITY</b><div className="mt-2 text-lg font-bold">{avgRtt > 0 ? `${avgRtt.toFixed(1)}ms RTT` : 'Unavailable'}</div><div className="text-[10px] text-slate-500">{connState} • {connectivity?.source || 'source unavailable'}</div></div>
         </div>
-
-        {/* Center 3D Globe Container */}
         <div className="col-span-12 lg:col-span-6 cyber-card relative flex flex-col overflow-hidden min-h-[460px]">
-          <div className="p-3 border-b border-[#17243c] flex items-center justify-between z-10 bg-[#081022]/80 backdrop-blur-md">
-            <div className="flex items-center gap-2">
-              <span className="w-2 h-2 rounded-full bg-cyan-400 animate-ping" />
-              <span className="text-xs font-mono font-bold text-white tracking-wide">
-                GLOBAL THREAT TELEMETRY GLOBE
-              </span>
-            </div>
-
-            <button
-              onClick={() => setIsAutoRotate(!isAutoRotate)}
-              className={`px-2.5 py-1 text-[11px] font-mono rounded border transition-all cursor-pointer ${
-                isAutoRotate ? 'bg-cyan-950/80 text-cyan-400 border-cyan-800' : 'bg-[#101b30] text-slate-400 border-[#1d2f4d]'
-              }`}
-            >
-              {isAutoRotate ? 'AUTO-ROTATE: ON' : 'AUTO-ROTATE: OFF'}
-            </button>
-          </div>
-
-          {/* 3D Globe Viewport */}
-          <div className="flex-1 w-full h-full relative">
-<Globe3D
-              nodes={globeNodes}
-              selectedNode={selectedNode}
-              selectedCountry={selectedCountry}
-              onSelectNode={(node) => {
-                setSelectedCountry(null);
-                setSelectedNode(node);
-                setIsDetailPanelOpen(true);
-              }}
-              onSelectCountry={(country) => {
-                setSelectedNode(null);
-                setSelectedCountry(country);
-                setIsDetailPanelOpen(true);
-              }}
-              isAutoRotate={isAutoRotate}
-              hub={hubInfo && hubInfo.latitude != null && hubInfo.longitude != null ? { lat: hubInfo.latitude, lng: hubInfo.longitude } : null}
-              captureStatus={captureStatus}
-              captureMetrics={captureMetrics}
-              activeFlows={locationNodes}
-              />
-
-            {globeNodes.length === 0 && !selectedCountry && (
-              <div className="absolute inset-x-0 top-16 z-10 flex justify-center pointer-events-none">
-                <div className="bg-[#040a18]/80 backdrop-blur px-4 py-2 rounded border border-cyan-900/60 text-[11px] font-mono text-cyan-300">
-                  No GeoIP nodes yet — start packet capture to plot live remote endpoints
-                </div>
-              </div>
-            )}
-
-            {/* Vector country map overlay (drill-down from the globe) */}
-            {selectedCountry && (
-              <CountryMapView
-                country={{ iso2: selectedCountry.iso, name: selectedCountry.name, flag: selectedCountry.fl ?? null }}
-                regions={regions}
-                selectedRegion={selectedRegion}
-                onSelectRegion={(r) => setSelectedRegion(r)}
-                onTogglePanel={() => setIsDetailPanelOpen((open) => !open)}
-                onBackToWorld={() => {
-                  setSelectedCountry(null);
-                  setSelectedRegion(null);
-                  setFocusRequest(null);
-                  setIsDetailPanelOpen(false);
-                }}
-                focusRequest={focusRequest}
-              />
-            )}
-
-            {/* Country Detail Overlay Panel */}
-            {isDetailPanelOpen && (selectedNode || selectedCountry) && (
-              <CountryDetailPanel
-                node={selectedNode}
-                country={selectedCountry}
-                vector={countryVector}
-                regions={regions}
-                selectedRegion={selectedRegion}
-                onSelectRegion={(r) => setSelectedRegion(r)}
-                connectivity={connectivity}
-                stats={selectedCountry ? countryStatsFor(selectedCountry.iso) : null}
-                onClose={() => setIsDetailPanelOpen(false)}
-                topOffset={selectedCountry ? '3.4rem' : '0.75rem'}
-              />
-            )}
-
-            {/* Geo search modal (Ctrl/Cmd+K) */}
-            <SearchModal
-              isOpen={isSearchOpen}
-              onClose={() => setIsSearchOpen(false)}
-              onSelectGeo={handleSelectGeo}
-            />
+           <div className="p-3 border-b border-[#17243c] flex items-center justify-between"><div><b className="text-xs font-mono text-white">Endpoint map</b><p className="mt-1 text-[10px] text-slate-500">Observed endpoints only; country and city shapes are bundled reference geography.</p></div><button onClick={() => setIsAutoRotate(!isAutoRotate)} className="rounded border border-[#525252] px-2 py-1 text-[10px] text-slate-200 hover:bg-[#252525]">AUTO-ROTATE: {isAutoRotate ? 'ON' : 'OFF'}</button></div>
+           <div className="flex-1 relative"><Globe3D nodes={globeNodes} selectedNode={selectedNode} selectedCountry={selectedCountry} onSelectNode={(node) => { setSelectedCountry(null); setSelectedNode(node); setIsDetailPanelOpen(true); }} onSelectCountry={(country) => { setSelectedNode(null); setSelectedCountry(country); setIsDetailPanelOpen(true); }} isAutoRotate={isAutoRotate} hub={hubInfo && hasCoordinates(hubInfo) ? { lat: hubInfo.latitude, lng: hubInfo.longitude } : null} captureStatus={captureStatus} captureMetrics={captureMetrics} activeFlows={locationNodes} />
+              {globeMessage && !selectedCountry && <div className="absolute inset-x-0 top-16 z-10 flex justify-center pointer-events-none"><div role="status" className="max-w-md bg-black/70 px-4 py-2 rounded border border-[#525252] text-center text-[11px] text-slate-400">{globeMessage}</div></div>}
+            {isDetailPanelOpen && (selectedNode || selectedCountry) && <CountryDetailPanel node={selectedNode} country={selectedCountry} vector={countryVector} regions={regions} selectedRegion={selectedRegion} onSelectRegion={setSelectedRegion} connectivity={connectivity} stats={selectedCountry ? countryStatsFor(selectedCountry.iso) : null} onClose={() => setIsDetailPanelOpen(false)} topOffset={selectedCountry ? '3.4rem' : '0.75rem'} />}
+            <SearchModal isOpen={isSearchOpen} onClose={() => setIsSearchOpen(false)} onSelectGeo={handleSelectGeo} />
           </div>
         </div>
-
-        {/* Right Column: Live Threat Overview */}
         <div className="col-span-12 lg:col-span-3 flex flex-col gap-3">
-          <div className="cyber-card p-3.5 flex flex-col gap-3">
-            <div className="flex items-center justify-between">
-              <span className="text-[10px] font-mono font-semibold tracking-wider text-slate-400 uppercase">
-                LIVE THREAT OVERVIEW
-              </span>
-              <span className="text-[10px] font-mono text-slate-400 bg-[#0d172a] px-2 py-0.5 rounded border border-[#1b2b48]">
-                DETECTION ENGINE
-              </span>
-            </div>
-
-            <div className="flex items-center justify-around py-1">
-              <div className="relative w-22 h-22 rounded-full border-8 border-rose-500/80 flex items-center justify-center border-t-amber-400 border-r-blue-500">
-                <div className="flex flex-col items-center">
-                  <span className="text-2xl font-extrabold text-white font-mono leading-none">{sev.total_findings_count}</span>
-                  <span className="text-[9px] text-slate-400 font-mono mt-0.5">Total Alerts</span>
-                </div>
-              </div>
-
-              <div className="flex flex-col gap-1 text-xs font-mono">
-                <div className="flex items-center gap-2">
-                  <span className="w-2 h-2 rounded-full bg-rose-500" />
-                  <span className="text-slate-400">Critical</span>
-                  <span className="text-white font-bold ml-auto">{sev.critical_count}</span>
-                </div>
-                <div className="flex items-center gap-2">
-                  <span className="w-2 h-2 rounded-full bg-orange-500" />
-                  <span className="text-slate-400">High</span>
-                  <span className="text-white font-bold ml-auto">{sev.high_count}</span>
-                </div>
-                <div className="flex items-center gap-2">
-                  <span className="w-2 h-2 rounded-full bg-amber-400" />
-                  <span className="text-slate-400">Medium</span>
-                  <span className="text-white font-bold ml-auto">{sev.medium_count}</span>
-                </div>
-                <div className="flex items-center gap-2">
-                  <span className="w-2 h-2 rounded-full bg-blue-500" />
-                  <span className="text-slate-400">Low</span>
-                  <span className="text-white font-bold ml-auto">{sev.low_count}</span>
-                </div>
-              </div>
-            </div>
-          </div>
-
-          <div className="cyber-card p-3.5 flex flex-col gap-2">
-            <div className="flex items-center justify-between">
-              <span className="text-[10px] font-mono font-semibold tracking-wider text-slate-400 uppercase">
-                THREAT INTEL FEEDS
-              </span>
-              <span className={`px-2 py-0.5 text-[10px] font-bold border rounded ${
-                threatStatus?.feed_state === 'LOADED' ? 'bg-emerald-950 text-emerald-400 border-emerald-800'
-                : threatStatus?.feed_state === 'ERROR' ? 'bg-rose-950 text-rose-400 border-rose-800'
-                : 'bg-slate-900 text-slate-400 border-slate-700'
-              }`}>
-                {threatStatus?.feed_state || 'EMPTY'}
-              </span>
-            </div>
-            <div className="text-[10px] font-mono text-slate-500">
-              {threatStatus?.ioc_count ?? 0} indicators from {threatStatus?.sources.join(', ') || 'no feeds'} •{' '}
-              {threatStatus?.match_count ?? 0} observed matches
-            </div>
-            <div className="flex flex-col gap-1.5 text-xs font-mono">
-              {threatTypeCounts.length > 0 ? (
-                threatTypeCounts.map((item, idx) => (
-                  <div key={idx} className="flex items-center justify-between">
-                    <div className="flex items-center gap-2">
-                      <span className="w-1.5 h-1.5 rounded-full" style={{ backgroundColor: item.color }} />
-                      <span className="text-slate-300">{item.name}</span>
-                    </div>
-                    <span className="text-slate-200 font-bold">{item.count}</span>
-                  </div>
-                ))
-              ) : (
-                <span className="text-[10px] text-slate-500">No detections yet — rules evaluate live capture flows</span>
-              )}
-            </div>
-          </div>
-
-          {/* Real-time Alert Feed */}
-          <div className="cyber-card p-3.5 flex flex-col gap-2 flex-1">
-            <div className="flex items-center justify-between">
-              <span className="text-[10px] font-mono font-semibold tracking-wider text-slate-400 uppercase">
-                REAL-TIME ALERT FEED
-              </span>
-              <button onClick={() => setActiveTab('scenario_labs')} className="text-[11px] font-mono text-cyan-400 hover:underline cursor-pointer">
-                View All
-              </button>
-            </div>
-
-            <div className="flex flex-col gap-2 overflow-y-auto max-h-48 pr-1">
-              {detections.length > 0 ? (
-                detections.slice(0, 8).map((alert) => (
-                  <div key={alert.finding_id} className="flex items-center justify-between p-2 rounded bg-[#091122] border border-[#162540] text-xs font-mono">
-                    <div className="flex flex-col">
-                      <span className="text-[10px] text-slate-500">{new Date(alert.timestamp).toLocaleTimeString()}</span>
-                      <span className="text-slate-200 font-semibold">{alert.title}</span>
-                      <span className="text-[10px] text-cyan-400/90">{alert.source_ip} → {alert.destination_ip}</span>
-                    </div>
-                    <span className={`px-2 py-0.5 text-[10px] font-bold border rounded ${
-                      alert.severity === 'HIGH' || alert.severity === 'CRITICAL'
-                        ? 'text-rose-400 bg-rose-950/60 border-rose-800'
-                        : alert.severity === 'MEDIUM'
-                        ? 'text-amber-400 bg-amber-950/60 border-amber-800'
-                        : 'text-blue-400 bg-blue-950/60 border-blue-800'
-                    }`}>
-                      {alert.severity}
-                    </span>
-                  </div>
-                ))
-              ) : (
-                <div className="flex flex-col items-center justify-center py-6 gap-2 text-slate-500">
-                  <ShieldAlert className="w-6 h-6 opacity-40" />
-                  <span className="text-[10px] font-mono">No alerts — all clear (so far)</span>
-                </div>
-              )}
-            </div>
-          </div>
+          <div className="cyber-card p-3"><div className="flex justify-between"><b className="text-[10px] tracking-wider text-slate-400">Findings</b><span className="text-[10px] text-slate-500">current session</span></div><div className="mt-2 grid grid-cols-2 gap-2 text-[11px]"><span>Total <b>{snapshot ? sev.total_findings_count : 'Unavailable'}</b></span><span>Active <b>{snapshot ? sev.active_count : 'Unavailable'}</b></span><span>High+ <b>{snapshot ? sev.critical_count + sev.high_count : 'Unavailable'}</b></span><span>Resolved <b>{snapshot ? sev.resolved_count : 'Unavailable'}</b></span></div></div>
+           <div className="cyber-card p-3"><b className="text-[10px] tracking-wider text-slate-400">RECENT FINDINGS</b><div className="mt-2 flex flex-col gap-1">{recentFindings.length ? recentFindings.map((alert) => <button key={alert.finding_id} onClick={() => setSelectedFinding(selectedFinding === alert.finding_id ? null : alert.finding_id)} className="rounded border border-[#525252] bg-[#141414] p-2 text-left text-[10px] hover:bg-[#252525]"><span className="text-slate-200">{alert.severity} · {alert.title}</span><span className="block text-slate-500">{alert.source_ip} → {alert.destination_ip}</span>{selectedFinding === alert.finding_id && <span className="mt-1 block text-slate-300">Evidence: {alert.evidence || 'No evidence text reported.'}</span>}</button>) : <span className="text-slate-500">{emptyAlertMessage}</span>}</div></div>
+          <div className="cyber-card p-3 text-[10px] text-slate-500"><b className="text-slate-400">THREAT INTEL</b><div className="mt-2">{threatStatus?.feed_state || 'UNAVAILABLE'} • {threatStatus?.match_count ?? 'Unavailable'} observed matches</div><div>No ATT&CK coverage score is inferred from these counts.</div></div>
         </div>
       </div>
-
-      {/* Bottom Live Connections Table */}
-      <div className="p-3 pt-0">
-        <div className="cyber-card p-3 flex flex-col gap-2">
-          <div className="flex items-center justify-between border-b border-[#17243c] pb-2">
-            <div className="flex items-center gap-2">
-              <span className="text-xs font-mono font-bold text-slate-200">LIVE GLOBAL CONNECTIONS</span>
-              <span className="text-xs font-mono text-slate-400">• {flows.length} Active Flows</span>
-            </div>
-            <button onClick={() => setActiveTab('conversations')} className="flex items-center gap-1 text-xs font-mono text-cyan-400 hover:underline">
-              View All Flows <ArrowRight className="w-3.5 h-3.5 ml-1" />
-            </button>
-          </div>
-
-          <div className="overflow-x-auto">
-            <table className="w-full text-left cyber-table">
-              <thead>
-                <tr>
-                  <th>Time</th>
-                  <th>Source</th>
-                  <th>Destination</th>
-                  <th>Protocol</th>
-                  <th>Packets</th>
-                  <th>Bytes</th>
-                  <th>Status</th>
-                  <th>Location</th>
-                  <th>Risk</th>
-                </tr>
-              </thead>
-              <tbody>
-                {displayedFlows.length > 0 ? (
-                  displayedFlows.map((row, idx) => (
-                    <tr key={idx} className="cursor-pointer">
-                      <td className="text-slate-400">{row.time}</td>
-                      <td className="text-cyan-400">{row.src}</td>
-                      <td className="text-slate-200">{row.dst}</td>
-                      <td>
-                        <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-blue-950 text-blue-400 border border-blue-800">
-                          {row.protocol}
-                        </span>
-                      </td>
-                      <td className="text-slate-300">{row.pkts}</td>
-                      <td className="text-slate-300">{row.bytes}</td>
-                      <td className="text-emerald-400 font-bold text-[10px]">{row.status}</td>
-                      <td className="text-slate-200 font-semibold">{row.location}</td>
-                      <td>
-                        <span className={`px-2 py-0.5 text-[10px] font-bold rounded ${
-                          row.risk === 'HIGH'
-                            ? 'bg-rose-950 text-rose-400 border border-rose-800'
-                            : row.risk === 'MEDIUM'
-                            ? 'bg-amber-950 text-amber-400 border border-amber-800'
-                            : 'bg-emerald-950 text-emerald-400 border border-emerald-800'
-                        }`}>
-                          {row.risk}
-                        </span>
-                      </td>
-                    </tr>
-                  ))
-                ) : (
-                  <tr>
-                    <td colSpan={9} className="text-center py-6 text-slate-500 text-xs font-mono">
-                      No active flows — start packet capture from the Capture Console to populate live telemetry
-                    </td>
-                  </tr>
-                )}
-              </tbody>
-            </table>
-          </div>
-        </div>
-      </div>
+       <div className="p-3 pt-0"><div className="cyber-card p-3"><div className="flex items-center justify-between border-b border-[#17243c] pb-2"><b className="text-xs">CURRENT-SESSION FLOWS</b><button onClick={() => setActiveTab('conversations')} className="text-xs text-slate-200 hover:underline">View in Capture Buddy →</button></div><div className="overflow-x-auto"><table className="w-full text-left cyber-table"><thead><tr><th>Time</th><th>Source</th><th>Destination</th><th>Protocol</th><th>Packets</th><th>Bytes</th><th>Status</th><th>Location</th><th>Severity</th></tr></thead><tbody>{displayedFlows.length ? displayedFlows.map((row, idx) => <tr key={idx}><td>{row.time}</td><td className="text-cyan-400">{row.src}</td><td>{row.dst}</td><td>{row.protocol}</td><td>{row.pkts}</td><td>{row.bytes}</td><td>{row.status}</td><td>{row.location}</td><td>{row.risk}</td></tr>) : <tr><td colSpan={9} className="py-6 text-center text-slate-500">{!desktopAvailable ? 'Flow telemetry unavailable' : refreshError ? 'Flow snapshot stale' : 'No observed flows in this session'}</td></tr>}</tbody></table></div></div></div>
     </div>
   );
 };
@@ -921,8 +428,31 @@ function formatBytes(bytes: number): string {
   return `${bytes} B`;
 }
 
-function formatKbps(kbps: number): string {
-  if (kbps >= 1024 * 1024) return `${(kbps / (1024 * 1024)).toFixed(2)} Gbps`;
-  if (kbps >= 1024) return `${(kbps / 1024).toFixed(1)} Mbps`;
-  return `${kbps.toFixed(1)} Kbps`;
+function hasCoordinates(entry: GeoIpEntry): entry is GeoIpEntry & { latitude: number; longitude: number } {
+  return entry.latitude != null && entry.longitude != null
+    && Number.isFinite(entry.latitude) && Number.isFinite(entry.longitude)
+    && Math.abs(entry.latitude) <= 90 && Math.abs(entry.longitude) <= 180;
+}
+
+function severityRank(severity?: string): number {
+  const ranks: Record<string, number> = { CRITICAL: 4, HIGH: 3, MEDIUM: 2, LOW: 1, INFO: 0 };
+  return ranks[severity?.toUpperCase() ?? ''] ?? -1;
+}
+
+function highestSeverity(...severities: (string | undefined)[]): string {
+  return severities.reduce<string>((top, value) => severityRank(value) > severityRank(top) ? value!.toUpperCase() : top, 'UNKNOWN');
+}
+
+function nodeSeverity(severity: string): LocationNode['status'] {
+  switch (severity.toUpperCase()) {
+    case 'CRITICAL': return 'critical';
+    case 'HIGH': return 'high';
+    case 'MEDIUM': return 'medium';
+    default: return 'low';
+  }
+}
+
+/** Capture engines have used both RUNNING and LIVE for the active state. */
+export function captureIsRunning(status: string): boolean {
+  return status === 'RUNNING' || status === 'LIVE';
 }

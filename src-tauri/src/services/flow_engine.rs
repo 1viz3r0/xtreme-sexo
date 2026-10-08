@@ -137,6 +137,8 @@ impl FlowEngine {
         } else {
             "ACTIVE".to_string()
         };
+        // End the entry borrow before bounded eviction mutates this map.
+        let rtt_ms = entry.rtt_ms;
 
         if let Some(existing) = queue.get_mut(&flow_key) {
             existing.packet_count += 1;
@@ -149,8 +151,8 @@ impl FlowEngine {
             existing.ts_end = now_ms;
             existing.duration_ms = existing.ts_end.saturating_sub(existing.ts_start);
             existing.tcp_state = tcp_state.clone();
-            if entry.rtt_ms > 0 {
-                existing.rtt_ms = entry.rtt_ms;
+            if rtt_ms > 0 {
+                existing.rtt_ms = rtt_ms;
             }
             if existing.dns_qname.is_none() {
                 existing.dns_qname = packet.dns_qname.clone();
@@ -202,7 +204,7 @@ impl FlowEngine {
             ts_start: now_ms,
             ts_end: now_ms,
             duration_ms: 0,
-            rtt_ms: entry.rtt_ms,
+            rtt_ms,
             dns_qname: packet.dns_qname.clone(),
         };
 
@@ -283,20 +285,29 @@ impl FlowEngine {
         }
     }
 
+    /// Snapshot cumulative live records without resetting counters, TCP state or JA4.
+    /// Active snapshots supersede older failed writes of the same flow.
     pub fn flush_flows(&self) -> Vec<FlowRecord> {
-        let mut queue = self.flows.lock().unwrap();
+        let queue = self.flows.lock().unwrap();
         let mut retries = self.retry_buffer.lock().unwrap();
 
-        let mut records: Vec<FlowRecord> = retries.drain(..).collect();
-        records.extend(queue.values().cloned());
-        queue.clear();
-        records
+        let mut records: HashMap<String, FlowRecord> = retries.drain(..)
+            .map(|record| (record.flow_id.clone(), record)).collect();
+        records.extend(queue.values().cloned().map(|record| (record.flow_id.clone(), record)));
+        records.into_values().collect()
     }
 
     /// Re-queues a failed persistence batch into the retry buffer.
     pub fn reinsert_retry(&self, records: Vec<FlowRecord>) {
+        self.persistence_failures.fetch_add(1, Ordering::Relaxed);
+        let queue = self.flows.lock().unwrap();
         let mut retries = self.retry_buffer.lock().unwrap();
         for r in records {
+            // Live records are already retained for the next snapshot.
+            if queue.values().any(|live| live.flow_id == r.flow_id) {
+                continue;
+            }
+            retries.retain(|old| old.flow_id != r.flow_id);
             if retries.len() >= 500 {
                 retries.pop_front();
             }
@@ -338,6 +349,42 @@ mod tests {
             dns_rcode: -1,
             dns_answers: 0,
         }
+    }
+
+    #[test]
+    fn persistence_snapshot_preserves_counters_state_and_ja4() {
+        let engine = FlowEngine::new();
+        let mut packet = pkt("10.0.0.1", 1234, "10.0.0.2", 443, "TCP");
+        packet.tcp_flags = 0x02;
+        let first = engine.ingest_packet(&packet);
+        engine.attach_ja4_to_flow(&first.flow_id, "test-ja4".into());
+        let snapshot = engine.flush_flows();
+        assert_eq!(engine.get_active_flows(10).len(), 1);
+        engine.reinsert_retry(snapshot);
+        packet.tcp_flags = 0x10;
+        let second = engine.ingest_packet(&packet);
+        assert_eq!(second.packet_count, 2);
+        assert_eq!(second.total_bytes, 128);
+        assert_eq!(second.tcp_state, "ESTABLISHED");
+        assert_eq!(second.ja4, "test-ja4");
+        let snapshot = engine.flush_flows();
+        assert_eq!(snapshot.len(), 1);
+        assert_eq!(snapshot[0].packet_count, 2);
+        assert_eq!(engine.internal.lock().unwrap().len(), 1);
+        assert_eq!(engine.get_summary_stats().retry_queue_count, 0);
+    }
+
+    #[test]
+    fn repeated_snapshots_keep_internal_and_live_tables_in_sync() {
+        let engine = FlowEngine::new();
+        for port in 1..=1000 {
+            engine.ingest_packet(&pkt("10.0.0.1", port, "10.0.0.2", 443, "TCP"));
+            if port % 100 == 0 {
+                engine.flush_flows();
+                assert_eq!(engine.internal.lock().unwrap().len(), engine.flows.lock().unwrap().len());
+            }
+        }
+        assert_eq!(engine.internal.lock().unwrap().len(), 1000);
     }
 
     #[test]

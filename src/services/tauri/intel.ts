@@ -199,6 +199,7 @@ export async function scanHostPorts(ip: string, extraPorts?: number[]): Promise<
       return await invoke<PortScanEntry[]>('scan_host_ports', { ip, extraPorts: extraPorts ?? [] });
     } catch (err) {
       console.warn('Failed to scan host ports:', err);
+      throw new Error(String(err));
     }
   }
   return [];

@@ -12,6 +12,24 @@ use pcap::Device;
 use std::net::UdpSocket;
 use std::time::{Duration, Instant};
 
+#[cfg(target_os = "linux")]
+fn has_cap_net_raw() -> bool {
+    std::fs::read_to_string("/proc/self/status")
+        .ok()
+        .and_then(|status| {
+            status
+                .lines()
+                .find_map(|line| line.strip_prefix("CapEff:\t").map(str::to_owned))
+        })
+        .and_then(|cap_eff| u64::from_str_radix(cap_eff.trim(), 16).ok())
+        .is_some_and(|cap_eff| cap_eff & (1 << 13) != 0)
+}
+
+#[cfg(not(target_os = "linux"))]
+fn has_cap_net_raw() -> bool {
+    true
+}
+
 fn dns_query(sock: &UdpSocket, server: &str) {
     let query: Vec<u8> = vec![
         0xAB, 0xCD, 0x01, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, //
@@ -47,6 +65,11 @@ fn pick_capture_device<'a>(devices: &'a [Device]) -> &'a Device {
 
 #[test]
 fn real_capture_dns_persistence() {
+    if !has_cap_net_raw() {
+        println!("[dns-verify] SKIP: CAP_NET_RAW is unavailable in this environment");
+        return;
+    }
+
     let devices = Device::list().expect("Npcap device enumeration failed");
     assert!(!devices.is_empty(), "no Npcap interfaces found");
     let dev = pick_capture_device(&devices);

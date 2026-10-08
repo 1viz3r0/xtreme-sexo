@@ -32,3 +32,13 @@ src-tauri/target
 releases
 RUN_NET0ZE.cmd
 EXECUTABLES_LOCATION.md
+
+# Local/private state and handoff archives
+.env
+.env.*
+!.env.example
+*.db
+*.sqlite
+*.sqlite3
+docs/NETOZE_LABS_RESUME_*.zip
+docs/NETOZE_LABS_RESUME_*.zip.sha256

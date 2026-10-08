@@ -1,4 +1,2 @@
-[env]
-# Npcap SDK import libs (wpcap.lib / Packet.lib) for the `pcap` crate on Windows
-LIBPCAP_LIBDIR = "C:\\npcap\\Lib\\x64"
-NPCAP_SDK = "C:\\npcap"
+# Windows SDK paths are supplied by scripts/build-desktop.mjs or the build
+# runner environment. Linux resolves libpcap through its native toolchain.

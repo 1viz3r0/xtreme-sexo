@@ -76,7 +76,7 @@ fn live_geoip_public_ip_and_lookup() {
     // Private IPs must never leave the machine: synthetic LOCAL entry, no external call.
     let entry = rt.block_on(svc.lookup("192.168.1.99"));
     let entry = entry.expect("private IP must resolve to synthetic local entry");
-    assert_eq!(entry.source, "local");
+    assert_eq!(entry.source, "local-classification");
     println!("[live] private IP handled locally ({} -> {})", "192.168.1.99", entry.country);
     assert!(svc.is_private("10.0.0.1"));
     assert!(svc.is_private("192.168.1.1"));
@@ -292,6 +292,18 @@ fn live_process_socket_correlation() {
 
 #[test]
 fn live_packet_parse_real_payload() {
+    #[cfg(target_os = "linux")]
+    {
+        let has_cap_net_raw = std::fs::read_to_string("/proc/self/status")
+            .ok()
+            .and_then(|status| status.lines().find_map(|line| line.strip_prefix("CapEff:\t").map(str::to_owned)))
+            .and_then(|cap_eff| u64::from_str_radix(cap_eff.trim(), 16).ok())
+            .is_some_and(|cap_eff| cap_eff & (1 << 13) != 0);
+        if !has_cap_net_raw {
+            println!("[live] packet parse SKIP: CAP_NET_RAW unavailable");
+            return;
+        }
+    }
     // Reuse the real packet bytes captured by the capture_verify test path is not
     // possible here; instead re-verify the parser on a real, freshly captured packet
     // if a capture interface is available. If capture is unavailable, mark UNAVAILABLE.

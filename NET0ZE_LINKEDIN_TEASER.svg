@@ -1,0 +1,55 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="627" viewBox="0 0 1200 627" role="img" aria-labelledby="title desc">
+  <title id="title">NET0ZE — Something powerful is taking shape</title>
+  <desc id="desc">A dark professional teaser card for NET0ZE, a network intelligence and cybersecurity platform.</desc>
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#07131f"/>
+      <stop offset="0.55" stop-color="#0b2030"/>
+      <stop offset="1" stop-color="#071018"/>
+    </linearGradient>
+    <linearGradient id="accent" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#7df9ff"/>
+      <stop offset="1" stop-color="#3b82f6"/>
+    </linearGradient>
+    <radialGradient id="glow" cx="50%" cy="45%" r="60%">
+      <stop offset="0" stop-color="#16c9d9" stop-opacity=".18"/>
+      <stop offset="1" stop-color="#16c9d9" stop-opacity="0"/>
+    </radialGradient>
+    <pattern id="grid" width="42" height="42" patternUnits="userSpaceOnUse">
+      <path d="M42 0H0V42" fill="none" stroke="#8be9ff" stroke-opacity=".07"/>
+    </pattern>
+    <filter id="softGlow" x="-50%" y="-50%" width="200%" height="200%">
+      <feGaussianBlur stdDeviation="8" result="blur"/>
+      <feMerge><feMergeNode in="blur"/><feMergeNode in="SourceGraphic"/></feMerge>
+    </filter>
+  </defs>
+
+  <rect width="1200" height="627" rx="28" fill="url(#bg)"/>
+  <rect width="1200" height="627" rx="28" fill="url(#glow)"/>
+  <rect x="28" y="28" width="1144" height="571" rx="20" fill="url(#grid)"/>
+  <path d="M760 0H1200V627H895C1005 505 1031 334 966 193 922 97 849 42 760 0Z" fill="#062a3b" opacity=".32"/>
+
+  <!-- NET0ZE mark and wordmark -->
+  <g transform="translate(88 62)">
+    <image href="/home/kalu/Desktop/code/MY-SECRET-NETOZE/src-tauri/branding/Netoze-icon.png" x="0" y="0" width="104" height="104" preserveAspectRatio="xMidYMid meet"/>
+    <text x="142" y="55" fill="#f5fdff" font-family="Inter,Segoe UI,Arial,sans-serif" font-size="39" font-weight="700" letter-spacing="7">NET0ZE</text>
+    <text x="146" y="87" fill="#7df9ff" font-family="Inter,Segoe UI,Arial,sans-serif" font-size="13" font-weight="600" letter-spacing="4">NETWORK INTELLIGENCE</text>
+  </g>
+
+  <g transform="translate(90 270)">
+    <text fill="#8be9ff" font-family="Inter,Segoe UI,Arial,sans-serif" font-size="17" font-weight="600" letter-spacing="4">SOMETHING POWERFUL IS</text>
+    <text y="75" fill="#ffffff" font-family="Arial,Segoe UI,sans-serif" font-size="60" font-weight="700">TAKING SHAPE.</text>
+    <rect y="111" width="92" height="4" rx="2" fill="url(#accent)"/>
+    <text y="162" fill="#c4d6df" font-family="Inter,Segoe UI,Arial,sans-serif" font-size="22">Real-time visibility. Threat detection.</text>
+    <text y="198" fill="#c4d6df" font-family="Inter,Segoe UI,Arial,sans-serif" font-size="22">Forensic insight. One intelligent workspace.</text>
+  </g>
+
+  <g transform="translate(90 545)">
+    <text fill="#7df9ff" font-family="Inter,Segoe UI,Arial,sans-serif" font-size="16" font-weight="700" letter-spacing="3">COMING SOON</text>
+    <text x="1017" fill="#6f8996" text-anchor="end" font-family="Inter,Segoe UI,Arial,sans-serif" font-size="15" letter-spacing="2">WATCH THIS SPACE  /  2026</text>
+  </g>
+
+  <circle cx="1010" cy="175" r="4" fill="#7df9ff" filter="url(#softGlow)"/>
+  <circle cx="1085" cy="250" r="3" fill="#7df9ff" opacity=".7"/>
+  <circle cx="930" cy="103" r="2" fill="#ffffff" opacity=".8"/>
+</svg>

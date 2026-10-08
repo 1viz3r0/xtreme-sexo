@@ -1,39 +1,41 @@
-import React, { useEffect, useState } from 'react';
+import React, { lazy, Suspense, useEffect, useMemo, useRef, useState } from 'react';
+import { createLifecycle, liveDataNeeds, mergeRecent, startSerialPolling } from './lib/appLifecycle';
 import { TopNavbar } from './components/TopNavbar';
 import { Sidebar } from './components/Sidebar';
 import type { TabType } from './components/Sidebar';
-import { GlobalIntelView } from './components/GlobalIntelView';
-import { ConversationTable } from './components/ConversationTable';
-import { StorylineInspector } from './components/StorylineInspector';
-import { EvidencePanel } from './components/EvidencePanel';
-import { AttackGraph as AttackGraphPanel } from './components/AttackGraph';
-import { EduInspectorModal } from './components/EduInspectorModal';
-import { ScenarioLabs } from './components/ScenarioLabs';
-import { DetectionBuilder } from './components/DetectionBuilder';
-import { AuditAndIOCs } from './components/AuditAndIOCs';
+import { CaptureBuddy } from './components/CaptureBuddy';
 import { SystemLogs } from './components/SystemLogs';
-import { HybridIntel } from './components/HybridIntel';
-import { UserProfileView } from './components/UserProfileView';
-import { AdminPanelView } from './components/AdminPanelView';
-import { AuthModal } from './components/AuthModal';
 import type { LocationNode } from './components/Globe3D';
-import { PanelLeft } from 'lucide-react';
 import { authSession, authLogout } from './services/tauri/auth';
 import { getActiveFlows } from './services/tauri/flows';
 import { getDetections } from './services/tauri/detections';
 import { getAttackGraph, subscribeToGraphEvents } from './services/tauri/graph';
-import { subscribeToCaptureStats, subscribeToCaptureStatus } from './services/tauri/capture';
 import { subscribeToFlowStream } from './services/tauri/flows';
 import type { FlowRecord } from './services/tauri/flows';
 import type { DetectionFinding } from './services/tauri/detections';
 import type { AttackGraph } from './services/tauri/graph';
-import type { CaptureMetrics } from './services/tauri/capture';
+
+const GlobalIntelView = lazy(() => import('./components/GlobalIntelView').then((module) => ({ default: module.GlobalIntelView })));
+const StorylineInspector = lazy(() => import('./components/StorylineInspector').then((module) => ({ default: module.StorylineInspector })));
+const EvidencePanel = lazy(() => import('./components/EvidencePanel').then((module) => ({ default: module.EvidencePanel })));
+const AttackGraphPanel = lazy(() => import('./components/AttackGraph').then((module) => ({ default: module.AttackGraph })));
+const EduInspectorModal = lazy(() => import('./components/EduInspectorModal').then((module) => ({ default: module.EduInspectorModal })));
+const ScenarioLabs = lazy(() => import('./components/ScenarioLabs').then((module) => ({ default: module.ScenarioLabs })));
+const DetectionBuilder = lazy(() => import('./components/DetectionBuilder').then((module) => ({ default: module.DetectionBuilder })));
+const AuditAndIOCs = lazy(() => import('./components/AuditAndIOCs').then((module) => ({ default: module.AuditAndIOCs })));
+const ScanBuddy = lazy(() => import('./components/ScanBuddy').then((module) => ({ default: module.ScanBuddy })));
+const UserProfileView = lazy(() => import('./components/UserProfileView').then((module) => ({ default: module.UserProfileView })));
+const AdminPanelView = lazy(() => import('./components/AdminPanelView').then((module) => ({ default: module.AdminPanelView })));
+const AuthModal = lazy(() => import('./components/AuthModal').then((module) => ({ default: module.AuthModal })));
+const Watchtower = lazy(() => import('./components/Watchtower').then((module) => ({ default: module.Watchtower })));
 
 export const App: React.FC = () => {
-  const [activeTab, setActiveTab] = useState<TabType>('global_intel');
+  const [activeTab, setActiveTab] = useState<TabType>('conversations');
   const [selectedNode, setSelectedNode] = useState<LocationNode | null>(null);
   const [searchOpenToken, setSearchOpenToken] = useState<number>(0);
   const [isAuthOpen, setIsAuthOpen] = useState<boolean>(false);
+  const [hasOpenedAuth, setHasOpenedAuth] = useState(false);
+  const openAuth = () => { setHasOpenedAuth(true); setIsAuthOpen(true); };
 
   // Sidebar Slide States
   const [isCollapsed, setIsCollapsed] = useState<boolean>(false);
@@ -46,8 +48,10 @@ export const App: React.FC = () => {
   useEffect(() => {
     const stored = localStorage.getItem('netoze_token');
     if (!stored) return;
+    let cancelled = false;
     authSession(stored)
       .then((u) => {
+        if (cancelled) return;
         if (u) {
           setUser({ id: u.id, name: u.name, email: u.email, role: u.role, isVerified: true });
         } else {
@@ -55,80 +59,85 @@ export const App: React.FC = () => {
         }
       })
       .catch(() => {
+        if (cancelled) return;
         localStorage.removeItem('netoze_token');
       });
+    return () => { cancelled = true; };
   }, []);
 
   // Live Data States
   const [flows, setFlows] = useState<FlowRecord[]>([]);
   const [events, setEvents] = useState<DetectionFinding[]>([]);
-  const [selectedFlowId, setSelectedFlowId] = useState<string | null>(null);
+  const [selectedFlowId] = useState<string | null>(null);
   const [selectedField, setSelectedField] = useState<string | null>(null);
   const [graphData, setGraphData] = useState<AttackGraph>({ nodes: [], edges: [] });
 
-  // Capture Telemetry States
-  const [captureMetrics, setCaptureMetrics] = useState<CaptureMetrics>({
-    status: 'UNAVAILABLE',
-    selected_interface: '',
-    packets_captured: 0,
-    bytes_captured: 0,
-    packets_per_sec: 0,
-    bytes_per_sec: 0,
-    dropped_packets: 0,
-    duration_secs: 0,
-  });
-  const [captureStatus, setCaptureStatus] = useState<string>('UNAVAILABLE');
+  const pollGate = useRef({ busy: false });
+  const [pageVisible, setPageVisible] = useState(() => !document.hidden);
 
-  const loadLiveData = async () => {
-    try {
-      const [flowData, detections, graph] = await Promise.all([
-        getActiveFlows(100),
-        getDetections(100),
-        getAttackGraph(),
-      ]);
-      setFlows(flowData);
-      setEvents(detections);
-      setGraphData(graph);
-    } catch (err) {
-      console.error('Error loading NET0ZE live data:', err);
-    }
-  };
-
-useEffect(() => {
-    loadLiveData();
-    const interval = window.setInterval(loadLiveData, 5000);
-    let unsubscribe: () => void = () => {};
-    subscribeToGraphEvents((graph) => setGraphData(graph)).then((u) => (unsubscribe = u));
-    return () => {
-      window.clearInterval(interval);
-      unsubscribe();
-    };
-  }, []);
-
-// Capture telemetry subscriptions
   useEffect(() => {
-    let unsubscribeStats: () => void = () => {};
-    let unsubscribeStatus: () => void = () => {};
-    let unsubscribeFlows: () => void = () => {};
-
-    subscribeToCaptureStats((metrics: CaptureMetrics) => setCaptureMetrics(metrics)).then(
-      (_u: () => void) => (unsubscribeStats = _u)
-    );
-    subscribeToCaptureStatus((status: string) => setCaptureStatus(status)).then(
-      (_u: () => void) => (unsubscribeStatus = _u)
-    );
-    subscribeToFlowStream((flow: FlowRecord) => {
-      setFlows((prev) => [...prev, flow]);
-    }).then((_u: () => void) => (unsubscribeFlows = _u));
-
-    return () => {
-      unsubscribeStats();
-      unsubscribeStatus();
-      unsubscribeFlows();
-    };
+    const updateVisibility = () => setPageVisible(!document.hidden);
+    document.addEventListener('visibilitychange', updateVisibility);
+    return () => document.removeEventListener('visibilitychange', updateVisibility);
   }, []);
 
-// Keyboard shortcut handler for CTRL + K (geo search lives in GlobalIntelView)
+  useEffect(() => {
+    // Watchtower is the consolidated live view, so it consumes all existing
+    // streams/snapshots without introducing a second polling lifecycle.
+    const needs = activeTab === 'watchtower'
+      ? { flows: true, detections: true, graph: true }
+      : liveDataNeeds(activeTab);
+    if (!pageVisible || !needs.flows) return;
+    const lifecycle = createLifecycle();
+    let streamRevision = 0;
+    let graphRevision = 0;
+    let pendingFlows: FlowRecord[] = [];
+    let streamTimer: ReturnType<typeof setTimeout> | undefined;
+
+    // Batch streamed records rather than scheduling a React update per packet flow.
+    void lifecycle.own(subscribeToFlowStream(lifecycle.guard((flow: FlowRecord) => {
+      streamRevision += 1;
+      pendingFlows = mergeRecent(pendingFlows, [flow]);
+      if (streamTimer === undefined) {
+        streamTimer = setTimeout(() => {
+          streamTimer = undefined;
+          if (!lifecycle.active) return;
+          const batch = pendingFlows;
+          pendingFlows = [];
+          setFlows((previous) => mergeRecent(previous, batch));
+        }, 100);
+      }
+    })));
+    if (needs.graph) {
+      void lifecycle.own(subscribeToGraphEvents(lifecycle.guard((graph: AttackGraph) => {
+        graphRevision += 1;
+        setGraphData(graph);
+      })));
+    }
+
+    const stopPolling = startSerialPolling(async () => {
+      const revision = streamRevision;
+      const graphSnapshotRevision = graphRevision;
+      const [flowData, detections, graph] = await Promise.allSettled([
+        getActiveFlows(100),
+        needs.detections ? getDetections(100) : Promise.resolve(null),
+        needs.graph ? getAttackGraph() : Promise.resolve(null),
+      ]);
+      if (!lifecycle.active) return;
+      // Do not overwrite events that arrived while the snapshot was in flight.
+      if (revision === streamRevision && flowData.status === 'fulfilled') setFlows(mergeRecent([], flowData.value));
+      if (detections.status === 'fulfilled' && detections.value) setEvents(detections.value);
+      if (graphSnapshotRevision === graphRevision && graph.status === 'fulfilled' && graph.value) setGraphData(graph.value);
+    }, pollGate.current, 5000);
+
+    return () => {
+      lifecycle.dispose();
+      stopPolling();
+      clearTimeout(streamTimer);
+    };
+  }, [activeTab, pageVisible]);
+
+  // Escape dismisses overlays (geo shortcuts live in GlobalIntelView).
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
       if (e.key === 'Escape') {
@@ -149,42 +158,39 @@ useEffect(() => {
     setActiveTab('user_profile');
   };
 
-  const handleSelectFlow = (flowId: string) => {
-    setSelectedFlowId(flowId);
-    setActiveTab('storyline');
-  };
-
   const selectedFlow = flows.find((f) => f.flow_id === selectedFlowId) || flows[0] || null;
-  const severityRank: Record<string, number> = { CRITICAL: 5, HIGH: 4, MEDIUM: 3, LOW: 2, INFO: 1 };
-
-  const hostSeverity = (ip: string): string => {
-    const sevs = flows
-      .filter((f) => f.src_ip === ip || f.dst_ip === ip)
-      .map((f) => f.severity)
-      .filter((s) => s && s !== 'UNKNOWN');
-    if (sevs.length === 0) return 'INFO';
-    let top = sevs[0];
-    for (const s of sevs) if ((severityRank[s] ?? 0) > (severityRank[top] ?? 0)) top = s;
-    return top;
-  };
-
-  const graphForPanel = {
-    nodes: graphData.nodes.map((n) => ({
-      id: n.node_id,
-      label: n.label,
-      type: n.node_type,
-      max_severity: hostSeverity(n.node_id),
-    })),
-    edges: graphData.edges.map((e) => ({
-      id: e.edge_id,
-      source: e.source_node,
-      target: e.destination_node,
-      protocol: e.relationship,
-      count: 1,
-      max_severity: hostSeverity(e.destination_node),
-      threat_score: Math.round(e.confidence * 100),
-    })),
-  };
+  const graphForPanel = useMemo(() => {
+    if (activeTab !== 'attack_graph') return { nodes: [], edges: [] };
+    const severityRank: Record<string, number> = { CRITICAL: 5, HIGH: 4, MEDIUM: 3, LOW: 2, INFO: 1 };
+    const severities = new Map<string, string>();
+    for (const flow of flows) {
+      if (!flow.severity || flow.severity === 'UNKNOWN') continue;
+      for (const ip of [flow.src_ip, flow.dst_ip]) {
+        const current = severities.get(ip);
+        if (!current || (severityRank[flow.severity] ?? 0) > (severityRank[current] ?? 0)) {
+          severities.set(ip, flow.severity);
+        }
+      }
+    }
+    const hostSeverity = (ip: string) => severities.get(ip) || 'INFO';
+    return {
+      nodes: graphData.nodes.map((n) => ({
+        id: n.node_id,
+        label: n.label,
+        type: n.node_type,
+        max_severity: hostSeverity(n.node_id),
+      })),
+      edges: graphData.edges.map((e) => ({
+        id: e.edge_id,
+        source: e.source_node,
+        target: e.destination_node,
+        protocol: e.relationship,
+        count: 1,
+        max_severity: hostSeverity(e.destination_node),
+        threat_score: Math.round(e.confidence * 100),
+      })),
+    };
+  }, [activeTab, flows, graphData]);
   const rawEvent = events.find((e) => e.finding_id === selectedFlowId) || events[0] || null;
   const selectedEvent = rawEvent
     ? {
@@ -198,11 +204,11 @@ useEffect(() => {
     : null;
 
   return (
-    <div className="w-screen h-screen flex flex-col bg-black text-slate-200 overflow-hidden font-sans select-none">
+    <div className="studio-shell">
       {/* Top Navbar */}
       <TopNavbar
-        onOpenSearch={() => setSearchOpenToken((t) => t + 1)}
-        onOpenAuth={() => setIsAuthOpen(true)}
+        onOpenSearch={() => { setActiveTab('global_intel'); setSearchOpenToken((t) => t + 1); }}
+        onOpenAuth={openAuth}
         user={user}
         onLogout={handleLogout}
         isFullyHidden={isFullyHidden}
@@ -210,18 +216,7 @@ useEffect(() => {
       />
 
       {/* Main Body: Left Sidebar + Active View Workspace */}
-      <div className="flex-1 flex overflow-hidden relative">
-        {/* Floating Slide-Out Toggle Button when Sidebar is fully hidden */}
-        {isFullyHidden && (
-          <button
-            onClick={() => setIsFullyHidden(false)}
-            className="absolute top-3 left-3 z-40 p-2 rounded-md bg-cyan-950/90 text-cyan-400 border border-cyan-500 shadow-xl flex items-center gap-1.5 font-mono text-xs font-bold hover:bg-cyan-900 transition-colors cursor-pointer animate-pulse"
-          >
-            <PanelLeft className="w-4 h-4" />
-            <span>OPEN NAVIGATION</span>
-          </button>
-        )}
-
+      <div className="studio-body">
         {/* Left Sidebar Navigation */}
         <Sidebar
           activeTab={activeTab}
@@ -234,7 +229,8 @@ useEffect(() => {
         />
 
         {/* View Routing Workspace */}
-        <main className="flex-1 flex flex-col overflow-hidden relative bg-black">
+        <main id="studio-workspace" aria-label="Workspace" className="studio-workspace">
+          <Suspense fallback={<div role="status" className="p-4 text-sm text-slate-400">Loading view…</div>}>
           {activeTab === 'global_intel' && (
             <GlobalIntelView
               selectedNode={selectedNode}
@@ -244,16 +240,17 @@ useEffect(() => {
             />
           )}
 
-          {activeTab === 'conversations' && (
-            <div className="flex-1 p-4 overflow-y-auto">
-              <ConversationTable
-                flows={flows.map((f) => ({ ...f, confidence: 0 }))}
-                selectedFlowId={selectedFlowId}
-                onSelectFlow={handleSelectFlow}
-                onInspectField={(f) => setSelectedField(f)}
-              />
+           {activeTab === 'conversations' && (
+            <div className="studio-page">
+              <CaptureBuddy />
             </div>
-          )}
+           )}
+
+           {activeTab === 'watchtower' && (
+             <div className="studio-page">
+               <Watchtower flows={flows} events={events} graph={graphData} />
+             </div>
+           )}
 
           {activeTab === 'storyline' && (
             <div className="flex-1 p-4 overflow-y-auto grid grid-cols-1 lg:grid-cols-2 gap-4">
@@ -275,13 +272,13 @@ useEffect(() => {
           )}
 
           {activeTab === 'network_engine' && (
-            <div className="flex-1 p-4 overflow-y-auto">
-              <HybridIntel />
+            <div className="studio-page">
+              <ScanBuddy />
             </div>
           )}
 
           {activeTab === 'system_logs' && (
-            <div className="flex-1 p-4 overflow-y-auto">
+            <div className="studio-page studio-host-page">
               <SystemLogs />
             </div>
           )}
@@ -295,7 +292,7 @@ useEffect(() => {
             </div>
           )}
 
-          {activeTab === 'scenario_labs' && (
+          {(activeTab === 'labs' || activeTab === 'scenario_labs') && (
             <ScenarioLabs />
           )}
 
@@ -312,7 +309,7 @@ useEffect(() => {
           {activeTab === 'user_profile' && (
             <UserProfileView
               user={user}
-              onOpenAuth={() => setIsAuthOpen(true)}
+              onOpenAuth={openAuth}
               onLogout={handleLogout}
               setActiveTab={setActiveTab}
             />
@@ -321,9 +318,11 @@ useEffect(() => {
           {activeTab === 'admin_panel' && (
             <AdminPanelView />
           )}
+          </Suspense>
         </main>
       </div>
 
+      <Suspense fallback={<div role="status" className="fixed bottom-4 right-4 text-sm text-slate-400">Loading…</div>}>
       {/* Field Inspection Modal Overlay */}
       {selectedField && activeTab !== 'edu_inspector' && (
         <div className="fixed inset-0 bg-black/75 backdrop-blur-md z-50 flex items-center justify-center p-4">
@@ -337,7 +336,7 @@ useEffect(() => {
       )}
 
       {/* Login & Sign Up Authentication Modal */}
-      <AuthModal
+      {hasOpenedAuth && <AuthModal
         isOpen={isAuthOpen}
         onClose={() => setIsAuthOpen(false)}
         onLoginSuccess={(userData) => {
@@ -345,7 +344,8 @@ useEffect(() => {
           if (userData.role === 'admin') setActiveTab('global_intel');
           else setActiveTab('user_profile');
         }}
-      />
+      />}
+      </Suspense>
     </div>
   );
 };

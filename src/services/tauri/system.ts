@@ -38,11 +38,11 @@ export async function getSystemInfo(): Promise<SystemInfo> {
   }
 
   return {
-    os_name: 'Web Browser',
-    os_version: 'Web Standard API',
-    hostname: 'localhost-web',
-    architecture: 'wasm/js',
-    user_name: 'Web User',
+    os_name: 'Unavailable',
+    os_version: 'Native desktop required',
+    hostname: 'Unavailable',
+    architecture: 'Browser sandbox',
+    user_name: 'Unavailable',
     is_admin: false,
   };
 }
@@ -57,21 +57,22 @@ export async function getDetailedSystemInfo(): Promise<DetailedSystemInfo> {
       return await invoke<DetailedSystemInfo>('get_detailed_system_info');
     } catch (err) {
       console.warn('Failed to invoke native get_detailed_system_info:', err);
+      throw new Error(String(err));
     }
   }
 
   return {
-    hostname: 'localhost-web',
-    os_name: 'Web Browser',
-    os_version: 'Chrome Engine',
-    architecture: 'x86_64',
-    cpu_model: 'Web Virtual CPU',
-    cpu_core_count: 8,
-    ram_total_bytes: 16 * 1024 * 1024 * 1024,
-    ram_available_bytes: 8 * 1024 * 1024 * 1024,
-    ram_usage_percent: 50.0,
-    uptime_seconds: 3600,
-    user_name: 'Web Analyst',
+    hostname: 'Unavailable',
+    os_name: 'Unavailable',
+    os_version: 'Native desktop required',
+    architecture: 'Browser sandbox',
+    cpu_model: 'Unavailable',
+    cpu_core_count: 0,
+    ram_total_bytes: 0,
+    ram_available_bytes: 0,
+    ram_usage_percent: 0,
+    uptime_seconds: 0,
+    user_name: 'Unavailable',
     is_admin: false,
   };
 }

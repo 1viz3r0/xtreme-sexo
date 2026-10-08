@@ -23,11 +23,11 @@ export async function getAppConfig(): Promise<AppConfig> {
   }
 
   return {
-    selected_interface: 'eth0',
-    capture_status: 'UNAVAILABLE (WEB MODE)',
-    app_mode: 'DEMO / LAB',
+    selected_interface: '',
+    capture_status: 'UNAVAILABLE (NATIVE DESKTOP REQUIRED)',
+    app_mode: 'BROWSER PREVIEW',
     theme: 'dark_glass',
-    sqlite_path: 'In-Memory (Browser)',
-    duckdb_path: 'In-Memory (Browser)',
+    sqlite_path: 'Unavailable (Browser Sandbox)',
+    duckdb_path: 'Unavailable (Browser Sandbox)',
   };
 }

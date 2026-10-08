@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
-import { ShieldCheck, X, Info, Loader2, KeyRound } from 'lucide-react';
+import { X, Info, Loader2, KeyRound } from 'lucide-react';
+import { BrandLogo } from './BrandLogo';
 import {
   authLogin,
   authRegister,
@@ -97,9 +98,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({ isOpen, onClose, onLoginSu
       <div className="w-full max-w-md rounded-2xl border-2 border-cyan-800/60 bg-slate-950 p-6 shadow-[0_0_40px_rgba(34,211,238,0.15)]">
         <div className="mb-5 flex items-start justify-between">
           <div className="flex items-center gap-3">
-            <div className="rounded-lg border border-cyan-700/50 bg-cyan-950/40 p-2">
-              <ShieldCheck className="h-6 w-6 text-cyan-400" />
-            </div>
+            <BrandLogo compact />
             <div>
               <h2 className="font-mono text-sm font-bold tracking-widest text-cyan-300">
                 NETOZE AUTHENTICATION

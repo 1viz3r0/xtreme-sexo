@@ -1,0 +1,14 @@
+{
+  "$schema": "https://schema.tauri.app/config/2.0.0",
+  "bundle": {
+    "targets": ["deb", "appimage"],
+    "resources": [],
+    "linux": {
+      "deb": {
+        "depends": ["libpcap0.8", "libcap2-bin", "passwd"],
+        "files": {"/usr/lib/netoze/netoze-capture-helper": "target/release/netoze-capture-helper"},
+        "postInstallScript": "install/linux-postinst.sh"
+      }
+    }
+  }
+}

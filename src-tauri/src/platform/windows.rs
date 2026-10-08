@@ -1,20 +1,23 @@
 use crate::models::{
     CapabilityStatus, DetailedAdapterInfo, DetailedSystemInfo, NetworkAdapterInfo, NpcapStatus,
     PacketCaptureCapability, SystemInfo,
-};use pcap::Device;
-use std::net::SocketAddr;use std::path::Path;
+};
+use pcap::Device;
+use std::path::Path;
 use sysinfo::{Networks, System};
 
 /// Checks if current process runs with elevated Administrator privileges on Windows
 pub fn check_is_admin() -> bool {
     #[cfg(windows)]
     {
-        // Check standard elevated token or admin SID environment hint
-        let is_elevated = std::env::var("USERPROFILE")
-            .map(|p| p.contains("System32") || p.contains("Administrator"))
-            .unwrap_or(false);
-        if is_elevated {
-            return true;
+        use windows_sys::Win32::Security::{CheckTokenMembership, CreateWellKnownSid, WinBuiltinAdministratorsSid};
+        let mut sid = [0u32; 17];
+        let mut size = std::mem::size_of_val(&sid) as u32;
+        let mut member = 0;
+        unsafe {
+            if CreateWellKnownSid(WinBuiltinAdministratorsSid, std::ptr::null_mut(), sid.as_mut_ptr().cast(), &mut size) != 0 {
+                return CheckTokenMembership(0, sid.as_mut_ptr().cast(), &mut member) != 0 && member != 0;
+            }
         }
     }
     false
@@ -22,6 +25,9 @@ pub fn check_is_admin() -> bool {
 
 /// Inspects Windows system for Npcap driver DLLs across all standard Windows installation paths
 pub fn inspect_npcap() -> NpcapStatus {
+    if !cfg!(windows) {
+        return NpcapStatus { installed: false, service_available: false, version: None };
+    }
     let paths = [
         "C:\\Windows\\System32\\Npcap\\wpcap.dll",
         "C:\\Windows\\System32\\Npcap\\Packet.dll",
@@ -41,31 +47,40 @@ pub fn inspect_npcap() -> NpcapStatus {
 
     NpcapStatus {
         installed,
-        service_available: installed,
-        version: if installed {
-            Some("Npcap Packet Capture Engine available".to_string())
-        } else {
-            None
-        },
+        service_available: service_state("npcap").as_deref() == Some("RUNNING"),
+        version: None,
     }
+}
+
+/// Query the SCM; access denied, absent service and query failures stay unknown.
+pub(crate) fn service_state(name: &str) -> Option<String> {
+    #[cfg(windows)]
+    unsafe {
+        use windows_sys::Win32::System::Services::*;
+        let manager = OpenSCManagerW(std::ptr::null(), std::ptr::null(), SC_MANAGER_CONNECT);
+        if manager == 0 { return None; }
+        let name: Vec<u16> = name.encode_utf16().chain(std::iter::once(0)).collect();
+        let service = OpenServiceW(manager, name.as_ptr(), SERVICE_QUERY_STATUS);
+        if service == 0 { CloseServiceHandle(manager); return None; }
+        let mut status: SERVICE_STATUS = std::mem::zeroed();
+        let ok = QueryServiceStatus(service, &mut status);
+        CloseServiceHandle(service);
+        CloseServiceHandle(manager);
+        if ok == 0 { return None; }
+        return Some(match status.dwCurrentState {
+            SERVICE_STOPPED => "STOPPED", SERVICE_START_PENDING => "START_PENDING",
+            SERVICE_STOP_PENDING => "STOP_PENDING", SERVICE_RUNNING => "RUNNING",
+            SERVICE_CONTINUE_PENDING => "CONTINUE_PENDING", SERVICE_PAUSE_PENDING => "PAUSE_PENDING",
+            SERVICE_PAUSED => "PAUSED", _ => "UNKNOWN",
+        }.to_string());
+    }
+    #[cfg(not(windows))]
+    { let _ = name; None }
 }
 
 /// Inspects packet capture capabilities
 pub fn inspect_packet_capture() -> PacketCaptureCapability {
-    let npcap = inspect_npcap();
-    if npcap.installed {
-        PacketCaptureCapability {
-            available: true,
-            driver: "Npcap Packet Capture Engine".to_string(),
-            reason: "Npcap driver active and available".to_string(),
-        }
-    } else {
-        PacketCaptureCapability {
-            available: false,
-            driver: "None".to_string(),
-            reason: "Npcap driver is not installed or unavailable in this environment. Please install Npcap.".to_string(),
-        }
-    }
+    super::capture::inspect_packet_capture()
 }
 
 /// Gathers complete Capability Inspector status
@@ -82,8 +97,8 @@ pub fn get_capabilities() -> CapabilityStatus {
         raw_sockets: admin,
         interfaces_count: adapters.len(),
         platform: std::env::consts::OS.to_string(),
-        active_tcp_available: true,
-        windows_event_log_available: true,
+        active_tcp_available: cfg!(windows),
+        windows_event_log_available: cfg!(windows),
     }
 }
 
@@ -92,11 +107,11 @@ pub fn get_system_information() -> SystemInfo {
     let mut sys = System::new_all();
     sys.refresh_all();
 
-    let os_name = System::name().unwrap_or_else(|| "Windows".to_string());
-    let os_version = System::os_version().unwrap_or_else(|| "10/11".to_string());
-    let hostname = System::host_name().unwrap_or_else(|| "NET0ZE-NODE".to_string());
+    let os_name = System::name().unwrap_or_else(|| std::env::consts::OS.to_string());
+    let os_version = System::os_version().unwrap_or_else(|| "Unknown".to_string());
+    let hostname = System::host_name().unwrap_or_else(|| "Unknown".to_string());
     let architecture = std::env::consts::ARCH.to_string();
-    let user_name = std::env::var("USERNAME").unwrap_or_else(|_| "Analyst".to_string());
+    let user_name = std::env::var("USERNAME").unwrap_or_else(|_| "Unknown".to_string());
     let is_admin = check_is_admin();
 
     SystemInfo {
@@ -109,20 +124,20 @@ pub fn get_system_information() -> SystemInfo {
     }
 }
 
-/// Gathers Detailed Windows Host System Information
+/// Gathers native host information on Windows and Linux using sysinfo.
 pub fn get_detailed_system_information() -> DetailedSystemInfo {
     let mut sys = System::new_all();
     sys.refresh_all();
 
-    let hostname = System::host_name().unwrap_or_else(|| "NET0ZE-DESKTOP".to_string());
-    let os_name = System::name().unwrap_or_else(|| "Windows".to_string());
-    let os_version = System::os_version().unwrap_or_else(|| "11 Pro".to_string());
+    let hostname = System::host_name().unwrap_or_else(|| "Unknown".to_string());
+    let os_name = System::name().unwrap_or_else(|| std::env::consts::OS.to_string());
+    let os_version = System::os_version().unwrap_or_else(|| "Unknown".to_string());
     let architecture = std::env::consts::ARCH.to_string();
     let cpu_model = sys
         .cpus()
         .first()
         .map(|c| c.brand().to_string())
-        .unwrap_or_else(|| "x86_64 Processor".to_string());
+        .unwrap_or_else(|| "Unknown".to_string());
     let cpu_core_count = sys.cpus().len();
     let ram_total_bytes = sys.total_memory();
     let ram_available_bytes = sys.available_memory();
@@ -133,7 +148,8 @@ pub fn get_detailed_system_information() -> DetailedSystemInfo {
         0.0
     };
     let uptime_seconds = System::uptime();
-    let user_name = std::env::var("USERNAME").unwrap_or_else(|_| "Analyst".to_string());
+    let user_name = std::env::var(if cfg!(windows) { "USERNAME" } else { "USER" })
+        .unwrap_or_else(|_| "Unknown".to_string());
     let is_admin = check_is_admin();
 
     DetailedSystemInfo {
@@ -168,20 +184,8 @@ pub fn get_network_adapters() -> Vec<NetworkAdapterInfo> {
             description: format!("Network Adapter ({})", interface_name),
             ip_addresses: vec![],
             mac_address: mac,
-            is_up: true,
+            is_up: false, // Operational state not collected by sysinfo.
             is_loopback,
-        });
-    }
-
-    if adapters.is_empty() {
-        // Fallback: report localhost as the only available address
-        adapters.push(NetworkAdapterInfo {
-            name: "Localhost".to_string(),
-            description: "Network Adapter (Localhost)".to_string(),
-            ip_addresses: vec!["127.0.0.1".to_string()],
-            mac_address: "00:00:00:00:00:00".to_string(),
-            is_up: true,
-            is_loopback: true,
         });
     }
 
@@ -197,10 +201,10 @@ pub fn get_detailed_network_adapters() -> Vec<DetailedAdapterInfo> {
 
     for (interface_name, network) in &networks {
         let mac = network.mac_address().to_string();
-        let rx_bytes = network.received();
-        let tx_bytes = network.transmitted();
-        let rx_packets = network.packets_received();
-        let tx_packets = network.packets_transmitted();
+        let rx_bytes = network.total_received();
+        let tx_bytes = network.total_transmitted();
+        let rx_packets = network.total_packets_received();
+        let tx_packets = network.total_packets_transmitted();
 
         let friendly_name = if interface_name.to_lowercase().contains("wi-fi") || interface_name.to_lowercase().contains("wlan") {
             "Wi-Fi Network Adapter".to_string()
@@ -215,50 +219,23 @@ pub fn get_detailed_network_adapters() -> Vec<DetailedAdapterInfo> {
         } else if interface_name.to_lowercase().contains("wi-fi") {
             "Wireless".to_string()
         } else {
-            "Ethernet".to_string()
+            "Unknown".to_string()
         };
 
         adapters.push(DetailedAdapterInfo {
             name: interface_name.clone(),
             friendly_name,
-            description: format!("Windows Adapter ({})", interface_name),
+            description: format!("Network Adapter ({})", interface_name),
             mac_address: mac,
             ipv4_addresses: vec![],
             ipv6_addresses: vec![],
-            oper_status: "Up".to_string(),
+            oper_status: "Unknown".to_string(),
             interface_type,
             rx_bytes,
             tx_bytes,
             rx_packets,
             tx_packets,
         });
-    }
-
-if adapters.is_empty() {
-        // Fallback: use the first network's data if no adapters were collected
-        let first_entry = networks.iter().next();
-        if let Some((first_name, first_network)) = first_entry {
-            let mac = first_network.mac_address().to_string();
-            let addrs: Vec<String> = vec![];
-            adapters.push(DetailedAdapterInfo {
-                name: first_name.clone(),
-                friendly_name: format!("Network Adapter ({})", first_name),
-                description: format!("Windows Adapter ({})", first_name),
-                mac_address: mac,
-                ipv4_addresses: if addrs.is_empty() {
-                    vec!["127.0.0.1".to_string()]
-                } else {
-                    addrs.clone()
-                },
-                ipv6_addresses: addrs.clone(),
-                oper_status: "Up".to_string(),
-                interface_type: "ethernet".to_string(),
-                rx_bytes: 0,
-                tx_bytes: 0,
-                rx_packets: 0,
-                tx_packets: 0,
-            });
-        }
     }
 
     adapters

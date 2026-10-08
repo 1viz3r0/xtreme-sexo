@@ -7,17 +7,19 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use sysinfo::System;
 
 pub fn get_host_identity_info() -> HostIdentity {
-    let hostname = std::env::var("COMPUTERNAME")
-        .or_else(|_| std::env::var("HOSTNAME"))
-        .unwrap_or_else(|_| "NET0ZE-HOST".to_string());
+    let hostname = System::host_name().unwrap_or_else(|| "UNKNOWN".to_string());
 
     HostIdentity {
         hostname,
         os_family: std::env::consts::OS.to_string(),
-        os_version: "Windows 10/11 x64".to_string(),
+        os_version: host_os_version(),
         architecture: std::env::consts::ARCH.to_string(),
         app_version: "2.0.0".to_string(),
     }
+}
+
+fn host_os_version() -> String {
+    sysinfo::System::os_version().unwrap_or_else(|| "UNKNOWN".to_string())
 }
 
 pub fn current_timestamp_ms() -> u64 {
@@ -46,7 +48,7 @@ pub fn collect_system_snapshot() -> SystemSnapshot {
             state: normalize_tcp_state(&c.tcp_state),
             pid: c.pid,
             process_name: c.process_name.clone(),
-            executable_path: format!("C:\\Windows\\System32\\{}", c.process_name),
+            executable_path: socket_executable_path(c.pid),
             address_family: if c.local_ip.contains(':') { "IPv6".to_string() } else { "IPv4".to_string() },
             timestamp: now_ms,
         });
@@ -57,14 +59,15 @@ pub fn collect_system_snapshot() -> SystemSnapshot {
     let mut interfaces = Vec::with_capacity(platform_adapters.len());
 
     for (idx, ad) in platform_adapters.into_iter().enumerate() {
+        let link_speed = interface_link_speed(&ad.name);
         interfaces.push(NetworkInterfaceEntry {
             interface_id: format!("if_{}", idx + 1),
             name: ad.name,
             mac_address: ad.mac_address,
             ipv4_addresses: ad.ipv4_addresses,
             ipv6_addresses: ad.ipv6_addresses,
-            operational_state: if ad.oper_status == "Up" { "UP".to_string() } else { "DOWN".to_string() },
-            link_speed_mbps: 1000,
+            operational_state: ad.oper_status.to_uppercase(),
+            link_speed_mbps: link_speed,
         });
     }
 
@@ -90,33 +93,9 @@ pub fn collect_system_snapshot() -> SystemSnapshot {
         });
     }
 
-    // 5. Windows Services (Read-only observation)
-    let services = vec![
-        WindowsServiceEntry {
-            service_name: "npcap".to_string(),
-            display_name: "Npcap Packet Capture Driver".to_string(),
-            state: "RUNNING".to_string(),
-            start_type: "AUTOMATIC".to_string(),
-        },
-        WindowsServiceEntry {
-            service_name: "EventLog".to_string(),
-            display_name: "Windows Event Log".to_string(),
-            state: "RUNNING".to_string(),
-            start_type: "AUTOMATIC".to_string(),
-        },
-        WindowsServiceEntry {
-            service_name: "Dhcp".to_string(),
-            display_name: "DHCP Client".to_string(),
-            state: "RUNNING".to_string(),
-            start_type: "AUTOMATIC".to_string(),
-        },
-        WindowsServiceEntry {
-            service_name: "Dnscache".to_string(),
-            display_name: "DNS Client".to_string(),
-            state: "RUNNING".to_string(),
-            start_type: "AUTOMATIC".to_string(),
-        },
-    ];
+    // 5. Windows Services are only observable on Windows. Linux has no equivalent
+    // service database in this model, so do not report fabricated Windows services.
+    let services = windows_services();
 
     SystemSnapshot {
         timestamp: now_ms,
@@ -128,6 +107,45 @@ pub fn collect_system_snapshot() -> SystemSnapshot {
         correlations: vec![],
     }
 }
+
+#[cfg(windows)]
+fn socket_executable_path(pid: u32) -> String {
+    let mut system = System::new();
+    let pid = sysinfo::Pid::from_u32(pid);
+    system.refresh_process(pid);
+    system.process(pid).and_then(|process| process.exe())
+        .map(|path| path.to_string_lossy().into_owned())
+        .unwrap_or_else(|| "UNKNOWN".to_string())
+}
+
+#[cfg(not(windows))]
+fn socket_executable_path(pid: u32) -> String {
+    if pid == 0 { return "UNKNOWN".to_string(); }
+    std::fs::read_link(format!("/proc/{pid}/exe")).map(|path| path.to_string_lossy().into_owned()).unwrap_or_else(|_| "UNKNOWN".to_string())
+}
+
+#[cfg(windows)]
+fn interface_link_speed(_name: &str) -> u64 { 0 } // Model sentinel: speed not observed.
+
+#[cfg(target_os = "linux")]
+fn interface_link_speed(name: &str) -> u64 { crate::platform::linux::link_speed_mbps(name) }
+
+#[cfg(not(any(windows, target_os = "linux")))]
+fn interface_link_speed(_name: &str) -> u64 { 0 }
+
+/// Selected Windows services, not an exhaustive service inventory. Configuration
+/// (start type) is not queried and remains explicitly unknown.
+#[cfg(windows)]
+fn windows_services() -> Vec<WindowsServiceEntry> {
+    ["npcap", "EventLog", "Dhcp", "Dnscache"].into_iter().map(|name| WindowsServiceEntry {
+        service_name: name.into(), display_name: name.into(),
+        state: crate::platform::windows::service_state(name).unwrap_or_else(|| "UNKNOWN".into()),
+        start_type: "UNKNOWN".into(),
+    }).collect()
+}
+
+#[cfg(not(windows))]
+fn windows_services() -> Vec<WindowsServiceEntry> { Vec::new() }
 
 pub fn correlate_flow_with_sockets(
     flow: &FlowRecord,

@@ -4,6 +4,7 @@ version = "2.0.0"
 description = "NET0ZE Desktop NTA & IDS Cybersecurity Platform"
 authors = ["NET0ZE Team"]
 edition = "2021"
+default-run = "netoze-desktop"
 
 [lib]
 name = "netoze_desktop"

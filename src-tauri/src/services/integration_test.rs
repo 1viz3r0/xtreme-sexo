@@ -156,6 +156,9 @@ mod tests {
 
         let snapshot = collect_system_snapshot();
         assert!(!snapshot.interfaces.is_empty());
+        #[cfg(windows)]
         assert!(!snapshot.services.is_empty());
+        #[cfg(target_os = "linux")]
+        assert!(snapshot.services.is_empty(), "Linux service inspection is explicitly unavailable until a native service backend is added");
     }
 }

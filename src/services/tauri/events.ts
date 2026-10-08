@@ -29,19 +29,11 @@ export async function getWindowsEvents(limit = 20): Promise<WindowsEventEntry[]>
       return await invoke<WindowsEventEntry[]>('get_windows_events', { limit });
     } catch (err) {
       console.warn('Failed to invoke native get_windows_events:', err);
+      throw new Error(String(err));
     }
   }
 
-  return [
-    {
-      timestamp: new Date().toISOString(),
-      provider: 'NET0ZE Web Dev Mode',
-      event_id: 100,
-      level: 'INFO',
-      message: 'Running in browser web dev mode. Native Windows Event Log unavailable in web browser.',
-      channel: 'Web',
-    },
-  ];
+  return [];
 }
 
 /**

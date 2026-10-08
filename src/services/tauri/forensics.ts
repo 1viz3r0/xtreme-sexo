@@ -60,16 +60,7 @@ export async function executeForensicQuery(
       throw new Error(err.toString());
     }
   }
-  return {
-    execution_time_ms: 12,
-    row_count: 2,
-    columns: ['src_ip', 'dst_ip', 'dst_port', 'protocol', 'packet_count'],
-    rows: [
-      ['192.168.1.100', '10.0.0.1', '443', 'TCP', '142'],
-      ['192.168.1.105', '10.0.0.4', '445', 'TCP', '28'],
-    ],
-    truncated: false,
-  };
+  throw new Error('Local queries require the desktop application.');
 }
 
 /**
@@ -94,10 +85,10 @@ export async function validateForensicQuery(
     }
   }
   return {
-    is_valid: true,
-    is_read_only: true,
-    statement_type: 'SELECT',
-    error_message: null,
+    is_valid: false,
+    is_read_only: false,
+    statement_type: 'UNAVAILABLE',
+    error_message: 'Validation requires the desktop application.',
   };
 }
 

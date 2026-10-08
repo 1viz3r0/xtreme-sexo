@@ -14,6 +14,24 @@ use std::net::{TcpStream, UdpSocket};
 use std::thread;
 use std::time::{Duration, Instant};
 
+#[cfg(target_os = "linux")]
+fn has_cap_net_raw() -> bool {
+    std::fs::read_to_string("/proc/self/status")
+        .ok()
+        .and_then(|status| {
+            status
+                .lines()
+                .find_map(|line| line.strip_prefix("CapEff:\t").map(str::to_owned))
+        })
+        .and_then(|cap_eff| u64::from_str_radix(cap_eff.trim(), 16).ok())
+        .is_some_and(|cap_eff| cap_eff & (1 << 13) != 0)
+}
+
+#[cfg(not(target_os = "linux"))]
+fn has_cap_net_raw() -> bool {
+    true
+}
+
 fn generate_traffic_worker(seconds: u64) {
     let start = Instant::now();
     while start.elapsed() < Duration::from_secs(seconds) {
@@ -76,6 +94,11 @@ fn pick_capture_device<'a>(devices: &'a [Device]) -> &'a Device {
 
 #[test]
 fn real_capture_flow_pipeline() {
+    if !has_cap_net_raw() {
+        println!("[capture_verify] SKIP: CAP_NET_RAW is unavailable in this environment");
+        return;
+    }
+
     let devices = Device::list().expect("Npcap device enumeration failed");
     assert!(!devices.is_empty(), "no Npcap interfaces found");
 

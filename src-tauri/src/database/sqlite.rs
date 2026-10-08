@@ -107,6 +107,7 @@ pub fn init_sqlite() -> Result<PathBuf> {
         [],
     )?;
 
+    initialize_phase11_tables(&conn)?;
     tracing::info!("✅ SQLite Database initialized at {:?}", db_path);
     Ok(db_path)
 }
@@ -117,12 +118,23 @@ pub fn init_sqlite() -> Result<PathBuf> {
 // ---------------------------------------------------------------
 
 pub fn open_conn() -> rusqlite::Result<Connection> {
+    // Read paths can be exercised before the desktop startup migration (for
+    // example by a standalone integration test). Ensure the same schema
+    // contract before handing out a connection instead of returning an empty
+    // database that later fails with "no such table".
+    init_sqlite()?;
     let db_path = get_app_dir().join("netoze_app.db");
     Connection::open(db_path)
 }
 
 fn ensure_phase11_tables(conn: &Connection) {
-    let _ = conn.execute(
+    if let Err(error) = initialize_phase11_tables(conn) {
+        tracing::warn!("Local intel schema unavailable: {}", error);
+    }
+}
+
+pub(crate) fn initialize_phase11_tables(conn: &Connection) -> Result<()> {
+    conn.execute(
         "CREATE TABLE IF NOT EXISTS geoip_cache (
             ip TEXT PRIMARY KEY,
             country TEXT NOT NULL,
@@ -136,8 +148,8 @@ fn ensure_phase11_tables(conn: &Connection) {
             resolved_at INTEGER NOT NULL
         )",
         [],
-    );
-    let _ = conn.execute(
+    )?;
+    conn.execute(
         "CREATE TABLE IF NOT EXISTS threat_matches (
             ip TEXT NOT NULL,
             indicator_type TEXT NOT NULL,
@@ -149,8 +161,8 @@ fn ensure_phase11_tables(conn: &Connection) {
             PRIMARY KEY (ip, feed)
         )",
         [],
-    );
-    let _ = conn.execute(
+    )?;
+    conn.execute(
         "CREATE TABLE IF NOT EXISTS devices (
             ip TEXT PRIMARY KEY,
             mac TEXT NOT NULL,
@@ -163,8 +175,8 @@ fn ensure_phase11_tables(conn: &Connection) {
             is_self INTEGER NOT NULL DEFAULT 0
         )",
         [],
-    );
-    let _ = conn.execute(
+    )?;
+    conn.execute(
         "CREATE TABLE IF NOT EXISTS port_scan (
             ip TEXT NOT NULL,
             port INTEGER NOT NULL,
@@ -176,8 +188,8 @@ fn ensure_phase11_tables(conn: &Connection) {
             PRIMARY KEY (ip, port)
         )",
         [],
-    );
-    let _ = conn.execute(
+    )?;
+    conn.execute(
         "CREATE TABLE IF NOT EXISTS dns_records (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             timestamp TEXT NOT NULL,
@@ -189,7 +201,7 @@ fn ensure_phase11_tables(conn: &Connection) {
             answers INTEGER NOT NULL
         )",
         [],
-    );
+    )?;
     // flow_records schema migration: rtt_ms + dns_qname
     for (col, decl) in [("rtt_ms", "INTEGER DEFAULT 0"), ("dns_qname", "TEXT")] {
         let has = conn
@@ -209,6 +221,7 @@ fn ensure_phase11_tables(conn: &Connection) {
             );
         }
     }
+    Ok(())
 }
 
 pub fn upsert_geoip(entry: &crate::models::GeoIpEntry) {
@@ -568,4 +581,3 @@ pub fn load_threat_matches(limit: usize) -> Vec<crate::models::ThreatMatchEntry>
     let Ok(rows) = rows else { return vec![]; };
     rows.filter_map(|r| r.ok()).collect()
 }
-

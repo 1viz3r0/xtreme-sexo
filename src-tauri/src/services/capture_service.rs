@@ -1,5 +1,5 @@
 use crate::models::{CaptureMetrics, CaptureState, NpcapInterface, PacketMetadata};
-use crate::platform::windows::inspect_npcap;
+use crate::platform::capture::inspect_packet_capture;
 use crate::services::NpcapCapture;
 use crate::services::StorylineBuilder;
 use crate::services::detection_engine::DetectionEngine;
@@ -8,11 +8,13 @@ use crate::services::graph_engine::GraphEngine;
 use crate::services::ja4_engine::Ja4Engine;
 use pcap::Device;
 use std::sync::{Arc, Mutex};
+use std::time::Duration;
 use tauri::{AppHandle, Emitter};
 
 pub struct CaptureEngine {
     state: Arc<Mutex<CaptureState>>,
     capture: Arc<NpcapCapture>,
+    lifecycle_operation: Arc<Mutex<()>>,
 }
 
 impl CaptureEngine {
@@ -32,22 +34,13 @@ impl CaptureEngine {
                 graph_engine,
                 storyline_builder,
             )),
+            lifecycle_operation: Arc::new(Mutex::new(())),
         }
     }
 
     pub fn inspect_availability(&self) -> (String, String) {
-        let npcap = inspect_npcap();
-        if npcap.installed {
-            (
-                "AVAILABLE".to_string(),
-                "Npcap Packet Capture Engine is installed and ready.".to_string(),
-            )
-        } else {
-            (
-                "UNAVAILABLE".to_string(),
-                "Npcap is not installed or unavailable. Packet capture features are paused. Please install Npcap.".to_string(),
-            )
-        }
+        let capability = inspect_packet_capture();
+        (if capability.available { "AVAILABLE" } else { "UNAVAILABLE" }.into(), capability.reason)
     }
 
     pub fn get_interfaces(&self) -> Vec<NpcapInterface> {
@@ -85,52 +78,68 @@ impl CaptureEngine {
     }
 
     pub fn start_capture(&self, interface_id: String, app_handle: AppHandle) -> Result<(), String> {
-        let (avail, msg) = self.inspect_availability();
-        if avail != "AVAILABLE" {
-            return Err(msg);
-        }
-
+        // Serialize start/stop transitions. In particular, do not allow a
+        // restart to race the previous worker's final flush.
+        let _operation = self.lifecycle_operation.lock().unwrap();
         {
             let mut st = self.state.lock().unwrap();
             if *st == CaptureState::RUNNING {
                 return Ok(());
             }
+            if *st == CaptureState::STARTING || *st == CaptureState::STOPPING {
+                return Err(format!("Capture is currently {:?}", *st));
+            }
             *st = CaptureState::STARTING;
         }
 
+        if self.capture.worker_running() {
+            *self.state.lock().unwrap() = CaptureState::ERROR;
+            return Err("Previous capture worker is still stopping".into());
+        }
+        let (avail, msg) = self.inspect_availability();
+        if avail != "AVAILABLE" {
+            *self.state.lock().unwrap() = CaptureState::ERROR;
+            let _ = app_handle.emit("capture-status", "ERROR");
+            return Err(msg);
+        }
+
         if let Err(err) = self.capture.open_interface(&interface_id) {
+            self.capture.close();
             let mut st = self.state.lock().unwrap();
             *st = CaptureState::ERROR;
+            let _ = app_handle.emit("capture-status", "ERROR");
             return Err(format!("Failed to open capture interface: {}", err));
         }
 
-        {
-            let mut st = self.state.lock().unwrap();
-            *st = CaptureState::RUNNING;
+        if !self.capture.run_capture_loop(app_handle.clone()) {
+            self.capture.close();
+            *self.state.lock().unwrap() = CaptureState::ERROR;
+            let _ = app_handle.emit("capture-status", "ERROR");
+            return Err("Capture worker is already running".to_string());
         }
-
+        *self.state.lock().unwrap() = CaptureState::RUNNING;
         let _ = app_handle.emit("capture-status", "RUNNING");
-        self.capture.run_capture_loop(app_handle);
         Ok(())
     }
 
     pub fn stop_capture(&self, app_handle: AppHandle) {
+        let _operation = self.lifecycle_operation.lock().unwrap();
         {
             let mut st = self.state.lock().unwrap();
-            if *st != CaptureState::RUNNING {
+            if *st == CaptureState::STOPPED {
                 return;
             }
             *st = CaptureState::STOPPING;
         }
 
-        self.capture.close();
+        let stopped = self.capture.stop_and_wait(Duration::from_secs(2));
 
         {
             let mut st = self.state.lock().unwrap();
-            *st = CaptureState::STOPPED;
+            *st = if stopped { CaptureState::STOPPED } else { CaptureState::ERROR };
         }
 
-        let _ = app_handle.emit("capture-status", "STOPPED");
+        let _ = app_handle.emit("capture-status", if stopped { "STOPPED" } else { "ERROR" });
     }
 
     pub fn get_metrics(&self) -> CaptureMetrics {
@@ -154,7 +163,8 @@ impl CaptureEngine {
             .unwrap()
             .map(|t| t.elapsed().as_secs())
             .unwrap_or(0);
-        let handle_open = self.capture.capture_handle.lock().unwrap().is_some();
+        let handle_open = self.capture.worker_running()
+            || self.capture.capture_handle.lock().unwrap().is_some();
         (state, iface, packets, bytes, duration, handle_open)
     }
 }
