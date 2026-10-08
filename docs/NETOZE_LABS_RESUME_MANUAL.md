@@ -361,3 +361,44 @@ dirty worktree; do not blindly overwrite the project or delete unrelated work.
 > Stop flow with the user. Preserve unrelated dirty work. Do not revive Red/Blue
 > simulation rooms or claim the three planned labs are implemented. Use the manual
 > for source paths, toolchain setup, verification commands, and remaining gaps.
+
+## 13. GitHub backup status — saved current progress
+
+The current source snapshot has been pushed to:
+
+**https://github.com/1viz3r0/xtreme-sexo**
+
+- Remote: `xtreme-sexo` → `https://github.com/1viz3r0/xtreme-sexo.git`
+- Remote default branch: `master`
+- Local continuation branch: `backup/xtreme-sexo`
+- Remote commit: `ca5bd481759d2300f114eb6705d8f0f15477dd1f`
+- Local HEAD at this save: same remote commit
+- Verified remote tracked files: 360
+- Local tracked files: 360
+- Working tree at this save: clean
+- Repository visibility: Public
+
+The pushed snapshot includes the full tracked source project, frontend,
+Rust/Tauri backend, Labs implementation, Docker target assets, tests, docs,
+lockfiles, and configuration. It intentionally does not include reproducible
+or private local data such as `node_modules`, build targets, `dist`, release
+staging, databases, environment files, logs, or the handoff ZIP archive.
+
+The only source file omitted from GitHub is the optional
+`.github/workflows/desktop-build.yml`. GitHub rejected the first push because
+the authorized CLI OAuth token had `repo` but not `workflow` scope. The local
+branch contains the follow-up commit `ca5bd48`, which removes that workflow so
+the complete application source can be pushed. Restore and push the workflow
+later only after granting the GitHub CLI `workflow` scope.
+
+To resume from GitHub:
+
+```sh
+git clone https://github.com/1viz3r0/xtreme-sexo.git
+cd xtreme-sexo
+git checkout master
+```
+
+Then read this manual and start with the unconfirmed installed-app flow:
+Labs → Start → Open target → discover/submit → Reset → Stop. Do not start the
+next lab until Web Exposure's packaged UI flow is confirmed.
