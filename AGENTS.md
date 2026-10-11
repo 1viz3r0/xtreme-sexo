@@ -11,6 +11,9 @@ Before analyzing or editing anything, read these files in this order:
 3. `docs/LABS_LOCAL_REBUILD.md` — research and actual Docker/native evidence.
 4. `docs/NETOZE_HANDOFF.md` — project-wide handoff; older sections are clearly
    historical and must not override the current context file.
+5. `PROJECT_INVENTORY.md` — what is durable in GitHub, what is intentionally
+   excluded, how to regenerate it, and how to preserve the workflow when disk
+   space is limited.
 
 ## Exact stopping point
 
