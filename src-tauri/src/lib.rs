@@ -4,6 +4,7 @@ pub mod models;
 pub mod platform;
 pub mod services;
 pub mod state;
+use tauri::Manager;
 
 pub fn run() {
     services::init_logging();
@@ -13,13 +14,22 @@ pub fn run() {
         .manage(commands::capture_buddy::BuddyState::default())
         .manage(services::scan_buddy::ScanBuddyState::persistent())
         .manage(services::lab_runtime::LabRuntimeState::persistent())
+        .setup(|app| {
+            let flows = app.state::<state::BackendState>().flows.clone();
+            services::start_telemetry_worker(app.handle().clone(), flows);
+            Ok(())
+        })
         .invoke_handler(tauri::generate_handler![
             commands::scan_buddy::scan_buddy_plan,
             commands::scan_buddy::scan_buddy_start,
             commands::scan_buddy::scan_buddy_status,
             commands::scan_buddy::scan_buddy_cancel,
             commands::scan_buddy::scan_buddy_history,
+            commands::scan_buddy::scan_buddy_reset_history,
             commands::scan_buddy::scan_buddy_storage_status,
+            commands::network_scope::scan_buddy_discover_network_scope,
+            commands::watchtower::get_watchtower_snapshot,
+            commands::watchtower::refresh_watchtower_snapshot,
             commands::scan_inspection::scan_buddy_inspect,
             commands::lab_runtime::lab_runtime_start,
             commands::lab_runtime::lab_runtime_stop,
@@ -111,8 +121,11 @@ pub fn run() {
             commands::global_intel::get_geoip_lookup,
             commands::global_intel::get_public_ip,
             commands::global_intel::get_threat_matches,
-            commands::global_intel::get_devices,
+             commands::global_intel::get_devices,
+             commands::save_download,
+             commands::watchtower::watchtower_discover_local,
             commands::global_intel::evaluate_flows_for_threats,
+            commands::enrichment::refresh_watchtower_enrichment,
             commands::auth::auth_register,
             commands::auth::auth_login,
             commands::auth::auth_logout,
@@ -126,8 +139,10 @@ pub fn run() {
         .run(|app, event| {
             if matches!(event, tauri::RunEvent::Exit) {
                 use tauri::Manager;
-                app.state::<commands::capture_buddy::BuddyState>().shutdown();
-                app.state::<services::scan_buddy::ScanBuddyState>().shutdown();
+                app.state::<commands::capture_buddy::BuddyState>()
+                    .shutdown();
+                app.state::<services::scan_buddy::ScanBuddyState>()
+                    .shutdown();
                 let _ = app.state::<services::lab_runtime::LabRuntimeState>().stop();
             }
         });

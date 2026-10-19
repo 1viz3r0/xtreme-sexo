@@ -1,6 +1,6 @@
 pub mod auth_service;
-pub mod buddy_search;
 pub mod buddy_engine;
+pub mod buddy_search;
 pub mod capture_brief;
 pub mod capture_investigation;
 pub mod capture_service;
@@ -8,27 +8,30 @@ pub mod connectivity_monitor;
 pub mod detection_engine;
 pub mod device_discovery;
 pub mod edu_inspector;
+pub mod enrichment;
 pub mod flow_engine;
 pub mod geoip_service;
-pub mod http_client;
 pub mod graph_engine;
+pub mod http_client;
 pub mod integration_test;
 pub mod ja4_canonicalizer;
 pub mod ja4_engine;
+pub mod lab_runtime;
 pub mod logging;
+pub mod network_scope;
 pub mod npcap_capture;
 pub mod packet_parser;
 pub mod port_scanner;
-pub mod lab_runtime;
+pub mod query_validator;
+pub mod rule_evaluator;
 pub mod scan_buddy;
 pub mod scan_buddy_journal;
 pub mod scan_inspection;
-pub mod query_validator;
-pub mod rule_evaluator;
 pub mod storyline_builder;
 pub mod system_inspector;
 pub mod telemetry_worker;
 pub mod threat_intel;
+pub mod watchtower;
 
 pub use capture_service::CaptureEngine;
 pub use connectivity_monitor::{start_connectivity_monitor, ConnectivityState};
@@ -48,9 +51,7 @@ pub use system_inspector::{
     collect_system_snapshot, correlate_flow_with_sockets, get_host_identity_info,
 };
 pub use telemetry_worker::start_telemetry_worker;
-pub use threat_intel::{
-    evaluate_ips_for_threats, start_threat_intel_worker, ThreatIntelState,
-};
+pub use threat_intel::{evaluate_ips_for_threats, start_threat_intel_worker, ThreatIntelState};
 
 use crate::models::AppConfig;
 use std::path::PathBuf;

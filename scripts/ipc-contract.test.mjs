@@ -13,5 +13,8 @@ test('literal frontend IPC commands have registered native handlers', () => {
       if (!registered.has(match[1])) missing.push(`${name}: ${match[1]}`);
     }
   }
+  for (const command of ['get_watchtower_snapshot', 'refresh_watchtower_snapshot', 'refresh_watchtower_enrichment']) {
+    assert.equal(registered.has(command), true, `missing Watchtower handler: ${command}`);
+  }
   assert.deepEqual(missing, []);
 });

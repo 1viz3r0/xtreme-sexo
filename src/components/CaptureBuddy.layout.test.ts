@@ -10,6 +10,8 @@ test('top investigation links load off-page packet evidence and reject stale det
   for (const name of names) Object.defineProperty(globalThis, name, { configurable: true, value: name === 'IS_REACT_ACT_ENVIRONMENT' ? true : name === 'window' ? window : (window as unknown as Record<string, unknown>)[name] });
   const calls: { command: string; args: any }[] = [];
   let sessions = 0;
+  let packetPolls = 0;
+  let statusPolls = 0;
   let resolveOldDetail: ((value: { dissection: string }) => void) | undefined;
   const fixtureSession = () => ({ session_id: `fixture-${sessions}`, path: '/synthetic/fixture.pcapng', running: false, bytes: 128 });
   Object.assign(window, { __TAURI_INTERNALS__: { invoke: async (command: string, args: any) => {
@@ -17,8 +19,13 @@ test('top investigation links load off-page packet evidence and reject stale det
     if (command === 'buddy_engine_status') return { available: true, detail: 'Synthetic test engine', live_capture_blocked: false, capture_guidance: null };
     if (command === 'buddy_interfaces') return ['1. synthetic'];
     if (command === 'buddy_start') { sessions++; return fixtureSession(); }
-    if (command === 'buddy_session_status') return fixtureSession();
-    if (command === 'buddy_search_packets') return { packets: [{ number: 1, time: '0', source: '192.0.2.1', destination: '192.0.2.2', protocol: 'TCP', length: '64', info: 'Synthetic page packet' }], has_more: false };
+    if (command === 'buddy_session_status') return { ...fixtureSession(), running: ++statusPolls === 1 };
+    if (command === 'buddy_search_packets') {
+      packetPolls++;
+      const packets = [{ number: 1, time: '0', source: '192.0.2.1', destination: '192.0.2.2', protocol: 'TCP', length: '64', info: 'Older synthetic packet' }];
+      if (packetPolls > 1) packets.push({ number: 2, time: '1', source: '192.0.2.1', destination: '192.0.2.2', protocol: 'TCP', length: '96', info: 'Newer synthetic packet' });
+      return { packets, has_more: false };
+    }
     if (command === 'buddy_investigation_model') return {
       conversations: [], anomalies: [], generated_from_packets: 43, limitations: ['Synthetic fixture only'],
       timeline: [42, 43].map(packet_number => ({ packet_number, time: 1, kind: 'fixture', summary: `Evidence ${packet_number}`, severity: 'info' })),
@@ -58,6 +65,10 @@ test('top investigation links load off-page packet evidence and reject stale det
     assert.equal(host.querySelectorAll('[aria-label="Capture investigation workspace"]').length, 1);
     await click('Start recording');
     assert.match(host.querySelector('tbody')!.textContent, /Packet 1/);
+    await act(async () => { await new Promise(resolve => setTimeout(resolve, 2100)); });
+    const packetRows = [...host.querySelectorAll('tbody tr')];
+    assert.deepEqual(packetRows.map(row => row.querySelector('td')?.textContent?.match(/Packet (\d+)\s*$/)?.[1]), ['2', '1']);
+    assert.match(packetRows[0]?.textContent ?? '', /Newer synthetic packet/);
     await click('Generate model');
     const sharing = [...host.querySelectorAll('details')].find(item => item.querySelector('summary')?.textContent === 'Evidence & sharing limits');
     assert.ok(sharing);

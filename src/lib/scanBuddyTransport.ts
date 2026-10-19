@@ -1,7 +1,7 @@
-import type { ScanJob, ScanPlan, ScanRequest, ScanResult, ScanStorageStatus } from '../services/tauri/scanBuddy';
+import type { NetworkScopeDiscovery, ScanJob, ScanPlan, ScanRequest, ScanResult, ScanStorageStatus } from '../services/tauri/scanBuddy';
 
 export const SCAN_BUDDY_DEADLINE_MS = 8_000;
-type Command = 'scan_buddy_plan' | 'scan_buddy_start' | 'scan_buddy_cancel' | 'scan_buddy_status' | 'scan_buddy_history' | 'scan_buddy_storage_status';
+type Command = 'scan_buddy_plan' | 'scan_buddy_start' | 'scan_buddy_cancel' | 'scan_buddy_status' | 'scan_buddy_history' | 'scan_buddy_storage_status' | 'scan_buddy_discover_network_scope' | 'scan_buddy_reset_history';
 type Invoke = (command: Command, args: Record<string, unknown>) => Promise<unknown>;
 
 export class ScanBuddyTimeoutError extends Error {
@@ -29,7 +29,12 @@ function isPlan(value: unknown): value is ScanPlan {
     && Array.isArray(value.ports) && value.ports.length > 0 && value.ports.every(port => integer(port, 1, 65535))
     && integer(value.total_probes, 1) && value.total_probes === value.targets.length * value.ports.length
     && integer(value.timeout_ms, 1) && integer(value.concurrency, 1)
-    && Array.isArray(value.warnings) && value.warnings.every(text);
+    && Array.isArray(value.warnings) && value.warnings.every(text)
+    && (value.profile === undefined || ['common', 'registered', 'all_tcp', 'custom'].includes(value.profile as string))
+    && (value.scope_fingerprint === undefined || text(value.scope_fingerprint))
+    && (value.impact_estimate == null || (record(value.impact_estimate) && integer(value.impact_estimate.probes, 1) && integer(value.impact_estimate.estimated_duration_ms, 0) && typeof value.impact_estimate.within_budget === 'boolean'
+      && integer(value.impact_estimate.budget_probes, 1) && integer(value.impact_estimate.budget_seconds, 1)
+      && (value.impact_estimate.worst_case_duration_ms === undefined || integer(value.impact_estimate.worst_case_duration_ms))));
 }
 function isResult(value: unknown): value is ScanResult {
   return record(value) && nonempty(value.target) && integer(value.port, 1, 65535)
@@ -74,6 +79,12 @@ export function createScanBuddyTransport(options: { invoke: Invoke; available: (
     readLane = next.then(() => undefined, () => undefined);
     return next;
   }
+  const isNetworkScope = (value: unknown): value is NetworkScopeDiscovery => record(value)
+    && Array.isArray(value.interfaces) && value.interfaces.every(item => record(item)
+      && nonempty(item.interface_name) && nonempty(item.address) && integer(item.prefix, 0, 32)
+      && nonempty(item.scan_cidr) && (item.gateway === null || text(item.gateway))
+      && Array.isArray(item.warnings) && item.warnings.every(text))
+    && Array.isArray(value.warnings) && value.warnings.every(text);
   return {
     planScan: (request: ScanRequest) => read(() => command('scan_buddy_plan', { request }, isPlan)),
     startScan: (request: ScanRequest) => command('scan_buddy_start', { request }, isJob),
@@ -83,6 +94,8 @@ export function createScanBuddyTransport(options: { invoke: Invoke; available: (
     scanStorageStatus: () => read(() => command('scan_buddy_storage_status', {}, (value): value is ScanStorageStatus => record(value)
       && typeof value.persistent === 'boolean' && typeof value.available === 'boolean'
       && Array.isArray(value.warnings) && value.warnings.every(text)
-      && (value.last_saved_job === null || text(value.last_saved_job)))),
+       && (value.last_saved_job === null || text(value.last_saved_job)))),
+    discoverNetworkScope: () => read(() => command('scan_buddy_discover_network_scope', {}, isNetworkScope)),
+    resetScanHistory: async () => { await command('scan_buddy_reset_history', {}, (value): value is null => value === null); },
   };
 }

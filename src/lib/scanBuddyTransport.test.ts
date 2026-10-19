@@ -58,6 +58,27 @@ test('exact envelopes and one lane for plan/status/history; plans permit authori
   ]);
 });
 
+test('network scope discovery uses an exact native envelope and validates the bounded response', async () => {
+  const calls: { command: string; args: Record<string, unknown> }[] = [];
+  const transport = createScanBuddyTransport({ available: () => true, invoke: async (command, args) => {
+    calls.push({ command, args });
+    return { interfaces: [{ interface_name: 'eth0', address: '192.168.1.10', prefix: 24, scan_cidr: '192.168.1.0/27', gateway: '192.168.1.1', warnings: [] }], warnings: [] };
+  } });
+  assert.deepEqual(await transport.discoverNetworkScope(), { interfaces: [{ interface_name: 'eth0', address: '192.168.1.10', prefix: 24, scan_cidr: '192.168.1.0/27', gateway: '192.168.1.1', warnings: [] }], warnings: [] });
+  assert.deepEqual(calls, [{ command: 'scan_buddy_discover_network_scope', args: {} }]);
+});
+
+test('accepts expanded full TCP metadata and legacy absent/null estimates', async () => {
+  const plan = { ...job.plan, ports: Array.from({ length: 65535 }, (_, i) => i + 1), total_probes: 65535, profile: 'all_tcp', scope_fingerprint: 'scope', impact_estimate: { probes: 65535, estimated_duration_ms: 7200000, worst_case_duration_ms: 14017900, within_budget: false, budget_probes: 65535, budget_seconds: 7200 } };
+  let response: unknown = plan;
+  const transport = createScanBuddyTransport({ available: () => true, invoke: async () => response });
+  assert.deepEqual(await transport.planScan(request), plan);
+  response = { ...plan, impact_estimate: null };
+  await transport.planScan(request);
+  response = { ...plan, impact_estimate: { ...plan.impact_estimate, worst_case_duration_ms: -1 } };
+  await assert.rejects(transport.planScan(request), /incompatible/);
+});
+
 test('never-settling reads release the lane on timeout', async () => {
   for (const name of ['scan_buddy_status', 'scan_buddy_history', 'scan_buddy_plan']) {
     let calls = 0;

@@ -33,7 +33,8 @@ test('Studio header and monitoring navigation are accessible and concise', () =>
    assert.ok(sidebar.indexOf('Scan Buddy') < sidebar.indexOf('Dashboard'));
    assert.match(sidebar, /aria-label="Dashboard"/);
    assert.match(sidebar, /aria-label="Labs"/);
-   assert.ok(sidebar.indexOf('Labs') < sidebar.indexOf('Additional tools'));
+  assert.ok(sidebar.indexOf('Field Guide') < sidebar.indexOf('Additional tools'));
+  assert.ok(sidebar.indexOf('Labs') < sidebar.indexOf('Additional tools'));
    assert.doesNotMatch(sidebar, />Experimental</);
    assert.doesNotMatch(sidebar, /aria-label="Host &amp; Logs"/);
   assert.doesNotMatch(sidebar, /<details[^>]* open/);
@@ -49,7 +50,7 @@ test('App opens Capture Buddy while keeping overview search and authenticated ro
   const app = readFileSync(new URL('../App.tsx', import.meta.url), 'utf8');
   assert.match(app, /useState<TabType>\('conversations'\)/);
   assert.match(app, /const Watchtower = lazy\(\(\) => import\('\.\/components\/Watchtower'\)/);
-  assert.match(app, /activeTab === 'watchtower'[\s\S]*?<Watchtower flows=\{flows\} events=\{events\} graph=\{graphData\} \/>/);
+  assert.match(app, /activeTab === 'watchtower'[\s\S]*?<Watchtower flows=\{flows\} events=\{events\} graph=\{graphData\}(?:[\s\S]*?)\/>/);
   assert.match(app, /activeTab === 'watchtower'[\s\S]*?flows: true, detections: true, graph: true/);
   assert.match(app, /activeTab === 'conversations'[\s\S]*?<CaptureBuddy \/>/);
   assert.match(app, /onOpenSearch=\{\(\) => \{ setActiveTab\('global_intel'\); setSearchOpenToken/);

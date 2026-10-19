@@ -10,3 +10,4 @@ export * from './forensics';
 export * from './system_inspector';
 export * from './auth';
 export * from './isTauri';
+export * from './watchtower';

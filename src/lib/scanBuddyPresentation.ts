@@ -1,6 +1,17 @@
-import type { ScanJob, ScanRequest, ScanResult, ScanState } from '../services/tauri/scanBuddy';
+import type { ScanJob, ScanRequest, ScanResult, ScanState, ScanImpactEstimate } from '../services/tauri/scanBuddy';
 
-export const SCAN_PRESETS = { common: '21,22,25,53,80,110,139,143,443,445,3389', web: '80,443,8000,8080,8443', dev: '3000,4200,5000,5173,5432,6379,8000,8080,9000' };
+export const SCAN_PRESETS = { common: '21,22,25,53,80,110,139,143,443,445,3389', registered: '1-1024', all_tcp: '1-65535', web: '80,443,8000,8080,8443', dev: '3000,4200,5000,5173,5432,6379,8000,8080,9000' } as const;
+export const SCAN_BUDGET_PROBES = 65535;
+export const SCAN_BUDGET_SECONDS = 7200;
+export function isLocalAuthorizedScope(targets: string): boolean {
+  const values = targets.trim().split(/[\s,]+/).filter(Boolean);
+  return values.length > 0 && values.every(value => value === '127.0.0.1' || value === '::1');
+}
+export function estimateScanImpact(targetCount: number, portCount: number, concurrency: number, timeoutMs = 800): ScanImpactEstimate {
+  const probes = targetCount * portCount;
+  const worst_case_duration_ms = Math.ceil(probes / concurrency) * timeoutMs + probes * 20;
+  return { probes, worst_case_duration_ms, estimated_duration_ms: Math.min(worst_case_duration_ms, SCAN_BUDGET_SECONDS * 1000), within_budget: probes <= SCAN_BUDGET_PROBES && worst_case_duration_ms <= SCAN_BUDGET_SECONDS * 1000, budget_probes: SCAN_BUDGET_PROBES, budget_seconds: SCAN_BUDGET_SECONDS };
+}
 export const EXPORT_WARNING = 'Contains endpoint addresses and scan observations. Share only with authorized recipients. Service names are port-based hints, not verified identities. Latency is TCP connect time, not ping.';
 export const requestKey = (request: ScanRequest) => JSON.stringify(request);
 function ipv4(value: string): boolean {
@@ -12,16 +23,16 @@ function literal(value: string): boolean {
   if (!value.includes(':') || !/^[\da-f:.]+$/i.test(value)) return false;
   try { return new URL(`http://[${value}]/`).hostname.startsWith('['); } catch { return false; }
 }
-export function validateScanRequest(request: ScanRequest): string[] {
+export function analyzeScanRequest(request: ScanRequest) {
   const errors: string[] = [];
-  if (request.targets.length > 8192 || request.ports.length > 4096) return ['Target or port input is too long.'];
+  if (request.targets.length > 8192 || request.ports.length > 4096) return { errors: ['Target or port input is too long.'], targetCount: 0, portCount: 0 };
   const targets = request.targets.trim().split(/[,\s]+/).filter(Boolean);
   const expanded = new Set<string>();
   if (!targets.length) errors.push('Enter at least one literal IP address. DNS names are not supported.');
   for (const target of new Set(targets)) {
     if (target.includes('/')) {
       const [address, prefix, extra] = target.split('/');
-      if (extra !== undefined || !ipv4(address) || !/^\d+$/.test(prefix) || Number(prefix) < 27 || Number(prefix) > 32) errors.push(`Invalid small IPv4 CIDR: ${target} (use /27–/32).`);
+      if (extra !== undefined || !ipv4(address) || !/^\d+$/.test(prefix) || Number(prefix) < 24 || Number(prefix) > 32) errors.push(`Invalid IPv4 CIDR: ${target} (use /24–/32).`);
       else {
         const size = 2 ** (32 - Number(prefix));
         const addressNumber = address.split('.').reduce((number, part) => number * 256 + Number(part), 0);
@@ -38,23 +49,22 @@ export function validateScanRequest(request: ScanRequest): string[] {
     else expanded.add(ipv4(target) ? target : new URL(`http://[${target}]/`).hostname);
   }
   const count = expanded.size;
-  if (count > 32) errors.push('Use at most 32 targets.');
+   if (count > 256) errors.push('Use at most 256 targets.');
   const ports = new Set<number>();
   const tokens = request.ports.split(',').map(token => token.trim());
   for (const token of tokens) {
     const match = /^(\d+)(?:\s*-\s*(\d+))?$/.exec(token);
     const low = Number(match?.[1]); const high = Number(match?.[2] ?? match?.[1]);
     if (!match || low < 1 || high > 65535 || low > high) { errors.push(`Invalid port or range: ${token || '(empty)'}. Use 1–65535.`); continue; }
-    if (high - low + 1 > 256) { errors.push('Use at most 256 distinct ports.'); continue; }
     for (let port = low; port <= high; port++) ports.add(port);
   }
-  if (ports.size > 256) errors.push('Use at most 256 distinct ports.');
-  if (count * ports.size > 4096) errors.push('Use at most 4,096 target × port probes.');
+  if (count * ports.size > SCAN_BUDGET_PROBES) errors.push(`Impact budget exceeded: ${(count * ports.size).toLocaleString()} probes (maximum 65,535). All TCP ports require one host per job.`);
   if (!Number.isInteger(request.timeout_ms) || request.timeout_ms < 100 || request.timeout_ms > 2000) errors.push('Timeout must be 100–2,000 ms.');
   if (!Number.isInteger(request.concurrency) || request.concurrency < 1 || request.concurrency > 16) errors.push('Concurrency must be 1–16.');
-  if (!request.authorized) errors.push('Confirm authorization before previewing or starting a scan.');
-  return [...new Set(errors)];
+  if (!request.authorized) errors.push(isLocalAuthorizedScope(request.targets) ? 'Confirm the default local scope before previewing or starting a scan.' : 'Confirm authorization for this non-local scope before previewing or starting a scan.');
+  return { errors: [...new Set(errors)], targetCount: count, portCount: ports.size };
 }
+export const validateScanRequest = (request: ScanRequest): string[] => analyzeScanRequest(request).errors;
 export type ResultSort = 'endpoint' | 'port' | 'state' | 'latency';
 export function projectScanResults(results: ScanResult[], state: ScanState | 'ALL', search: string, sort: ResultSort, descending = false): ScanResult[] {
   const query = search.trim().toLowerCase();
@@ -64,7 +74,7 @@ export function projectScanResults(results: ScanResult[], state: ScanState | 'AL
   });
 }
 export function scanProgress(job: ScanJob): number { return job.plan.total_probes > 0 ? Math.min(100, Math.max(0, job.completed_probes / job.plan.total_probes * 100)) : 0; }
-export type ScanExport = 'json' | 'csv' | 'md';
+export type ScanExport = 'json' | 'csv' | 'md' | 'txt' | 'pdf';
 function csv(value: unknown): string { const text = String(value ?? ''); return `"${(/^[\s]*[=+@-]/.test(text) ? "'" : '') + text.replaceAll('"', '""')}"`; }
 function markdown(value: unknown): string { return String(value ?? '').replaceAll('\\', '\\\\').replaceAll('|', '\\|').replaceAll('<', '&lt;').replaceAll('>', '&gt;').replaceAll('\r', ' ').replaceAll('\n', ' '); }
 export function exportScan(job: ScanJob, format: ScanExport): string {
@@ -72,5 +82,20 @@ export function exportScan(job: ScanJob, format: ScanExport): string {
   const headers = ['Target', 'Port', 'State', 'Connection reason', 'Service hint (unverified)', 'TCP connect ms', 'Observed at'];
   const rows = job.results.map(row => [row.target, row.port, row.state, row.reason ?? 'Not recorded', row.service_hint, row.latency_ms, row.observed_at]);
   if (format === 'csv') return `${csv(EXPORT_WARNING)}\r\n${[headers, ...rows].map(row => row.map(csv).join(',')).join('\r\n')}\r\n`;
-  return `# Scan Buddy report\n\n${EXPORT_WARNING}\n\nJob: ${markdown(job.id)} · ${job.state}\n\nStarted UTC: ${markdown(job.started_at)}\n\nFinished UTC: ${markdown(job.finished_at ?? 'Still running')}\n\nObserved: ${job.completed_probes}/${job.plan.total_probes} planned probes. Cancelled/in-progress jobs may be partial.\n\nTargets: ${job.plan.targets.map(markdown).join(', ')}\n\nTCP ports: ${job.plan.ports.join(', ')}\n\nTimeout: ${job.plan.timeout_ms} ms · concurrency: ${job.plan.concurrency} · native connection starts capped at 50/sec.\n\n| ${headers.join(' | ')} |\n| ${headers.map(() => '---').join(' | ')} |\n${rows.map(row => `| ${row.map(markdown).join(' | ')} |`).join('\n')}\n`;
+  const report = `# Scan Buddy report\n\n${EXPORT_WARNING}\n\nJob: ${markdown(job.id)} · ${job.state}\n\nStarted UTC: ${markdown(job.started_at)}\n\nFinished UTC: ${markdown(job.finished_at ?? 'Still running')}\n\nObserved: ${job.completed_probes}/${job.plan.total_probes} planned probes. Cancelled/in-progress jobs may be partial.\n\nTargets: ${job.plan.targets.map(markdown).join(', ')}\n\nTCP ports: ${job.plan.ports.join(', ')}\n\nTimeout: ${job.plan.timeout_ms} ms · concurrency: ${job.plan.concurrency} · native connection starts capped at 50/sec.\n\n| ${headers.join(' | ')} |\n| ${headers.map(() => '---').join(' | ')} |\n${rows.map(row => `| ${row.map(markdown).join(' | ')} |`).join('\n')}\n`;
+  if (format === 'md') return report;
+  if (format === 'txt') return report.replaceAll(/[`|#]/g, '').replaceAll(/\n{3,}/g, '\n\n');
+  if (format === 'pdf') return textPdf(report);
+  return report;
+}
+
+/** Small dependency-free text PDF for local export; it intentionally contains no remote assets. */
+function textPdf(text: string): string {
+  const lines = text.replaceAll(/[^\x09\x0A\x0D\x20-\x7E]/g, '').split('\n').flatMap(line => line.match(/.{1,105}/g) ?? ['']).slice(0, 900);
+  const content = ['BT', '/F1 8 Tf', '40 770 Td', ...lines.map((line, index) => `${index ? '0 -11 Td ' : ''}(${line.replaceAll(/[()\\]/g, char => `\\${char}`)}) Tj`), 'ET'].join('\n');
+  const objects = [`<< /Type /Catalog /Pages 2 0 R >>`, `<< /Type /Pages /Kids [3 0 R] /Count 1 >>`, `<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << /Font << /F1 5 0 R >> >> /Contents 4 0 R >>`, `<< /Length ${content.length} >>\nstream\n${content}\nendstream`, `<< /Type /Font /Subtype /Type1 /BaseFont /Courier >>`];
+  let output = '%PDF-1.4\n'; const offsets = [0];
+  objects.forEach((object, index) => { offsets.push(output.length); output += `${index + 1} 0 obj\n${object}\nendobj\n`; });
+  const xref = output.length; output += `xref\n0 ${objects.length + 1}\n0000000000 65535 f \n${offsets.slice(1).map(offset => `${String(offset).padStart(10, '0')} 00000 n `).join('\n')}\ntrailer\n<< /Size ${objects.length + 1} /Root 1 0 R >>\nstartxref\n${xref}\n%%EOF`;
+  return output;
 }

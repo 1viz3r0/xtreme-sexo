@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { EXPORT_WARNING, exportScan, projectScanResults, requestKey, scanProgress, validateScanRequest } from './scanBuddyPresentation';
+import { EXPORT_WARNING, analyzeScanRequest, estimateScanImpact, exportScan, projectScanResults, requestKey, scanProgress, validateScanRequest } from './scanBuddyPresentation';
 import { cancelScan, planScan, scanBuddyAvailable, scanHistory, scanStatus, startScan, type ScanJob, type ScanRequest, type ScanResult } from '../services/tauri/scanBuddy';
 
 const request: ScanRequest = { targets: '127.0.0.1, ::1', ports: '22,80,443', timeout_ms: 800, concurrency: 4, authorized: true };
@@ -12,21 +12,32 @@ test('accepts literal IPv4/IPv6, small CIDRs, port ranges and boundaries', () =>
   assert.deepEqual(validateScanRequest({ ...request, targets: '10.0.0.0/27', ports: '1-128', timeout_ms: 100, concurrency: 16 }), []);
   assert.deepEqual(validateScanRequest({ ...request, targets: '2001:db8::1 ::ffff:192.0.2.1', ports: '65535', timeout_ms: 2000, concurrency: 1 }), []);
 });
-test('rejects DNS, malformed addresses, zones, large CIDRs, ports, numeric limits and missing consent', () => {
-  for (const targets of ['', 'example.com', '127.1', '256.1.1.1', '01.2.3.4', 'fe80::1%eth0', 'http://127.0.0.1', '10.0.0.0/26', '::1/128', '10.0.0.1/33', '10.0.0.1/30/2']) assert.ok(validateScanRequest({ ...request, targets }).length, targets);
-  for (const ports of ['', '0', '65536', '80-22', '80,', 'http', '1-257']) assert.ok(validateScanRequest({ ...request, ports }).length, ports);
+test('rejects DNS, malformed addresses, zones, large CIDRs, ports, numeric limits and missing non-local consent', () => {
+  for (const targets of ['', 'example.com', '127.1', '256.1.1.1', '01.2.3.4', 'fe80::1%eth0', 'http://127.0.0.1', '10.0.0.0/23', '::1/128', '10.0.0.1/33', '10.0.0.1/30/2']) assert.ok(validateScanRequest({ ...request, targets }).length, targets);
+  for (const ports of ['', '0', '65536', '80-22', '80,', 'http']) assert.ok(validateScanRequest({ ...request, ports }).length, ports);
   for (const timeout_ms of [99, 2001, NaN, 100.5]) assert.ok(validateScanRequest({ ...request, timeout_ms }).length);
   for (const concurrency of [0, 17, NaN, 1.5]) assert.ok(validateScanRequest({ ...request, concurrency }).length);
-  assert.ok(validateScanRequest({ ...request, authorized: false }).some(error => error.includes('authorization')));
+  assert.ok(validateScanRequest({ ...request, targets: '192.0.2.1', authorized: false }).some(error => error.includes('authorization')));
+  assert.ok(validateScanRequest({ ...request, authorized: false }).some(error => error.includes('default local scope')));
 });
 test('enforces bounded target and probe counts and de-duplicates literal tokens/ports', () => {
   assert.deepEqual(validateScanRequest({ ...request, targets: '127.0.0.1 127.0.0.1', ports: '1-256,1-256' }), []);
   assert.deepEqual(validateScanRequest({ ...request, targets: '10.0.0.0/27 10.0.0.2 10.0.0.8/29', ports: '1-128' }), []);
   assert.deepEqual(validateScanRequest({ ...request, targets: '::1 0:0:0:0:0:0:0:1', ports: '1-256' }), []);
-  assert.ok(validateScanRequest({ ...request, targets: Array.from({ length: 33 }, (_, index) => `10.0.0.${index}`).join(',') }).some(error => error.includes('32 targets')));
-  assert.ok(validateScanRequest({ ...request, targets: '10.0.0.0/27,10.0.0.32,10.0.0.33', ports: '1-129' }).some(error => error.includes('4,096')));
+  assert.ok(validateScanRequest({ ...request, targets: '10.0.0.0/24,10.0.1.0/30,10.0.2.1' }).some(error => error.includes('256 targets')));
+  assert.ok(validateScanRequest({ ...request, targets: '10.0.0.0/24', ports: '1-259' }).some(error => error.includes('65,535')));
   assert.deepEqual(validateScanRequest({ ...request, targets: '10.0.0.0/27,10.0.0.32,10.0.0.33', ports: '1-128' }), []);
   assert.ok(validateScanRequest({ ...request, targets: '1'.repeat(8193) }).some(error => error.includes('too long')));
+});
+test('full TCP is valid on one host and estimates deduplicate expanded scope with timeout pacing', () => {
+  assert.deepEqual(validateScanRequest({ ...request, targets: '127.0.0.1', ports: '1-65535' }), []);
+  assert.ok(validateScanRequest({ ...request, ports: '1-65535' }).some(error => error.includes('one host')));
+  const scope = analyzeScanRequest({ ...request, targets: '10.0.0.0/24,10.0.0.1,10.0.0.4/30', ports: '80-81,80,81' });
+  assert.equal(scope.targetCount, 254); assert.equal(scope.portCount, 2); assert.deepEqual(scope.errors, []);
+  assert.equal(estimateScanImpact(254, 2, 4, 800).worst_case_duration_ms, 111760);
+  const slow = estimateScanImpact(1, 65535, 2, 2000);
+  assert.equal(slow.within_budget, false); assert.equal(slow.estimated_duration_ms, 7200000);
+  assert.ok(estimateScanImpact(1, 65535, 16, 500).within_budget);
 });
 test('every request edit invalidates the preview fingerprint', () => {
   for (const patch of [{ targets: '::1' }, { ports: '443' }, { authorized: false }, { concurrency: 8 }, { timeout_ms: 900 }]) assert.notEqual(requestKey(request), requestKey({ ...request, ...patch }));

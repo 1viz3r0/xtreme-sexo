@@ -11,7 +11,7 @@ test('Scan Buddy owns its native state and replaces the routed legacy engine', (
   assert.match(source('src/components/Sidebar.tsx'), /id: 'network_engine', label: 'Scan Buddy'/);
   const bootstrap = source('src-tauri/src/lib.rs');
   assert.match(bootstrap, /manage\(services::scan_buddy::ScanBuddyState::persistent\(\)\)/);
-  assert.match(bootstrap, /state::<services::scan_buddy::ScanBuddyState>\(\).shutdown\(\)/);
+  assert.match(bootstrap, /(?:app\.)?state::<services::scan_buddy::ScanBuddyState>\(\)\s*\.shutdown\(\)/);
   for (const command of ['plan', 'start', 'status', 'cancel', 'history']) {
     assert.ok(bootstrap.includes(`commands::scan_buddy::scan_buddy_${command}`));
   }

@@ -4,12 +4,37 @@ import { isTauriEnvironment } from '../services/tauri/isTauri';
 import { captureIssue, packetMeaning, summarizePage } from '../lib/captureBuddyPresentation';
 import { CaptureWorkflow, type CaptureToken } from './captureWorkflow';
 import { CaptureInvestigation } from './CaptureInvestigation';
+import { downloadTextFile } from '../lib/localDownload';
 
 type Session = { session_id: string; path: string; running: boolean; bytes: number };
 type Packet = { number: number; time: string; source: string; destination: string; protocol: string; length: string; info: string };
 type Page = { packets: Packet[]; has_more: boolean; translated_filter?: string };
 type BriefEntry = { label: string; count: number; bytes: number };
 type InvestigationBrief = { packet_count: number; captured_bytes: number; wire_bytes: number; time_start: number | null; time_end: number | null; protocols: BriefEntry[]; talkers: BriefEntry[]; conversations: BriefEntry[]; dns_questions: string[]; observations: string[] };
+
+/** Keep the native packet-number cursor semantics while presenting newest packets first. */
+export function newestPacketsFirst(page: Page): Page {
+  return { ...page, packets: page.packets.slice().sort((a, b) => b.number - a.number) };
+}
+
+export const CAPTURE_LIMITS = {
+  snapshotMin: 64,
+  snapshotMax: 262144,
+  bytesMin: 24,
+  bytesMax: 32 * 1024 * 1024,
+  packetsMin: 1,
+  packetsMax: 100000,
+} as const;
+
+export function validateCaptureOptions(snapshotLength: string, maxBytes: string, maxPackets: string): string | null {
+  const values = [snapshotLength, maxBytes, maxPackets].map(Number);
+  if (values.some((value) => !Number.isInteger(value))) return 'Snapshot length, max bytes, and max packets must be whole numbers.';
+  const [snapshot, bytes, packets] = values;
+  if (snapshot < CAPTURE_LIMITS.snapshotMin || snapshot > CAPTURE_LIMITS.snapshotMax) return `Snapshot length must be ${CAPTURE_LIMITS.snapshotMin.toLocaleString()}–${CAPTURE_LIMITS.snapshotMax.toLocaleString()} bytes.`;
+  if (bytes < CAPTURE_LIMITS.bytesMin || bytes > CAPTURE_LIMITS.bytesMax) return `Max bytes must be ${CAPTURE_LIMITS.bytesMin.toLocaleString()}–${CAPTURE_LIMITS.bytesMax.toLocaleString()}.`;
+  if (packets < CAPTURE_LIMITS.packetsMin || packets > CAPTURE_LIMITS.packetsMax) return `Max packets must be ${CAPTURE_LIMITS.packetsMin.toLocaleString()}–${CAPTURE_LIMITS.packetsMax.toLocaleString()}.`;
+  return null;
+}
 
 export function CaptureBuddy() {
   const [engine, setEngine] = useState('Checking Capture Buddy native engine…');
@@ -18,6 +43,8 @@ export function CaptureBuddy() {
   const [mode, setMode] = useState<'live' | 'file'>('live');
   const [liveBlocked, setLiveBlocked] = useState(false);
   const [captureGuidance, setCaptureGuidance] = useState<string | null>(null);
+  const [visibilityScope, setVisibilityScope] = useState('selected local interface');
+  const [visibilityNote, setVisibilityNote] = useState('Only traffic delivered to the selected local interface is eligible; full-network visibility requires independently evidenced mirror/TAP or monitor mode.');
   const [interfaces, setInterfaces] = useState<string[]>([]);
   const [iface, setIface] = useState('');
   const [path, setPath] = useState('');
@@ -28,6 +55,11 @@ export function CaptureBuddy() {
   const [recentSearches, setRecentSearches] = useState<string[]>([]);
   const [captureFilter, setCaptureFilter] = useState('');
   const [duration, setDuration] = useState('60');
+  const [promiscuous, setPromiscuous] = useState(false);
+  const [direction, setDirection] = useState('inout');
+  const [snapshotLength, setSnapshotLength] = useState('65535');
+  const [maxBytes, setMaxBytes] = useState(String(32 * 1024 * 1024));
+  const [maxPackets, setMaxPackets] = useState('100000');
   const [savePath, setSavePath] = useState('');
   const [saved, setSaved] = useState<string | null>(null);
   const [showSave, setShowSave] = useState(false);
@@ -38,6 +70,7 @@ export function CaptureBuddy() {
   const [selected, setSelected] = useState<number | null>(null);
   const [detail, setDetail] = useState('Select a packet to inspect its decoded protocols and bytes.');
   const [brief, setBrief] = useState<InvestigationBrief | null>(null);
+  const [statistics, setStatistics] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [refresh, setRefresh] = useState(0);
@@ -59,12 +92,23 @@ export function CaptureBuddy() {
   }, [workflow]);
 
   useEffect(() => {
+    const onContext = (event: Event) => {
+      const detail = (event as CustomEvent<{ interfaceName?: string }>).detail;
+      if (detail?.interfaceName) setIface(detail.interfaceName);
+    };
+    window.addEventListener('netoze:capture-buddy-context', onContext);
+    return () => window.removeEventListener('netoze:capture-buddy-context', onContext);
+  }, []);
+
+  useEffect(() => {
     let cancelled = false;
     if (!isTauriEnvironment()) { setEngine('Open the desktop app to use Capture Buddy.'); return; }
-    void invoke<{ available: boolean; detail: string; live_capture_blocked: boolean; capture_guidance: string | null }>('buddy_engine_status').then((value) => {
+    void invoke<{ available: boolean; detail: string; live_capture_blocked: boolean; capture_guidance: string | null; visibility_scope: string; visibility_note: string }>('buddy_engine_status').then((value) => {
       if (cancelled) return;
       setAvailable(value.available); setEngine(value.detail);
-      setLiveBlocked(value.live_capture_blocked); setCaptureGuidance(value.capture_guidance);
+       setLiveBlocked(value.live_capture_blocked); setCaptureGuidance(value.capture_guidance);
+      if (value.visibility_scope) setVisibilityScope(value.visibility_scope);
+      if (value.visibility_note) setVisibilityNote(value.visibility_note);
       if (value.available) void invoke<string[]>('buddy_interfaces').then((items) => {
         if (!cancelled) { setInterfaces(items); setIface(items[0]?.split('.')[0] ?? ''); }
       }).catch((e) => { if (!cancelled) { setError(String(e)); errorOwner.current = 'action'; } });
@@ -88,7 +132,7 @@ export function CaptureBuddy() {
         if (state.bytes > 0) {
           const packets = await invoke<Page>('buddy_search_packets', { sessionId, query: applied, after });
           if (current()) {
-            setPage(packets);
+            setPage(newestPacketsFirst(packets));
             if (errorOwner.current === 'poll') { setError(null); errorOwner.current = null; }
             if (applied.trim()) setRecentSearches((previous) => [applied, ...previous.filter((query) => query !== applied)].slice(0, 5));
           }
@@ -151,6 +195,8 @@ export function CaptureBuddy() {
   const issue = error ? captureIssue(error) : captureGuidance ? captureIssue(captureGuidance) : null;
   const durationSeconds = Number(duration);
   const validDuration = /^\d+$/.test(duration) && Number.isInteger(durationSeconds) && durationSeconds >= 1 && durationSeconds <= 3600;
+  const captureOptionsError = validateCaptureOptions(snapshotLength, maxBytes, maxPackets);
+  const validCaptureOptions = !captureOptionsError;
   const search = (query: string) => {
     workflow.invalidateView();
     setFilter(query); setApplied(query); setAfter(0); setPage({ packets: [], has_more: false });
@@ -190,14 +236,16 @@ export function CaptureBuddy() {
       <button className={button} disabled={!available || busy || !path || session?.running} onClick={() => void action(async (token) => adopt(await invoke<Session>('buddy_open_file', { path }), token))}>Read recording</button>
     </div>}
     {mode === 'live' && <div className="space-y-2 rounded-lg border border-slate-800 p-3"><div className="flex flex-wrap gap-2">
-      <select aria-label="Capture interface" className={`${input} flex-1`} value={iface} onChange={(e) => setIface(e.target.value)} disabled={session?.running}>{interfaces.map((name) => <option key={name} value={name.split('.')[0]}>{name}</option>)}</select>
+       <select aria-label="Capture interface" className={`${input} flex-1`} value={iface} onChange={(e) => setIface(e.target.value)} disabled={session?.running}>{interfaces.map((name) => <option key={name} value={name.split('.')[0]}>{name}</option>)}</select>
       <label className="flex items-center gap-2 text-sm">Duration<input type="number" min={1} max={3600} step={1} aria-label="Recording duration in seconds" className={`${input} w-24`} value={duration} onChange={(e) => setDuration(e.target.value)} disabled={session?.running} />seconds</label>
-      <button className={button} disabled={!available || liveBlocked || busy || !iface || !validDuration || session?.running} onClick={() => void action(async (token) => adopt(await invoke<Session>('buddy_start', { interface: iface, captureFilter, durationSeconds }), token))}>Start recording</button>
+       <label className="flex items-center gap-2 text-sm"><input type="checkbox" checked={promiscuous} onChange={(e) => setPromiscuous(e.target.checked)} disabled={session?.running} />Promiscuous</label>
+       <label className="flex items-center gap-2 text-sm">Direction<select aria-label="Capture direction" className={input} value={direction} onChange={(e) => setDirection(e.target.value)} disabled={session?.running}><option value="inout">In + out</option><option value="in">Inbound</option><option value="out">Outbound</option></select></label>
+        <button className={button} disabled={!available || liveBlocked || busy || !iface || !validDuration || !validCaptureOptions || session?.running} onClick={() => void action(async (token) => adopt(await invoke<Session>('buddy_start', { interface: iface, captureFilter, durationSeconds, promiscuous, direction, snapshotLength: Number(snapshotLength), maxBytes: Number(maxBytes), maxPackets: Number(maxPackets) }), token))}>Start recording</button>
       <button className={button} disabled={busy || !session?.running} onClick={() => void action(async (token) => {
         await invoke('buddy_stop', { sessionId });
         if (workflow.current(token)) { workflow.invalidateView(); setRefresh((v) => v + 1); }
       })}>Finish recording</button>
-    </div><div className="flex flex-wrap items-center gap-2 text-xs text-slate-400">{[30, 60, 300, 900].map((seconds) => <button key={seconds} className="rounded border border-slate-700 px-2 py-1 hover:bg-white/10 disabled:opacity-40" disabled={session?.running} onClick={() => setDuration(String(seconds))}>{seconds < 60 ? `${seconds}s` : `${seconds / 60}m`}</button>)}<span>{validDuration ? 'Stops at the selected duration, 32 MiB, or 100,000 packets—whichever comes first.' : 'Enter a whole number from 1 to 3600 seconds.'}</span></div><details className="text-xs text-slate-400"><summary className="cursor-pointer">Advanced recording filter</summary><input className={`${input} mt-2 w-full`} value={captureFilter} onChange={(e) => setCaptureFilter(e.target.value)} disabled={session?.running} placeholder="Optional BPF recording filter, e.g. tcp port 443" aria-label="Capture filter" /></details></div>}
+      </div><p className="text-xs text-slate-400">Visibility scope: {visibilityScope}. {visibilityNote}</p><details className="text-xs text-slate-400"><summary className="cursor-pointer">Advanced recording options</summary><div className="mt-2 grid gap-2 sm:grid-cols-3"><label>Snapshot length<input type="number" min={CAPTURE_LIMITS.snapshotMin} max={CAPTURE_LIMITS.snapshotMax} className={`${input} mt-1 w-full`} value={snapshotLength} onChange={(e) => setSnapshotLength(e.target.value)} disabled={session?.running} /></label><label>Max bytes<input type="number" min={CAPTURE_LIMITS.bytesMin} max={CAPTURE_LIMITS.bytesMax} className={`${input} mt-1 w-full`} value={maxBytes} onChange={(e) => setMaxBytes(e.target.value)} disabled={session?.running} /></label><label>Max packets<input type="number" min={CAPTURE_LIMITS.packetsMin} max={CAPTURE_LIMITS.packetsMax} className={`${input} mt-1 w-full`} value={maxPackets} onChange={(e) => setMaxPackets(e.target.value)} disabled={session?.running} /></label></div>{captureOptionsError && <p role="alert" className="mt-2 text-amber-200">{captureOptionsError}</p>}<input className={`${input} mt-2 w-full`} value={captureFilter} onChange={(e) => setCaptureFilter(e.target.value)} disabled={session?.running} placeholder="Optional BPF recording filter, e.g. tcp port 443" aria-label="Capture filter" /></details></div>}
     {session && <details className="text-xs text-slate-400"><summary className="cursor-pointer">Recording file · {(session.bytes / 1024).toFixed(1)} KiB</summary><p className="break-all select-text">{session.path}</p></details>}
     </section>;
   return <div className="flex flex-col gap-3 p-4 h-full min-h-0 overflow-y-auto text-sm text-slate-200 [&_.text-xs]:text-sm">
@@ -219,8 +267,9 @@ export function CaptureBuddy() {
         <button className={button} disabled={!session || busy} onClick={() => void action(async (token) => {
           setShowInspector(true); setDetail('Dissecting…');
           const result = await invoke<string>('buddy_statistics', { sessionId });
-          if (workflow.current(token)) { setSelected(null); setDetail(result); }
-        }, 'detail')}>Summarize recording</button>
+           if (workflow.current(token)) { setSelected(null); setStatistics(result); setDetail(result); }
+         }, 'detail')}>Summarize recording</button>
+         {statistics && <><button className={button} onClick={() => downloadTextFile(statistics, 'text/plain', `capture-statistics-${sessionId ?? 'session'}.txt`)}>Download TXT</button><button className={button} onClick={() => downloadTextFile(statistics, 'application/pdf', `capture-statistics-${sessionId ?? 'session'}.pdf`)}>Download PDF</button></>}
       </div></div>
       {!showInspector && <p className="text-sm text-slate-400">Select a packet from the investigation or timeline.</p>}
       {showInspector && <div className="grid grid-cols-1 lg:grid-cols-2 gap-3">
@@ -236,7 +285,8 @@ export function CaptureBuddy() {
         const result = await invoke<InvestigationBrief>('buddy_investigation_brief', { sessionId });
         if (workflow.current(token)) setBrief(result);
       })}>Build investigation brief</button>
-      {brief && <div className="mt-3 space-y-3" aria-label="Investigation brief">
+       {brief && <div className="mt-3 space-y-3" aria-label="Investigation brief">
+         <div className="flex flex-wrap gap-2"><button className={button} onClick={() => downloadTextFile(JSON.stringify(brief, null, 2), 'application/json', `capture-brief-${sessionId ?? 'session'}.json`)}>Download JSON</button><button className={button} onClick={() => downloadTextFile(`# Capture Buddy investigation brief\n\nPackets: ${brief.packet_count}\nCaptured bytes: ${brief.captured_bytes}\nWire bytes: ${brief.wire_bytes}\n\n## Protocols\n${brief.protocols.map(item => `- ${item.label}: ${item.count}`).join('\n')}\n\n## Observations\n${brief.observations.map(note => `- ${note}`).join('\n')}`, 'text/markdown', `capture-brief-${sessionId ?? 'session'}.md`)}>Download Markdown</button></div>
         <p>{brief.captured_bytes.toLocaleString()} B captured · {brief.wire_bytes.toLocaleString()} B on wire · {brief.conversations.length} top conversations</p>
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-3"><div><h3 className="font-semibold mb-1">Protocols</h3>{brief.protocols.map(item => <p key={item.label}>{item.label} · {item.count} packets</p>)}</div><div><h3 className="font-semibold mb-1">Top talkers</h3>{brief.talkers.map(item => <p key={item.label} className="font-mono break-all">{item.label} · {item.count}</p>)}</div><div><h3 className="font-semibold mb-1">DNS questions</h3>{brief.dns_questions.length ? brief.dns_questions.map(item => <p key={item} className="break-all">{item}</p>) : <p>None decoded.</p>}</div></div>
         {brief.observations.length > 0 && <div className="text-slate-200 space-y-1"><h3 className="font-semibold">Review notes</h3>{brief.observations.map(note => <p key={note}>{note}</p>)}</div>}
@@ -267,8 +317,8 @@ export function CaptureBuddy() {
       if (workflow.current(token)) setSaved(`Saved ${result.bytes.toLocaleString()} bytes to ${result.path}`);
     }); }}>
       <label className="block text-sm" htmlFor="buddy-save-path">Save the full recording to a new file</label>
-      <div className="flex gap-2"><input id="buddy-save-path" className={`${input} flex-1`} value={savePath} onChange={(e) => { setSavePath(e.target.value); setSaved(null); }} placeholder="Full destination path, including .pcapng or .pcap" /><button className={button} disabled={busy || session.running || !savePath.trim()}>Save file</button></div>
-      <p className="text-xs text-slate-400">Preserves all packets and original bytes, regardless of the view filter. Existing files are never overwritten.</p>
+       <div className="flex gap-2"><input id="buddy-save-path" className={`${input} flex-1`} value={savePath} onChange={(e) => { setSavePath(e.target.value); setSaved(null); }} placeholder="Absolute path ending in .pcapng or .pcap" /><button className={button} disabled={busy || session.running || !savePath.trim() || !/\.(pcap|pcapng)$/i.test(savePath.trim())}>Save file</button></div>
+       <p className="text-xs text-slate-400">This saves the original capture only, so the filename must end in .pcap or .pcapng. Use Summarize recording for TXT/PDF reports. Existing files are never overwritten.</p>
     </form>}
     {saved && <p role="status" className="text-sm text-slate-200 break-all select-text">{saved}</p>}
     <div className={`overflow-auto shrink-0 border border-slate-700 rounded-lg ${!session ? 'min-h-24' : tableExpanded ? 'h-[72vh] min-h-[400px]' : 'h-[40vh] min-h-[240px]'}`}>
@@ -283,7 +333,7 @@ export function CaptureBuddy() {
       {!page.packets.length && <p className="p-6 text-sm text-slate-500">{error || liveBlocked ? 'No new recording is available. Review a saved file, or resolve recording access above.' : session ? 'Nothing matches this view yet. Try Everything or wait for traffic.' : 'Choose a source above. This timeline fills only with packets from your recording.'}</p>}
     </div>
     <div className="flex flex-wrap justify-end gap-2">
-       <button className={button} disabled={!after} onClick={() => changePage(0)}>First page</button><button className={button} disabled={!page.has_more} onClick={() => changePage(page.packets.at(-1)?.number ?? 0)}>Next 200</button>
+       <button className={button} disabled={!after} onClick={() => changePage(0)}>First page</button><button className={button} disabled={!page.has_more} onClick={() => changePage(page.packets.reduce((highest, packet) => Math.max(highest, packet.number), 0))}>Next 200</button>
      </div>
     <details className="text-sm text-slate-400"><summary className="cursor-pointer">Analysis engine</summary><p>{engine}</p></details>
   </div>;

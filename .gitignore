@@ -42,3 +42,8 @@ EXECUTABLES_LOCATION.md
 *.sqlite3
 docs/NETOZE_LABS_RESUME_*.zip
 docs/NETOZE_LABS_RESUME_*.zip.sha256
+
+# Local OmniRush session data, generated native artifacts, and Python caches
+.omnirush/
+*.AppImage
+__pycache__/

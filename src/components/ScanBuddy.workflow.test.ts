@@ -18,6 +18,7 @@ test('mounted numbered flow previews without permission, preserves preview on ch
     calls.push({ command, args });
     if (command === failCommand) throw new Error('Scan Buddy request timed out');
     if (command === 'scan_buddy_history') return stored ? [stored] : [];
+    if (command === 'scan_buddy_discover_network_scope') return { interfaces: [{ interface_name: 'eth0', address: '192.168.1.10', prefix: 24, scan_cidr: '192.168.1.0/24', gateway: '192.168.1.1', warnings: [] }], warnings: [] };
     if (command === 'scan_buddy_plan') return deferPlan ? new Promise(resolve => { latePlan = resolve; }) : plan;
     if (command === 'scan_buddy_start') { stored = { id: 'fixture', state: 'RUNNING', started_at: '2026-10-05T00:00:00Z', finished_at: null, plan, completed_probes: 0, results: [], error: null }; return stored; }
     if (command === 'scan_buddy_cancel') { stored = { ...stored, state: 'CANCELLED' }; return stored; }
@@ -31,17 +32,17 @@ test('mounted numbered flow previews without permission, preserves preview on ch
   const button = (text: string) => [...host.querySelectorAll('button')].find(item => item.textContent.includes(text))!;
   try {
     await act(async () => { root.render(React.createElement(ScanBuddy)); });
-    assert.equal(host.querySelector('textarea')!.value, '');
+     assert.equal(host.querySelector('textarea')!.value, '127.0.0.1');
     assert.match(host.textContent, /Scope[\s\S]*Preview[\s\S]*Start/);
     assert.doesNotMatch(host.textContent, /[123]\. (Scope|Preview|Start)/);
-    assert.match(host.querySelector('#scan-start-reason')!.textContent, /Scope required/);
-    await act(async () => { button('Use loopback').click(); });
+     assert.match(host.querySelector('#scan-start-reason')!.textContent, /Preview the current scope/);
+     await act(async () => { button('Scan self IP').click(); });
     assert.equal(calls.filter(call => call.command === 'scan_buddy_start' || call.command === 'scan_buddy_plan').length, 0);
     await act(async () => { button('Preview scan plan').click(); });
-    assert.equal(calls.find(call => call.command === 'scan_buddy_plan')!.args.request.authorized, false);
-    assert.equal(button('Start TCP scan').disabled, true);
-    assert.match(host.querySelector('#scan-start-reason')!.textContent, /checkbox/);
-    await act(async () => { (host.querySelector('input[type=checkbox]') as any).click(); });
+     assert.equal(calls.find(call => call.command === 'scan_buddy_plan')!.args.request.authorized, false);
+      assert.equal((host.querySelector('input[type=checkbox]') as HTMLInputElement).checked, false);
+      await act(async () => { (host.querySelector('input[type=checkbox]') as HTMLInputElement).click(); });
+      assert.equal(button('Start TCP scan').disabled, false);
     assert.equal(button('Start TCP scan').disabled, false);
     assert.equal(calls.filter(call => call.command === 'scan_buddy_plan').length, 1);
     await act(async () => { button('Start TCP scan').click(); });
@@ -53,7 +54,7 @@ test('mounted numbered flow previews without permission, preserves preview on ch
     await act(async () => { root.render(React.createElement(ScanBuddy)); });
     assert.match(host.textContent, /Scan cancelled/);
     assert.equal(calls.filter(call => call.command === 'scan_buddy_status').length, 0);
-    await act(async () => { button('Use loopback').click(); });
+     await act(async () => { button('Scan self IP').click(); });
     deferPlan = true;
     await act(async () => { button('Preview scan plan').click(); });
     assert.match(host.querySelector('#scan-start-reason')!.textContent, /Wait for preview/);
@@ -63,12 +64,13 @@ test('mounted numbered flow previews without permission, preserves preview on ch
     await act(async () => { latePlan!(plan); });
     assert.equal(host.textContent.includes('Plan ready:'), false);
     deferPlan = false; failCommand = 'scan_buddy_plan';
-    await act(async () => { button('Use loopback').click(); });
+     await act(async () => { button('Scan self IP').click(); });
     await act(async () => { button('Preview scan plan').click(); });
     assert.match(host.querySelector('[role=alert]')!.textContent, /Preview failed \(no probes sent\)/);
     failCommand = null;
     await act(async () => { button('Preview scan plan').click(); });
     await act(async () => { (host.querySelector('input[type=checkbox]') as any).click(); });
+     assert.equal(button('Start TCP scan').disabled, false);
     failCommand = 'scan_buddy_start';
     await act(async () => { button('Start TCP scan').click(); });
     assert.match(host.querySelector('[role=alert]')!.textContent, /may have started/);

@@ -40,6 +40,21 @@ export interface ThreatIntelStatus {
   sources: string[];
 }
 
+export interface WatchtowerEnrichmentResult {
+  requested_ips: number;
+  attempted_ips: number;
+  geoip: Array<GeoIpEntry & { stale: boolean }>;
+  sources: Array<{ source: string; state: string; refreshed_at: string; cache_timestamp: number | null; detail: string }>;
+  errors: string[];
+}
+
+/** Explicit refresh only; local Watchtower snapshots never invoke this path. */
+export async function refreshWatchtowerEnrichment(): Promise<WatchtowerEnrichmentResult> {
+  if (!isTauriEnvironment()) throw new Error('Enrichment refresh requires the native desktop app.');
+  const { invoke } = await import('@tauri-apps/api/core');
+  return invoke<WatchtowerEnrichmentResult>('refresh_watchtower_enrichment');
+}
+
 export interface DeviceEntry {
   ip: string;
   mac: string;

@@ -1,5 +1,71 @@
 # NET0ZE Project Handoff
 
+## Latest continuation — Web Exposure CTF room saved 2026-10-19
+
+### Goal
+Pause work after turning the practical Web Exposure room into a visually coherent original CTF-style training site. The user wants an interesting, substantial room rather than a blank port page, while preserving local-only safety and truthful runtime behavior.
+
+### State
+- Work is paused at the user’s request.
+- The existing Harborline Dispatch target now has richer original pages and CTF investigation clues: console home, dashboard, shipment lookup, operations status, help center, change notes, robots metadata, site map, manifest, security contact, release metadata, and the fixed support-export directory containing the per-run JSON backup and ZIP.
+- The native runtime still generates a per-run flag, validates it server-side, rotates it on Reset, and cleans only ownership-verified Docker resources.
+- The target now has a dark, operational, non-gradient visual treatment in the embedded fallback pages, with navigation, panels, tables, status colors, and readable spacing. The screenshot’s unstyled white/default page was caused by the target CSP blocking its inline styles; the CSP now permits only inline styles needed by these fixed pages.
+- The Dockerfile no longer references the unavailable `pages/` directory in the native temporary build context. The embedded route pages are used reliably by the packaged runtime.
+- No arbitrary services were installed directly on the host. The target remains inside the owned Docker container and is reached through the NET0ZE loopback forwarder.
+- No user-visible AppImage rebuild was performed after this final embedded-style change. The previously installed artifact may not contain the latest target styling; rebuild/repackage is the next action only when the user resumes.
+
+### Files changed in this continuation
+- `labs/web-exposure/server.py`: richer embedded CTF pages, shared dark styling, accessible route navigation, and CSP style allowance.
+- `labs/web-exposure/Dockerfile`: removed the `COPY pages ./pages/` dependency that broke the native temporary build context.
+- `labs/web-exposure/index.html`: existing richer landing page remains the root target surface.
+- `labs/web-exposure/README.md` and `labs/web-exposure/test_target.py`: existing room documentation/tests from the prior continuation remain applicable.
+
+### Checks
+- Standalone target tests passed: `PYTHONDONTWRITEBYTECODE=1 python3 -W error::ResourceWarning -m unittest discover -s labs/web-exposure -p test_target.py -v` — 2 passed.
+- Python syntax check passed: `python3 -m py_compile labs/web-exposure/server.py labs/web-exposure/test_target.py`.
+- Target diff check passed: `git diff --check -- labs/web-exposure`.
+- Real Docker lifecycle test passed after the Dockerfile fix: `cargo test --manifest-path src-tauri/Cargo.toml --test lab_runtime_verify -- --ignored` — 1 passed.
+- The full frontend/build checks passed immediately before this final target styling change in the same continuation, but were not rerun after the target-only change.
+
+### Next step
+When the user resumes, rebuild/repackage the AppImage so the final embedded CTF styling is installed, then perform the documented manual flow: Labs → Web Exposure → Start → Open target → verify styled pages and route clues → recover/submit flag → Reset → verify flag rotation → Stop. Do not add another lab until this user-visible acceptance is recorded.
+
+## Latest continuation — Field Guide saved 2026-10-19
+
+### Goal
+Complete the Field Guide career-map experience without starting Labs. The current acceptance target is a scrollable role-first view with searchable cybersecurity job profiles, profile-specific workflow, evidence/output guidance, growth options, and truthful profile-quality labels.
+
+### State
+- Field Guide opens on **Role profile** rather than Career map.
+- Role profile options are **Overview**, **Workflow**, **Evidence and outputs**, and **Growth and sources**.
+- The catalog contains **113 searchable role entries** and **123 total career paths**, exceeding the requested 50 profile options.
+- Every role has five workflow stages, responsibilities, activities, deliverables, evidence, transitions, certification guidance, sources, and ethics metadata.
+- Seven detailed profiles are marked `curated`: SOC Analyst Tier 1, Firewall Engineer, Incident Response Analyst, Digital Forensics Examiner, Threat Intelligence Analyst, Threat Hunter, and Detection Engineer. Other entries are marked `directory` to avoid overstating research depth.
+- The Field Guide page and modal now have bounded scrolling, bottom padding, sticky section navigation, and `min-h-0` flex sizing so all sections can be reached by scroll.
+- Labs was not started or modified in this continuation.
+
+### Files
+- `src/lib/fieldGuideCatalog.ts`: expanded role catalog, profile metadata, workflow stages, curated profile overrides, search index, and profile status.
+- `src/lib/fieldGuideCatalog.test.ts`: catalog size, family coverage, search, workflow, and profile metadata tests.
+- `src/components/EduInspectorModal.tsx`: role-first navigation, profile sub-options, workflow/evidence/growth panels, quality badge, and scroll behavior.
+- `src/App.tsx`: Field Guide flex container `min-h-0` fix for page scrolling.
+- `/home/addie/Applications/NET0ZE.AppImage`: rebuilt local artifact; SHA-256 `66b4700a4b938d21ac607cb1c29a29e06464d8bc4947cc0e67bbf4bc50d6f8e1`.
+
+### Checks
+- Focused tests passed: `node --import tsx --test src/lib/fieldGuideCatalog.test.ts src/components/AppShell.test.ts` — 11 passed.
+- Production build passed: `npm run build` from `/home/addie/omnirush.ai/xtreme-sexo`.
+- Whitespace check passed: `git diff --check`.
+- AppImage packaging: standard Tauri bundling still exits through the existing `linuxdeploy` issue; the generated AppDir was repackaged with `appimagetool`.
+- Manual installed-app scroll acceptance: not observed in this session; user reported the prior version did not expose all content while scrolling, and the scroll fix was then built into the artifact above.
+
+### Decisions
+- Do not start Labs until the user explicitly asks; this Field Guide request supersedes the earlier Labs continuation point.
+- Keep directory profiles visibly distinct from curated profiles.
+- Preserve the large unrelated uncommitted worktree; do not reset, clean, commit, or push without explicit instruction.
+
+### Next step
+When resuming, first open the updated AppImage and verify that the Field Guide scrolls through Role profile → Workflow → Evidence and outputs → Growth and sources. Only then address any remaining Field Guide issue; do not begin Labs unless the user changes scope.
+
 **Resume entry point:** `docs/NETOZE_LABS_RESUME_MANUAL.md` is the consolidated
 Labs manual, including where work stopped, exact next steps, checks, and a
 next-session starter prompt. The scoped source/manual/DEB archive is

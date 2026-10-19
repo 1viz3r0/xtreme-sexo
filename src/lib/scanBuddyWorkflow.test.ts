@@ -9,27 +9,29 @@ const deferred = <T,>() => { let resolve!: (value: T) => void; const promise = n
 const service = (patch: Partial<WorkflowService> = {}): WorkflowService => ({ planScan: async () => plan, startScan: async () => job('RUNNING'), cancelScan: async () => job('CANCELLED'), scanHistory: async () => [], scanStatus: async () => job('RUNNING'), ...patch });
 const tick = () => new Promise(resolve => setTimeout(resolve, 0));
 
-test('fingerprint includes every scope field, excludes only authorization; explicit start gate', async () => {
+test('fingerprint includes every scope field, excludes only authorization; local scope still needs preview', async () => {
   let starts = 0;
   const workflow = createScanBuddyWorkflow(service({ startScan: async request => { assert.equal(request.authorized, true); starts++; return job('COMPLETED'); } }), true);
   const detach = workflow.attach();
   try {
     await tick();
-    assert.match(startDisabledReason(workflow.getSnapshot(), true)!, /Scope required/);
-    workflow.edit({ targets: '127.0.0.1' });
     assert.match(startDisabledReason(workflow.getSnapshot(), true)!, /Preview the current scope/);
     await workflow.preview();
+    assert.equal(startDisabledReason(workflow.getSnapshot(), true), null);
+    workflow.edit({ authorized: false });
     assert.match(startDisabledReason(workflow.getSnapshot(), true)!, /checkbox/);
-    await workflow.start(); assert.equal(starts, 0);
+    workflow.edit({ concurrency: 8 });
+    assert.equal(workflow.getSnapshot().request.authorized, false);
+    await workflow.preview(); workflow.edit({ authorized: true });
+    await workflow.start(); assert.equal(starts, 1);
     const snapshot = workflow.getSnapshot();
     assert.equal(previewFingerprint(snapshot.request), previewFingerprint({ ...snapshot.request, authorized: true }));
-    for (const patch of [{ targets: '::1' }, { ports: '443' }, { timeout_ms: 900 }, { concurrency: 5 }]) assert.notEqual(previewFingerprint(snapshot.request), previewFingerprint({ ...snapshot.request, ...patch }));
+    for (const patch of [{ targets: '::1' }, { ports: '443' }, { timeout_ms: 900 }, { concurrency: 5 }, { profile: 'custom' as const }]) assert.notEqual(previewFingerprint(snapshot.request), previewFingerprint({ ...snapshot.request, ...patch }));
     workflow.edit({ authorized: true });
     assert.equal(workflow.getSnapshot().preview, snapshot.preview);
-    await workflow.start(); assert.equal(starts, 1);
     await workflow.preview(); workflow.edit({ authorized: true }); workflow.edit({ ports: '443' });
     assert.equal(workflow.getSnapshot().preview, null);
-    assert.equal(workflow.getSnapshot().request.authorized, false);
+    assert.equal(workflow.getSnapshot().request.authorized, true);
   } finally { detach(); }
 });
 

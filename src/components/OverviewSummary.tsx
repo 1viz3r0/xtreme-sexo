@@ -3,6 +3,7 @@ import type { DetailedSystemInfo } from '../services/tauri/system';
 import type { DetailedAdapterInfo } from '../services/tauri/network';
 import type { GlobalIntelSnapshot } from '../services/tauri/globalIntel';
 import type { TabType } from './Sidebar';
+import { ReadinessPanel } from './ReadinessPanel';
 
 export interface OverviewSummaryProps {
   system: DetailedSystemInfo | null;
@@ -22,20 +23,32 @@ export const OverviewSummary: React.FC<OverviewSummaryProps> = ({ system, interf
   const capture = snapshot?.capture;
   const flowCount = snapshot?.flow_summary.active_flows_count;
   const findingCount = snapshot?.detection_summary.total_findings_count;
+  const activeFindings = snapshot?.detection_summary.active_count ?? 0;
+  const highFindings = (snapshot?.detection_summary.critical_count ?? 0) + (snapshot?.detection_summary.high_count ?? 0);
+  const attention = highFindings > 0 ? `${highFindings} high-priority finding${highFindings === 1 ? '' : 's'} in the loaded snapshot` : activeFindings > 0 ? `${activeFindings} active finding${activeFindings === 1 ? '' : 's'} require review` : snapshot ? 'No active findings in the loaded snapshot' : 'No investigation snapshot loaded';
   return <section aria-label="Operations overview" className="mx-3 mt-3 rounded border border-[#525252] bg-[#0d0d0d] p-3 text-[11px] font-mono">
     <div className="flex flex-wrap items-center justify-between gap-2">
       <div><h1 className="text-sm font-bold tracking-wide text-white">OPERATIONS OVERVIEW</h1><p className="text-slate-500">Local evidence, current session, and cached observations</p></div>
       <nav aria-label="Operations navigation" className="flex flex-wrap gap-1">
         {([['system_logs', 'Dashboard'], ['conversations', 'Capture Buddy'], ['network_engine', 'Scan Buddy'], ['watchtower', 'Watchtower']] as const).map(([tab, label]) => <button key={tab} onClick={() => onNavigate(tab)} className="rounded border border-[#525252] px-2 py-1 text-slate-200 hover:bg-[#252525]">{label}</button>)}
       </nav>
-    </div>
-    <div className="mt-3 grid gap-2 sm:grid-cols-2 lg:grid-cols-4">
+     </div>
+     <section aria-label="Investigation brief" className="mt-3 rounded border border-slate-800 bg-black/30 p-3">
+       <div className="flex flex-wrap items-start justify-between gap-2"><div><h2 className="text-xs font-bold uppercase tracking-wide text-white">Investigation brief</h2><p className="mt-1 text-slate-500">A bounded summary of currently loaded evidence, not a threat verdict.</p></div><span className="text-slate-600">{snapshot ? `Snapshot ${new Date(snapshot.collected_at).toLocaleString()}` : 'Awaiting snapshot'}</span></div>
+       <div className="mt-3 grid gap-2 sm:grid-cols-3">
+         <div className="rounded border border-slate-800 bg-black/20 p-2"><b className="text-slate-400">ATTENTION</b><div className="mt-1 text-white">{attention}</div><div className="mt-1 text-slate-500">Based on loaded detection records only.</div></div>
+         <div className="rounded border border-slate-800 bg-black/20 p-2"><b className="text-slate-400">NETWORK PICTURE</b><div className="mt-1 text-white">{snapshot ? `${snapshot.devices.length} devices • ${flowCount ?? 0} active flows` : 'Unavailable'}</div><div className="mt-1 text-slate-500">Observed or cached records; not complete coverage.</div></div>
+         <div className="rounded border border-slate-800 bg-black/20 p-2"><b className="text-slate-400">NEXT STEP</b><div className="mt-1 text-white">{highFindings > 0 ? 'Review high-priority evidence' : snapshot?.devices.length ? 'Review local observations' : 'Load a native snapshot'}</div><div className="mt-2 flex flex-wrap gap-1"><button onClick={() => onNavigate(highFindings > 0 ? 'conversations' : 'watchtower')} className="rounded border border-[#525252] px-2 py-1 text-slate-200 hover:bg-[#252525]">{highFindings > 0 ? 'Open evidence' : 'Open Watchtower'}</button></div></div>
+       </div>
+     </section>
+     <div className="mt-3 grid gap-2 sm:grid-cols-2 lg:grid-cols-4">
       <div className="rounded border border-slate-800 bg-black/20 p-2"><b className="text-slate-400">HOST</b><div className="mt-1 text-white">{value(system?.hostname)}</div><div className="text-slate-500">{value(system ? `${system.os_name} ${system.os_version}` : null)} • {value(system?.architecture)}</div></div>
       <div className="rounded border border-slate-800 bg-black/20 p-2"><b className="text-slate-400">RESOURCES</b><div className="mt-1 text-white">CPU {value(system?.cpu_core_count ? `${system.cpu_core_count} cores` : null)} • RAM {system ? `${system.ram_usage_percent.toFixed(0)}% / ${bytes(system.ram_total_bytes)}` : 'Unavailable'}</div><div className="text-slate-500">Uptime {system ? duration(system.uptime_seconds) : 'Unavailable'}</div></div>
       <div className="rounded border border-slate-800 bg-black/20 p-2"><b className="text-slate-400">LOCAL NETWORK</b><div className="mt-1 break-all text-white">{ips.length ? ips.join(', ') : 'Unavailable'}</div><div className="text-slate-500">{interfaces === null ? 'Reading passive interface inventory…' : `${adapters.length} interface${adapters.length === 1 ? '' : 's'}`}</div></div>
       <div className="rounded border border-slate-800 bg-black/20 p-2"><b className="text-slate-400">SESSION</b><div className="mt-1 text-white">{snapshot ? `${flowCount ?? 0} flows • ${findingCount ?? 0} findings` : 'Unavailable'}</div><div className="text-slate-500">{capture ? `${capture.packets_captured.toLocaleString()} packets • ${capture.dropped_packets.toLocaleString()} dropped` : 'Capture metrics unavailable'}</div></div>
     </div>
-    <div role="status" className="mt-2 flex flex-wrap gap-x-4 gap-y-1 border-t border-slate-800 pt-2 text-slate-500"><span>Devices: {snapshot ? `${snapshot.devices.length} observed (cached)` : 'Unavailable'}</span><span>Capture: {value(snapshot?.capture_availability.state)}</span><span>Storage: {value(snapshot?.storage.state)}</span><span>Enrichment: {value(snapshot?.enrichment.state)}</span>{unavailable && <span className="text-amber-400">{unavailable}</span>}</div>
+     <div role="status" className="mt-2 flex flex-wrap gap-x-4 gap-y-1 border-t border-slate-800 pt-2 text-slate-500"><span>Devices: {snapshot ? `${snapshot.devices.length} observed (cached)` : 'Unavailable'}</span><span>Capture: {value(snapshot?.capture_availability.state)}</span><span>Storage: {value(snapshot?.storage.state)}</span><span>Enrichment: {value(snapshot?.enrichment.state)}</span>{unavailable && <span className="text-amber-400">{unavailable}</span>}</div>
+     <div className="mt-2"><ReadinessPanel /></div>
     <details className="mt-2 text-slate-500"><summary className="cursor-pointer text-slate-200">Technical status and freshness</summary><div className="mt-1 grid gap-1 sm:grid-cols-2"><span>Snapshot: {snapshot ? new Date(snapshot.collected_at).toLocaleString() : 'Unavailable'}</span><span>Interfaces: {interfaces ? 'fresh passive read' : 'unavailable'}</span><span>Scope: {value(snapshot?.scope)}</span><span>Sources are not health claims; unavailable data stays unavailable.</span></div></details>
   </section>;
 };

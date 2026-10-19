@@ -21,10 +21,12 @@ function mock() {
   })
   return { adapter, calls }
 }
-test('fresh compact catalog uses category and level, with no fabricated readiness or answers', () => {
+test('fresh practical room presents an honest guided Web Exposure briefing', () => {
   const markup = renderToStaticMarkup(createElement(ScenarioLabs, { runtimeAdapter: mock().adapter }))
+  assert.match(markup, /Mastering Scan Buddy/); assert.match(markup, /Mastering Capture Buddy/); assert.match(markup, /Start tutorial/)
   assert.match(markup, /Web Exposure/); assert.match(markup, /Ready to provision/); assert.match(markup, /Planned/)
   for (const label of ['Web', 'Network', 'Linux', 'Forensics', 'Beginner', 'Intermediate', 'Advanced']) assert.match(markup, new RegExp(label))
+  for (const label of ['Investigation objective', 'Target surface', '/robots.txt', '/api/releases', 'Investigation checklist', 'Evidence notes', 'Challenge guidance']) assert.match(markup, new RegExp(label.replace('/', '\\/')))
   assert.doesNotMatch(markup, /Working|Red Team|Blue Team|red-|blue-|Purple|asset-aurora|NET0ZE\{/)
 })
 test('setup guidance precedes confirmed start and backend-verified flag completion', async () => {
@@ -38,6 +40,15 @@ test('setup guidance precedes confirmed start and backend-verified flag completi
     assert.ok(fixture.calls.some(call => JSON.stringify(call) === JSON.stringify(['lab_runtime_start', { labId: 'web-exposure' }])))
     assert.match(host.textContent ?? '', /Working/)
     assert.match(host.textContent ?? '', /curl -i http:\/\/127.0.0.1:42000\//)
+     assert.equal(host.querySelectorAll('input[type="checkbox"]').length, 5)
+    const notes = host.querySelector('[aria-label="Evidence notes"]') as HTMLTextAreaElement
+    assert.ok(notes)
+    await act(async () => {
+      const setter = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value')?.set
+      setter?.call(notes, 'robots.txt points to the site map')
+      notes.dispatchEvent(new Event('input', { bubbles: true }))
+    })
+    assert.equal(notes.value, 'robots.txt points to the site map')
     const input = host.querySelector('[aria-label="Discovered flag"]') as HTMLInputElement
     await act(async () => {
       const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')?.set
@@ -75,7 +86,7 @@ test('start returning setup-required never fabricates a running target', async (
 })
 async function mounted(adapter: LabRuntimeAdapter, run: (host: HTMLElement) => Promise<void>) {
   const browser = new Window({ url: 'http://localhost/' })
-  const names = ['window', 'document', 'navigator', 'HTMLElement', 'HTMLInputElement', 'Event', 'IS_REACT_ACT_ENVIRONMENT']
+  const names = ['window', 'document', 'navigator', 'HTMLElement', 'HTMLInputElement', 'HTMLTextAreaElement', 'Event', 'IS_REACT_ACT_ENVIRONMENT']
   const previous = new Map(names.map(name => [name, Object.getOwnPropertyDescriptor(globalThis, name)]))
   for (const name of names) Object.defineProperty(globalThis, name, { configurable: true, value: name === 'IS_REACT_ACT_ENVIRONMENT' ? true : name === 'window' ? browser : (browser as unknown as Record<string, unknown>)[name] })
   const { createRoot } = await import('react-dom/client')

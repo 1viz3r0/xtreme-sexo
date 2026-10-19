@@ -110,6 +110,13 @@ fn native_tool(name: &str, purpose: &str) -> NativeToolReadiness {
     }
 }
 
+fn fixed_tool(path: &Path, name: &str, purpose: &str) -> NativeToolReadiness {
+    NativeToolReadiness {
+        name: name.into(), available: executable(path),
+        path: executable(path).then(|| path.to_string_lossy().into_owned()), purpose: purpose.into(),
+    }
+}
+
 fn capture_result(result: Result<usize, String>, supported: bool) -> (CaptureReadiness, Option<ReadinessError>) {
     let mut capture = CaptureReadiness {
         library: if cfg!(windows) { "Npcap" } else { "libpcap" }.into(),
@@ -142,8 +149,12 @@ pub async fn get_backend_readiness(state: tauri::State<'_, crate::state::Backend
         let enumeration = if supported { pcap::Device::list().map(|list| list.len()).map_err(|e| e.to_string()) } else { Ok(0) };
         let (capture, capture_error) = capture_result(enumeration, supported);
         if let Some(error) = capture_error { last_errors.push(error); }
-        let mut native_tools = vec![native_tool("ping", "Explicit ping checks"), native_tool("arp", "Local neighbor inventory")];
+         let neighbor_tool = if cfg!(target_os = "linux") { "ip" } else { "arp" };
+         let mut native_tools = vec![native_tool("ping", "Explicit ping checks"), native_tool(neighbor_tool, "Local neighbor inventory")];
         if cfg!(target_os = "linux") { native_tools.push(native_tool("journalctl", "Local system event reads")); }
+        if cfg!(target_os = "linux") {
+            native_tools.push(fixed_tool(Path::new("/usr/lib/netoze/netoze-capture-helper"), "netoze-capture-helper", "Privileged capture helper installed by the system package"));
+        }
         let mut guidance = vec!["Tool availability means an executable file was found in PATH; execution and permissions were not tested.".into()];
         if !storage.initialized || !storage.schema_readable || !storage.read_write_open {
             guidance.push("Check the database path and its parent directory permissions for your signed-in user, then restart NET0ZE. Keep the database when repairing permissions.".into());
@@ -152,8 +163,11 @@ pub async fn get_backend_readiness(state: tauri::State<'_, crate::state::Backend
             guidance.push("For capture on Windows, install Npcap with WinPcap API compatibility. If Npcap was restricted to administrators, use an approved administrator session when explicitly starting capture.".into());
             guidance.push("If the desktop cannot launch, install Microsoft Edge WebView2 Runtime and check Npcap's runtime libraries.".into());
         } else if cfg!(target_os = "linux") {
-            guidance.push("On Linux, install your distribution's libpcap runtime and WebKitGTK 4.1 packages. Missing ping/arp tools are normally supplied by iputils-ping and net-tools (package names vary).".into());
+             guidance.push("On Linux, install your distribution's libpcap runtime and WebKitGTK 4.1 packages. Local discovery uses iproute2 (ip) and ping; package names vary by distribution.".into());
             guidance.push("Capture may require CAP_NET_RAW/CAP_NET_ADMIN granted by your administrator to the installed executable. Journal access depends on your distribution's journal group permissions; restart your session after group changes.".into());
+            if native_tools.last().is_some_and(|tool| !tool.available) {
+                guidance.push("The installed capture helper is missing. AppImage and per-user launches cannot provide capture access; install the NET0ZE DEB so /usr/lib/netoze/netoze-capture-helper is present, root-owned, and configured by the package.".into());
+            }
         }
         BackendReadiness {
             checked_at: chrono::Utc::now().to_rfc3339(), platform: std::env::consts::OS.into(), architecture: std::env::consts::ARCH.into(), platform_supported: supported,
@@ -207,5 +221,14 @@ mod tests {
         assert!(errors.is_empty());
         assert_eq!(std::fs::read(&path).unwrap(), before);
         std::fs::remove_file(path).unwrap();
+    }
+
+    #[test]
+    fn missing_fixed_helper_is_reported_as_unavailable() {
+        let path = std::env::temp_dir().join(format!("netoze-missing-helper-{}", std::process::id()));
+        let result = fixed_tool(&path, "netoze-capture-helper", "capture helper");
+        assert!(!result.available);
+        assert!(result.path.is_none());
+        assert_eq!(result.name, "netoze-capture-helper");
     }
 }

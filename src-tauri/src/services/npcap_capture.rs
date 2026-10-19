@@ -1,5 +1,5 @@
+use crate::models::DnsQueryEntry;
 use crate::models::PacketMetadata;
-use crate::models::{DnsQueryEntry};
 use crate::services::packet_parser::parse_raw_packet;
 use crate::services::{DetectionEngine, FlowEngine, GraphEngine, Ja4Engine, StorylineBuilder};
 use pcap::{Active, Capture, Device, Error as PcapError};
@@ -32,6 +32,45 @@ struct WorkerLifecycle {
     generation: u64,
     running: bool,
     stop_requested: bool,
+}
+
+struct FlowSnapshot {
+    flows: Vec<crate::models::FlowRecord>,
+    summary: crate::models::FlowSummaryStats,
+    graph: crate::models::AttackGraph,
+}
+
+struct FlowEventCadence {
+    last_emit: Instant,
+}
+
+impl FlowEventCadence {
+    fn new(now: Instant) -> Self {
+        Self { last_emit: now }
+    }
+
+    // Driven by worker time, not packet arrival. Missed intervals produce one
+    // current snapshot rather than an unbounded catch-up burst.
+    fn snapshot_if_due(
+        &mut self,
+        now: Instant,
+        flows: &Mutex<FlowEngine>,
+        graph: &Mutex<GraphEngine>,
+    ) -> Option<FlowSnapshot> {
+        if now.duration_since(self.last_emit) < Duration::from_secs(5) {
+            return None;
+        }
+        self.last_emit = now;
+        let engine = flows.lock().unwrap();
+        let snapshot_flows = engine.get_active_flows(50);
+        let summary = engine.get_summary_stats();
+        drop(engine);
+        Some(FlowSnapshot {
+            flows: snapshot_flows,
+            summary,
+            graph: graph.lock().unwrap().get_graph(),
+        })
+    }
 }
 
 impl NpcapCapture {
@@ -74,7 +113,9 @@ impl NpcapCapture {
         // its capture and may still be persisting its final batch.
         let state = self.worker_lifecycle.0.lock().unwrap();
         if state.running {
-            return Err(PcapError::PcapError("Previous capture worker has not finished".into()));
+            return Err(PcapError::PcapError(
+                "Previous capture worker has not finished".into(),
+            ));
         }
         let capture = Capture::from_device(iface_name)?
             .promisc(false)
@@ -93,7 +134,10 @@ impl NpcapCapture {
 
     fn validate_datalink(link: pcap::Linktype) -> Result<(), PcapError> {
         if link != pcap::Linktype::ETHERNET {
-            return Err(PcapError::PcapError(format!("Unsupported capture datalink {:?}; Ethernet is required", link)));
+            return Err(PcapError::PcapError(format!(
+                "Unsupported capture datalink {:?}; Ethernet is required",
+                link
+            )));
         }
         Ok(())
     }
@@ -190,11 +234,24 @@ impl NpcapCapture {
             .unwrap()
             .map(|t| t.elapsed().as_secs())
             .unwrap_or(0);
-        let pps = if duration_secs > 0 { packets as f64 / duration_secs as f64 } else { 0.0 };
-        let bps = if duration_secs > 0 { bytes as f64 / duration_secs as f64 } else { 0.0 };
+        let pps = if duration_secs > 0 {
+            packets as f64 / duration_secs as f64
+        } else {
+            0.0
+        };
+        let bps = if duration_secs > 0 {
+            bytes as f64 / duration_secs as f64
+        } else {
+            0.0
+        };
         crate::models::CaptureMetrics {
             status: status.to_string(),
-            selected_interface: self.active_iface.lock().unwrap().clone().unwrap_or_else(|| "".to_string()),
+            selected_interface: self
+                .active_iface
+                .lock()
+                .unwrap()
+                .clone()
+                .unwrap_or_else(|| "".to_string()),
             packets_captured: packets,
             bytes_captured: bytes,
             packets_per_sec: pps,
@@ -227,6 +284,7 @@ impl NpcapCapture {
         enum LoopEvent {
             Stats(crate::models::CaptureMetrics),
             Flows(Vec<crate::models::FlowRecord>),
+            Summary(crate::models::FlowSummaryStats),
             Graph(crate::models::AttackGraph),
             Ja4(crate::models::Ja4Observation),
             Detection(crate::models::DetectionFinding),
@@ -234,29 +292,30 @@ impl NpcapCapture {
         }
 
         let (tx, rx) = std::sync::mpsc::sync_channel::<LoopEvent>(128);
-        tauri::async_runtime::spawn_blocking(move || {
-            loop {
-                match rx.recv() {
-                    Ok(LoopEvent::Stats(m)) => {
-                        let _ = app_handle.emit("capture-stats", m);
-                    }
-                    Ok(LoopEvent::Flows(f)) => {
-                        let _ = app_handle.emit("capture-flows", f);
-                    }
-                    Ok(LoopEvent::Graph(g)) => {
-                        let _ = app_handle.emit("graph-updated", g);
-                    }
-                    Ok(LoopEvent::Ja4(j)) => {
-                        let _ = app_handle.emit("ja4-stream", j);
-                    }
-                    Ok(LoopEvent::Detection(d)) => {
-                        let _ = app_handle.emit("detection-created", d);
-                    }
-                    Ok(LoopEvent::Persisted(n)) => {
-                        let _ = app_handle.emit("capture-persisted", n);
-                    }
-                    Err(_) => break,
+        tauri::async_runtime::spawn_blocking(move || loop {
+            match rx.recv() {
+                Ok(LoopEvent::Stats(m)) => {
+                    let _ = app_handle.emit("capture-stats", m);
                 }
+                Ok(LoopEvent::Flows(f)) => {
+                    let _ = app_handle.emit("capture-flows", f);
+                }
+                Ok(LoopEvent::Summary(summary)) => {
+                    let _ = app_handle.emit("flow-summary", summary);
+                }
+                Ok(LoopEvent::Graph(g)) => {
+                    let _ = app_handle.emit("graph-updated", g);
+                }
+                Ok(LoopEvent::Ja4(j)) => {
+                    let _ = app_handle.emit("ja4-stream", j);
+                }
+                Ok(LoopEvent::Detection(d)) => {
+                    let _ = app_handle.emit("detection-created", d);
+                }
+                Ok(LoopEvent::Persisted(n)) => {
+                    let _ = app_handle.emit("capture-persisted", n);
+                }
+                Err(_) => break,
             }
         });
 
@@ -265,8 +324,9 @@ impl NpcapCapture {
             let mut last_stats_emit = Instant::now();
             let mut last_stats_bytes = *bytes_captured.lock().unwrap();
             let mut last_persist = Instant::now();
-            let mut last_flow_emit = Instant::now();
-            let mut emitted_findings: std::collections::HashSet<String> = std::collections::HashSet::new();
+            let mut flow_cadence = FlowEventCadence::new(Instant::now());
+            let mut emitted_findings: std::collections::HashSet<String> =
+                std::collections::HashSet::new();
 
             loop {
                 if NpcapCapture::worker_should_stop(&worker_lifecycle, worker_generation) {
@@ -319,8 +379,15 @@ impl NpcapCapture {
 
                     if metadata.protocol == "TCP" {
                         if let Some(l4) = crate::services::packet_parser::l4_payload(&data) {
-                            if let Some(ja4_obs) = ja4_engine.lock().unwrap().process_packet(&metadata, l4, &flow_record.flow_id) {
-                                flow_engine.lock().unwrap().attach_ja4_to_flow(&flow_record.flow_id, ja4_obs.fingerprint.clone());
+                            if let Some(ja4_obs) = ja4_engine.lock().unwrap().process_packet(
+                                &metadata,
+                                l4,
+                                &flow_record.flow_id,
+                            ) {
+                                flow_engine.lock().unwrap().attach_ja4_to_flow(
+                                    &flow_record.flow_id,
+                                    ja4_obs.fingerprint.clone(),
+                                );
                                 graph_engine.lock().unwrap().ingest_ja4(&ja4_obs);
                                 let _ = tx.try_send(LoopEvent::Ja4(ja4_obs.clone()));
                             }
@@ -333,23 +400,30 @@ impl NpcapCapture {
                             graph_engine.lock().unwrap().ingest_finding(&finding);
                             let related_flows = flow_engine.lock().unwrap().get_recent_flows(500);
                             let observations = ja4_engine.lock().unwrap().get_observations(500);
-                            storyline_builder.lock().unwrap().build_storyline_from_finding(&finding, &related_flows, &observations);
+                            storyline_builder
+                                .lock()
+                                .unwrap()
+                                .build_storyline_from_finding(
+                                    &finding,
+                                    &related_flows,
+                                    &observations,
+                                );
                             let _ = tx.try_send(LoopEvent::Detection(finding.clone()));
                         }
                     }
 
                     graph_engine.lock().unwrap().ingest_flow(&flow_record);
-
-                    // Batched active-flow event (5s)
-                    if last_flow_emit.elapsed() >= Duration::from_secs(5) {
-                        let flows = flow_engine.lock().unwrap().get_active_flows(50);
-                        let _ = tx.try_send(LoopEvent::Flows(flows));
-                        let _ = tx.try_send(LoopEvent::Graph(graph_engine.lock().unwrap().get_graph()));
-                        last_flow_emit = Instant::now();
-                    }
-
                 } else {
                     std::thread::sleep(Duration::from_millis(100));
+                }
+
+                // Emit actual bounded snapshots on idle interfaces too.
+                if let Some(snapshot) =
+                    flow_cadence.snapshot_if_due(Instant::now(), &flow_engine, &graph_engine)
+                {
+                    let _ = tx.try_send(LoopEvent::Flows(snapshot.flows));
+                    let _ = tx.try_send(LoopEvent::Summary(snapshot.summary));
+                    let _ = tx.try_send(LoopEvent::Graph(snapshot.graph));
                 }
 
                 // Persist on idle interfaces too; retain failed batches.
@@ -376,14 +450,25 @@ impl NpcapCapture {
                     let packets = *packets_captured.lock().unwrap();
                     let bytes = *bytes_captured.lock().unwrap();
                     let dropped = *dropped_packets.lock().unwrap();
-                    let duration_secs = start_time.lock().unwrap().map(|t| t.elapsed().as_secs()).unwrap_or(0);
-                    let selected = active_iface_clone.lock().unwrap().clone().unwrap_or_default();
+                    let duration_secs = start_time
+                        .lock()
+                        .unwrap()
+                        .map(|t| t.elapsed().as_secs())
+                        .unwrap_or(0);
+                    let selected = active_iface_clone
+                        .lock()
+                        .unwrap()
+                        .clone()
+                        .unwrap_or_default();
                     let metrics = crate::models::CaptureMetrics {
-                        status: "RUNNING".into(), selected_interface: selected,
-                        packets_captured: packets, bytes_captured: bytes,
+                        status: "RUNNING".into(),
+                        selected_interface: selected,
+                        packets_captured: packets,
+                        bytes_captured: bytes,
                         packets_per_sec: packet_count as f64 / elapsed,
                         bytes_per_sec: bytes.saturating_sub(last_stats_bytes) as f64 / elapsed,
-                        dropped_packets: dropped, duration_secs,
+                        dropped_packets: dropped,
+                        duration_secs,
                     };
                     let _ = tx.try_send(LoopEvent::Stats(metrics));
                     packet_count = 0;
@@ -431,6 +516,82 @@ mod lifecycle_tests {
             Arc::new(Mutex::new(GraphEngine::new())),
             Arc::new(Mutex::new(StorylineBuilder::new())),
         )
+    }
+
+    #[test]
+    fn idle_flow_cadence_emits_empty_real_snapshots_without_catch_up_bursts() {
+        let capture = capture();
+        let start = Instant::now();
+        let mut cadence = FlowEventCadence::new(start);
+        let mut snapshot_at = |seconds| {
+            cadence.snapshot_if_due(
+                start + Duration::from_secs(seconds),
+                &capture.flow_engine,
+                &capture.graph_engine,
+            )
+        };
+        assert!(snapshot_at(0).is_none());
+        assert!(snapshot_at(4).is_none());
+        for seconds in [5, 10, 60] {
+            let snapshot = snapshot_at(seconds).expect("idle worker tick must emit");
+            assert!(snapshot.flows.is_empty());
+            assert_eq!(snapshot.summary.active_flows_count, 0);
+            assert_eq!(snapshot.summary.total_flows_processed, 0);
+            assert!(snapshot.graph.nodes.is_empty());
+            assert!(snapshot.graph.edges.is_empty());
+            assert!(snapshot_at(seconds).is_none());
+            assert!(snapshot_at(seconds + 4).is_none());
+        }
+        assert!(!capture.worker_running());
+        assert!(capture.capture_handle.lock().unwrap().is_none());
+    }
+
+    #[test]
+    fn idle_snapshot_is_bounded_and_preserves_ingested_packet_totals() {
+        let capture = capture();
+        let start = Instant::now();
+        let mut cadence = FlowEventCadence::new(start);
+        let mut ingested = std::collections::HashMap::new();
+        // Test-only Ethernet/IPv4/UDP frames exercise the real parser/engines.
+        for port in 1000u16..1060 {
+            let mut frame = vec![0u8; 42];
+            frame[12..14].copy_from_slice(&0x0800u16.to_be_bytes());
+            frame[14] = 0x45;
+            frame[16..18].copy_from_slice(&28u16.to_be_bytes());
+            frame[23] = 17;
+            frame[26..30].copy_from_slice(&[192, 0, 2, 1]);
+            frame[30..34].copy_from_slice(&[192, 0, 2, 2]);
+            frame[34..36].copy_from_slice(&port.to_be_bytes());
+            frame[36..38].copy_from_slice(&9000u16.to_be_bytes());
+            frame[38..40].copy_from_slice(&8u16.to_be_bytes());
+            let packet = parse_raw_packet(&frame, "2026-10-15T00:00:00Z");
+            let flow = capture.flow_engine.lock().unwrap().ingest_packet(&packet);
+            capture.graph_engine.lock().unwrap().ingest_flow(&flow);
+            ingested.insert(flow.flow_id.clone(), flow);
+        }
+        // No further packets arrive between these worker ticks.
+        for seconds in [5, 10] {
+            let snapshot = cadence
+                .snapshot_if_due(
+                    start + Duration::from_secs(seconds),
+                    &capture.flow_engine,
+                    &capture.graph_engine,
+                )
+                .unwrap();
+            assert_eq!(snapshot.flows.len(), 50);
+            assert_eq!(snapshot.summary.active_flows_count, 60);
+            assert_eq!(snapshot.summary.total_flows_processed, 60);
+            assert_eq!(snapshot.summary.udp_flows_count, 60);
+            assert_eq!(snapshot.summary.total_volume_bytes, 60 * 42);
+            for flow in snapshot.flows {
+                let observed = &ingested[&flow.flow_id];
+                assert_eq!(flow.src_port, observed.src_port);
+                assert_eq!(flow.packet_count, 1);
+                assert_eq!(flow.total_bytes, 42);
+            }
+            assert_eq!(snapshot.graph.nodes.len(), 62);
+            assert_eq!(snapshot.graph.edges.len(), 120);
+        }
     }
 
     #[test]

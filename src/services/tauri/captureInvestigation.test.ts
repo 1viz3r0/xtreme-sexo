@@ -7,6 +7,17 @@ const timeline = { packet_number: 1, time: null, kind: 'OTHER', severity: 'INFO'
 const anomaly = { id: 'fixture', kind: 'MISSING_TIMESTAMP', severity: 'LOW', confidence: 'observed', summary: 'Packet has no timestamp', reason: 'No timestamp', evidence_packets: [1] };
 const sample = { conversations: [conversation], timeline: [timeline], anomalies: [anomaly], generated_from_packets: 1, limitations: ['Metadata only'] };
 test('contract accepts current native nullable numeric times/ports and observed confidence', () => { assert.equal(isCaptureInvestigation(sample), true); assert.equal(isCaptureInvestigation({ conversations: [], timeline: [], anomalies: [], generated_from_packets: 0, limitations: [] }), true); });
+test('adapter uses the registered Capture Buddy command and session envelope', async () => {
+  const previous = Object.getOwnPropertyDescriptor(globalThis, 'window');
+  let call: unknown[] = [];
+  Object.defineProperty(globalThis, 'window', { configurable: true, value: { __TAURI_INTERNALS__: { invoke: (command: string, args: unknown) => { call = [command, args]; return Promise.resolve(sample); } } } });
+  try {
+    assert.deepEqual(await generateCaptureInvestigation('buddy-42'), sample);
+    assert.deepEqual(call, ['buddy_investigation_model', { sessionId: 'buddy-42' }]);
+  } finally {
+    if (previous) Object.defineProperty(globalThis, 'window', previous); else Reflect.deleteProperty(globalThis, 'window');
+  }
+});
 test('contract rejects old synthetic types, malformed numbers, missing fields and oversized lists', () => {
   for (const bad of [
     { ...sample, conversations: [{ ...conversation, first_time: '0' }] },

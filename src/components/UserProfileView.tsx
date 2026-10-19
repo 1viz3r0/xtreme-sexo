@@ -15,6 +15,7 @@ import {
 } from '../services/tauri/auth';
 import type { ActivityView, AuthUserView } from '../services/tauri/auth';
 import type { TabType } from './Sidebar';
+import { loadLabBadges, type LabBadge } from '../lib/labBadges';
 
 interface UserProfileViewProps {
   user: { id?: string; name: string; email: string; role?: string; isVerified: boolean } | null;
@@ -39,14 +40,17 @@ export const UserProfileView: React.FC<UserProfileViewProps> = ({
   const [activity, setActivity] = useState<ActivityView[]>([]);
   const [sessionError, setSessionError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
+  const [labBadges, setLabBadges] = useState<LabBadge[]>([]);
 
   useEffect(() => {
     if (!user) {
       setLiveUser(null);
       setActivity([]);
       setSessionError(null);
+      setLabBadges([]);
       return;
     }
+    setLabBadges(loadLabBadges(user.id || 'guest'));
     const token = localStorage.getItem('netoze_token');
     if (!token) {
       setSessionError('No local session token found. Please log in again.');
@@ -212,6 +216,10 @@ export const UserProfileView: React.FC<UserProfileViewProps> = ({
               </table>
             </div>
           )}
+        </div>
+        <div className="rounded-2xl border-2 border-amber-800/40 bg-slate-950 p-5 lg:col-span-3">
+          <div className="mb-3 flex items-center justify-between"><h2 className="font-mono text-xs font-bold tracking-widest text-amber-300">FREE LAB BADGES</h2><span className="text-[11px] text-slate-600">earned locally · no purchase required</span></div>
+          {labBadges.length === 0 ? <p className="text-xs text-slate-500">Complete a mastery lesson or an authorized native challenge to earn your first badge.</p> : <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">{labBadges.map(badge => <article key={badge.id} className="rounded-lg border border-amber-700/40 bg-amber-950/10 p-3"><b className="text-sm text-amber-100">{badge.title}</b><p className="mt-1 text-xs text-slate-400">{badge.description}</p><p className="mt-2 text-[10px] text-slate-600">Earned {new Date(badge.earnedAt).toLocaleDateString()}</p></article>)}</div>}
         </div>
       </div>
 

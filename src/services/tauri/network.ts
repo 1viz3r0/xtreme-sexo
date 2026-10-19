@@ -24,6 +24,15 @@ export interface DetailedAdapterInfo {
   tx_packets: number;
 }
 
+/** Native, read-only Watchtower contract. Collections are current-session/cache evidence. */
+export interface NetworkScopeInterface { interface_name: string; address: string; prefix: number; scan_cidr: string; gateway: string | null; warnings: string[] }
+export interface NetworkScopeDiscovery { interfaces: NetworkScopeInterface[]; warnings: string[] }
+export async function getNetworkScope(): Promise<NetworkScopeDiscovery> {
+  if (!isTauriEnvironment()) throw new Error('Network scope is unavailable outside the desktop app.');
+  const { invoke } = await import('@tauri-apps/api/core');
+  return invoke<NetworkScopeDiscovery>('scan_buddy_discover_network_scope');
+}
+
 export interface TcpConnectionEntry {
   local_ip: string;
   local_port: number;

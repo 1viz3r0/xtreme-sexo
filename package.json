@@ -7,7 +7,7 @@
     "dev": "vite",
     "build": "tsc -b && vite build",
     "lint": "oxlint",
-    "test": "node --import tsx --test src/lib/*.test.ts src/components/*.test.ts && node --test scripts/*.test.mjs",
+    "test": "node --import tsx --test src/lib/*.test.ts src/components/*.test.ts src/services/tauri/*.test.ts && node --test scripts/*.test.mjs",
     "test:geo": "node --import tsx --test src/lib/countryIndex.test.ts src/lib/geo.test.ts src/components/globeGeometry.test.ts",
     "preview": "vite preview",
     "desktop:dev": "tauri dev",

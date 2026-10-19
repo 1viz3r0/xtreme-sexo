@@ -13,6 +13,7 @@ test('mounted native workflow previews and starts the same authorized request', 
   Object.assign(window, { __TAURI_INTERNALS__: { invoke: async (command: string, args: any) => {
     calls.push({ command, args });
     if (command === 'scan_buddy_history') return [];
+    if (command === 'scan_buddy_discover_network_scope') return { interfaces: [{ interface_name: 'eth0', address: '192.168.1.10', prefix: 24, scan_cidr: '192.168.1.0/24', gateway: '192.168.1.1', warnings: [] }], warnings: [] };
     if (command === 'scan_buddy_plan') return plan;
      if (command === 'scan_buddy_start') return { id: 'loopback-fixture', state: 'COMPLETED', started_at: '2026-10-05T00:00:00Z', finished_at: '2026-10-05T00:00:00Z', plan, completed_probes: 1, results: [{ target: '127.0.0.1', port: 80, state: 'OPEN', service_hint: 'HTTP (unverified hint)', latency_ms: 1, observed_at: '2026-10-05T00:00:00Z' }], error: null };
      if (command === 'scan_buddy_inspect') return { target: '127.0.0.1', port: 80, check: 'http-preview', status: 'http-response', protocol_evidence: 'HTTP/1.1 200 OK', response_headers: { 'content-type': 'text/plain' }, content_preview: '<safe> preview', os_assessment: null, observed_at: '2026-10-05T00:00:01Z', limitations: ['Bounded GET /; content is unverified peer-supplied evidence.'] };
@@ -38,8 +39,8 @@ test('mounted native workflow previews and starts the same authorized request', 
       Object.getOwnPropertyDescriptor(window.HTMLTextAreaElement.prototype, 'value')!.set!.call(target, '127.0.0.1');
       target.dispatchEvent(new window.Event('input', { bubbles: true }));
     });
-    const checkbox = host.querySelector('input[type=checkbox]')!;
-    await act(async () => { (checkbox as any).click(); });
+     const checkbox = host.querySelector('input[type=checkbox]') as HTMLInputElement;
+     assert.equal(checkbox.checked, true);
     const buttons = () => [...host.querySelectorAll('button')];
     const preview = buttons().find(button => button.textContent.includes('Preview scan plan'))!;
     assert.equal((preview as any).disabled, false, host.textContent);
@@ -49,6 +50,9 @@ test('mounted native workflow previews and starts the same authorized request', 
     assert.ok(calls.some(call => call.command === 'scan_buddy_plan'));
     const start = buttons().find(button => button.textContent.includes('Start TCP scan'))!;
     assert.equal((start as any).disabled, false, host.textContent);
+    await act(async () => { checkbox.click(); });
+    assert.equal((start as any).disabled, true);
+    await act(async () => { checkbox.click(); });
     await act(async () => { (start as any).click(); });
     const started = calls.find(call => call.command === 'scan_buddy_start');
     assert.ok(started, host.textContent);
@@ -72,7 +76,43 @@ test('mounted native workflow previews and starts the same authorized request', 
    assert.match(host.querySelector('[aria-label="Service inspection evidence"]')!.textContent, /HTTP preview/);
    assert.match(host.textContent, /content-type/);
    assert.match(host.textContent, /<safe> preview/);
-   assert.ok(calls.some(call => call.command === 'scan_buddy_inspect' && call.args.check === 'http-preview'));
+    assert.ok(calls.some(call => call.command === 'scan_buddy_inspect' && call.args.check === 'http-preview'));
+    const click = async (label: string) => act(async () => { buttons().find(button => button.textContent.includes(label))!.click(); });
+      await click('Scan all ports');
+    assert.equal((host.querySelector('[aria-label="TCP ports"]') as HTMLInputElement).value, '1-65535');
+    assert.equal(buttons().find(button => button.textContent.includes('Preview scan plan'))!.disabled, false);
+    assert.match(host.textContent, /65,535 distinct connect attempts/);
+      await click('Preview scan plan');
+    await act(async () => { checkbox.click(); });
+    await click('Start TCP scan');
+    assert.equal(calls.filter(call => call.command === 'scan_buddy_start').at(-1)!.args.request.ports, '1-65535');
+    await click('Other IP / manual scope');
+    await act(async () => {
+      Object.getOwnPropertyDescriptor(window.HTMLTextAreaElement.prototype, 'value')!.set!.call(target, '192.0.2.1');
+      target.dispatchEvent(new window.Event('input', { bubbles: true }));
+    });
+    await click('Preview scan plan');
+    assert.equal(checkbox.checked, false);
+    assert.equal(buttons().find(button => button.textContent.includes('Start TCP scan'))!.disabled, true);
+    await act(async () => { checkbox.click(); });
+    assert.equal(buttons().find(button => button.textContent.includes('Start TCP scan'))!.disabled, false);
+    await click('Own network');
+    await click('Use subnet');
+     assert.equal(target.value, '192.168.1.0/24');
+     assert.equal(checkbox.checked, false);
+     assert.match(host.textContent, /All TCP ports require one host/);
+     await click('Preview scan plan');
+     assert.match(host.textContent, /Preview failed \(no probes sent\)/);
+      await click('Choose ports');
+    assert.match(host.textContent, /2,794 distinct connect attempts/);
+    assert.equal(buttons().find(button => button.textContent.includes('Preview scan plan'))!.disabled, false);
+    await click('Preview scan plan');
+    assert.equal(calls.filter(call => call.command === 'scan_buddy_plan').at(-1)!.args.request.targets, '192.168.1.0/24');
+     await click('Use gateway');
+     assert.equal(target.value, '192.168.1.1');
+      await click('Scan self IP');
+     assert.equal(target.value, '192.168.1.10');
+     assert.match(host.textContent, /Review the preview and press Start/);
   } finally {
     await act(async () => { root.unmount(); });
     await window.happyDOM.close();

@@ -1,8 +1,8 @@
 import type { ScanJob, ScanPlan, ScanRequest } from '../services/tauri/scanBuddy';
-import { SCAN_PRESETS, validateScanRequest } from './scanBuddyPresentation';
+import { SCAN_PRESETS, isLocalAuthorizedScope, validateScanRequest } from './scanBuddyPresentation';
 
-export type PendingAction = 'preview' | 'start' | 'cancel' | 'refresh' | null;
-export const previewFingerprint = (request: ScanRequest) => JSON.stringify([request.targets, request.ports, request.timeout_ms, request.concurrency]);
+export type PendingAction = 'preview' | 'start' | 'cancel' | 'refresh' | 'reset' | null;
+export const previewFingerprint = (request: ScanRequest) => JSON.stringify([request.targets, request.ports, request.timeout_ms, request.concurrency, request.profile]);
 export const scopeErrors = (request: ScanRequest) => validateScanRequest({ ...request, authorized: true });
 export interface WorkflowState {
   request: ScanRequest;
@@ -20,6 +20,7 @@ export interface WorkflowService {
   cancelScan(id: string): Promise<ScanJob>;
   scanHistory(): Promise<ScanJob[]>;
   scanStatus(id: string): Promise<ScanJob>;
+  resetScanHistory?: () => Promise<void>;
 }
 export function startDisabledReason(state: WorkflowState, available: boolean): string | null {
   if (!available) return 'Open the desktop app to preview and start.';
@@ -28,7 +29,7 @@ export function startDisabledReason(state: WorkflowState, available: boolean): s
   if (state.history.some(job => job.state === 'RUNNING') || state.job?.state === 'RUNNING') return 'A job is running. Select it to cancel, or refresh history.';
   const errors = scopeErrors(state.request);
   if (errors.length) return `Scope required: ${errors[0]}`;
-  if (!state.preview || state.preview.key !== previewFingerprint(state.request)) return 'Preview the current scope before starting.';
+  if (!state.preview || state.preview.key !== previewFingerprint(state.request)) return 'Preview the current scope. Review the preview and press Start.';
   if (!state.request.authorized) return 'Confirm permission using the checkbox before Start.';
   return null;
 }
@@ -36,7 +37,7 @@ export function startDisabledReason(state: WorkflowState, available: boolean): s
 // One controller owns action gates and read lifetimes. Read-only polling does not
 // lose ownership when the user previews, edits, cancels, or selects history.
 export function createScanBuddyWorkflow(service: WorkflowService, available: boolean, pollMs = 1500) {
-  let state: WorkflowState = { request: { targets: '', ports: SCAN_PRESETS.common, timeout_ms: 800, concurrency: 4, authorized: false }, preview: null, job: null, history: [], pending: null, error: null, pollWarning: null, uncertainStart: false };
+  let state: WorkflowState = { request: { targets: '127.0.0.1', ports: SCAN_PRESETS.common, timeout_ms: 800, concurrency: 4, authorized: true, profile: 'common' }, preview: null, job: null, history: [], pending: null, error: null, pollWarning: null, uncertainStart: false };
   const listeners = new Set<() => void>();
   let attached = false;
   let generation = 0;
@@ -92,12 +93,23 @@ export function createScanBuddyWorkflow(service: WorkflowService, available: boo
       if (state.pending) return;
       const request = { ...state.request, ...patch };
       const changed = previewFingerprint(request) !== previewFingerprint(state.request);
-      emit({ request: changed ? { ...request, authorized: false } : request, preview: changed ? null : state.preview, error: null });
+      const local = isLocalAuthorizedScope(request.targets);
+      const targetChanged = request.targets !== state.request.targets;
+      emit({ request: changed ? { ...request, authorized: targetChanged ? local : local ? request.authorized : false } : request, preview: changed ? null : state.preview, error: null });
     },
     select: (job: ScanJob) => { if (!state.pending) emit({ job: state.history.find(item => item.id === job.id) ?? job, pollWarning: null }); },
     refresh,
+    resetHistory: () => action('reset', async current => {
+      if (!service.resetScanHistory) throw new Error('Reset history is unavailable in this desktop build.');
+      await service.resetScanHistory();
+      if (current()) emit({ history: [], job: null, preview: null, error: null, pollWarning: null, uncertainStart: false });
+    }),
     preview: () => {
-      if (scopeErrors(state.request).length) return;
+      const validationErrors = scopeErrors(state.request);
+      if (validationErrors.length) {
+        emit({ error: `Preview failed (no probes sent): ${validationErrors[0]}`, preview: null });
+        return;
+      }
       return action('preview', async current => {
         const request = { ...state.request };
         const key = previewFingerprint(request);

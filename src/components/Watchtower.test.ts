@@ -8,6 +8,7 @@ import type { AttackGraph } from '../services/tauri/graph';
 import type { DeviceEntry } from '../services/tauri/intel';
 import type { DetailedAdapterInfo } from '../services/tauri/network';
 import type { WatchtowerDataSources } from './Watchtower';
+import type { WatchtowerSnapshot } from '../services/tauri/watchtower';
 
 const flow = { flow_id: 'flow-1' } as FlowRecord;
 const finding = (id: string, timestamp: number): DetectionFinding => ({
@@ -18,7 +19,7 @@ const finding = (id: string, timestamp: number): DetectionFinding => ({
 });
 const graph = { nodes: [{ node_id: 'node-1' }], edges: [{ edge_id: 'edge-1' }] } as AttackGraph;
 
-async function render(props: { flows: FlowRecord[]; events: DetectionFinding[]; graph: AttackGraph; inventorySources?: WatchtowerDataSources }) {
+async function render(props: { flows: FlowRecord[]; events: DetectionFinding[]; graph: AttackGraph; inventorySources?: WatchtowerDataSources; kernelSnapshotSource?: (refresh?: boolean) => Promise<WatchtowerSnapshot> }) {
   const window = new Window({ url: 'http://localhost/' });
   const previous = new Map(['window', 'document', 'navigator', 'HTMLElement', 'IS_REACT_ACT_ENVIRONMENT']
     .map(name => [name, Object.getOwnPropertyDescriptor(globalThis, name)]));
@@ -46,12 +47,12 @@ test('Watchtower derives metrics and bounds recent signals', async () => {
   try {
     assert.match(rendered.host.textContent ?? '', /Watchtower/);
     assert.match(rendered.host.textContent ?? '', /Source visibility/);
-    assert.match(rendered.host.textContent ?? '', /3\/5/);
+     assert.match(rendered.host.textContent ?? '', /3\/6/);
     assert.match(rendered.host.textContent ?? '', /Active flows1/);
     assert.match(rendered.host.textContent ?? '', /Observed findings6/);
     assert.match(rendered.host.textContent ?? '', /Graph nodes1/);
     assert.match(rendered.host.textContent ?? '', /Graph edges1/);
-    assert.match(rendered.host.textContent ?? '', /Snapshot only/);
+     assert.match(rendered.host.textContent ?? '', /Live \+ snapshot/);
     assert.match(rendered.host.textContent ?? '', /Recent signals/);
     assert.equal(rendered.host.querySelectorAll('[aria-label="Recent detection findings"] li').length, 5);
     assert.match(rendered.host.textContent ?? '', /Finding 5/);
@@ -62,11 +63,11 @@ test('Watchtower derives metrics and bounds recent signals', async () => {
 test('Watchtower presents explicit empty state and truth boundary', async () => {
   const rendered = await render({ flows: [], events: [], graph: { nodes: [], edges: [] } });
   try {
-    assert.match(rendered.host.textContent ?? '', /Sources with records0\/5/);
+      assert.match(rendered.host.textContent ?? '', /Sources with records0\/6/);
     assert.match(rendered.host.textContent ?? '', /No findings are currently loaded/);
     assert.match(rendered.host.textContent ?? '', /Only data currently loaded by NET0ZE is shown/);
-    assert.match(rendered.host.textContent ?? '', /No scan or upload occurs here/);
-    assert.match(rendered.host.textContent ?? '', /not a threat verdict/);
+     assert.match(rendered.host.textContent ?? '', /Active discovery is bounded/);
+     assert.match(rendered.host.textContent ?? '', /vulnerability verdict/);
     assert.match(rendered.host.textContent ?? '', /Interfaces unavailable in browser/);
     assert.match(rendered.host.textContent ?? '', /Neighbors unavailable in browser/);
   } finally { await cleanup(rendered); }
@@ -108,9 +109,9 @@ test('inventory is automatic, contributes to coverage, and refreshes when visibl
   };
   const rendered = await render({ flows: [], events: [], graph: { nodes: [], edges: [] }, inventorySources: sources });
   try {
-     assert.match(rendered.host.textContent ?? '', /Sources with records0\/5/);
+     assert.match(rendered.host.textContent ?? '', /Sources with records0\/6/);
      await act(async () => { resolveInterfaces([adapter]); resolveDevices([device]); await Promise.resolve(); });
-     assert.match(rendered.host.textContent ?? '', /Sources with records2\/5/);
+      assert.match(rendered.host.textContent ?? '', /Sources with records2\/6/);
      await act(async () => { rendered.window.document.dispatchEvent(new rendered.window.Event('visibilitychange')); });
      assert.equal(refreshCalls, 1);
      assert.doesNotMatch(rendered.host.textContent ?? '', /192\.168\.1\.1/);
@@ -167,5 +168,68 @@ test('neighbor refresh renders records and handles empty/error states', async ()
     shouldFail = true;
     await act(async () => { button.click(); });
     assert.match(rendered.host.textContent ?? '', /neighbor failure/);
+  } finally { await cleanup(rendered); }
+});
+
+test('Watchtower shows bounded observed relationships, source-specific gateway availability, and handoff actions', async () => {
+  const source: WatchtowerDataSources = {
+    getDetailedNetworkInterfaces: async () => [{ name: 'en0', friendly_name: 'Wi-Fi', description: '', mac_address: 'aa', ipv4_addresses: ['192.0.2.10'], ipv6_addresses: [], oper_status: 'Up', interface_type: 'Ethernet', rx_bytes: 0, tx_bytes: 0, rx_packets: 0, tx_packets: 0 } as DetailedAdapterInfo],
+    getDevices: async () => [{ ip: '192.0.2.1', mac: 'bb', hostname: '', vendor: '', interface: 'en0', first_seen: 1, last_seen: 2, active: true, is_self: false }],
+    refreshDevices: async () => [],
+  };
+  const rendered = await render({ flows: [{ ...flow, src_ip: '192.0.2.10', dst_ip: '192.0.2.1', protocol: 'TCP' } as FlowRecord], events: [], graph: { nodes: [], edges: [] }, inventorySources: source });
+  try {
+    assert.match(rendered.host.textContent ?? '', /Observed relationship graph/);
+    assert.match(rendered.host.textContent ?? '', /192\.0\.2\.10 → 192\.0\.2\.1/);
+    assert.match(rendered.host.textContent ?? '', /Gateway unavailable from the native route table/);
+    assert.match(rendered.host.textContent ?? '', /Scan first neighbor/);
+    assert.match(rendered.host.textContent ?? '', /Capture interface/);
+    assert.doesNotMatch(rendered.host.textContent ?? '', /Wi-Fi clients/);
+  } finally { await cleanup(rendered); }
+});
+
+test('Watchtower renders native kernel neighbors as host-local evidence without AP claims', async () => {
+  const snapshot: WatchtowerSnapshot = {
+    captured_at: '2026-10-15T00:00:00Z', captured_at_unix_ms: 1792022400000, stale: false,
+    interfaces: [{ name: 'wlan0', addresses: ['192.0.2.10', 'fe80::10'], mac_address: 'aa', oper_state: 'up', counters: { receive_bytes: 1, transmit_bytes: 2, receive_packets: 3, transmit_packets: 4 }, wifi_ssid: null, wifi_bssid: null, wifi_association: null, warnings: [] }],
+    routes: [{ interface: 'wlan0', destination: '0.0.0.0/0', gateway: '192.0.2.1', metric: 10, active: true }], default_gateway: '192.0.2.1',
+    neighbors: [{ interface: 'wlan0', address: 'fe80::1', mac_address: '00:11:22:33:44:55', state: 'reachable' }], warnings: [],
+  };
+  const rendered = await render({ flows: [], events: [], graph: { nodes: [], edges: [] }, kernelSnapshotSource: async () => snapshot });
+  try {
+    assert.match(rendered.host.textContent ?? '', /Kernel neighbor evidence/);
+    assert.match(rendered.host.textContent ?? '', /fe80::1/);
+    assert.match(rendered.host.textContent ?? '', /Host-local/);
+    assert.match(rendered.host.textContent ?? '', /Unavailable · no client count claimed/);
+    assert.doesNotMatch(rendered.host.textContent ?? '', /AP clients\s*1/);
+  } finally { await cleanup(rendered); }
+});
+
+test('Watchtower forwards refresh requests to the native kernel backend', async () => {
+  const calls: boolean[] = [];
+  const snapshot = { captured_at: 'now', captured_at_unix_ms: 1, stale: false, interfaces: [], routes: [], default_gateway: null, neighbors: [], warnings: [] } as WatchtowerSnapshot;
+  const rendered = await render({ flows: [], events: [], graph: { nodes: [], edges: [] }, kernelSnapshotSource: async (refresh = false) => { calls.push(refresh); return snapshot; } });
+  try {
+    const button = [...rendered.host.querySelectorAll('button')].find((item) => item.textContent?.includes('Refresh kernel snapshot'));
+    assert.ok(button);
+    await act(async () => { (button as HTMLButtonElement).click(); });
+    assert.ok(calls.includes(true));
+  } finally { await cleanup(rendered); }
+});
+
+test('Watchtower marks the previous kernel snapshot stale while refresh is pending', async () => {
+  let resolveRefresh!: (value: WatchtowerSnapshot) => void;
+  const snapshot = { captured_at: 'now', captured_at_unix_ms: 1, stale: false, interfaces: [], routes: [], default_gateway: null, neighbors: [], warnings: [] } as WatchtowerSnapshot;
+  const refreshed = { ...snapshot, captured_at: 'later', captured_at_unix_ms: 2 };
+  const rendered = await render({ flows: [], events: [], graph: { nodes: [], edges: [] }, kernelSnapshotSource: async (refresh = false) => refresh ? new Promise<WatchtowerSnapshot>((resolve) => { resolveRefresh = resolve; }) : snapshot });
+  try {
+    assert.match(rendered.host.textContent ?? '', /current read/);
+    const button = [...rendered.host.querySelectorAll('button')].find((item) => item.textContent?.includes('Refresh kernel snapshot')) as HTMLButtonElement;
+    await act(async () => { button.click(); await Promise.resolve(); });
+    assert.match(rendered.host.textContent ?? '', /stale/);
+    resolveRefresh(refreshed);
+    await act(async () => { await Promise.resolve(); });
+    assert.match(rendered.host.textContent ?? '', /later/);
+    assert.match(rendered.host.textContent ?? '', /current read/);
   } finally { await cleanup(rendered); }
 });

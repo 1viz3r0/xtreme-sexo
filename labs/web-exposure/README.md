@@ -1,11 +1,14 @@
 # Harborline Dispatch: Web Exposure
 
-An original local practical target. Discover crawler exclusions and release
-metadata, browse the mistakenly exposed support exports directory, download a
-real ZIP backup, and recover the per-run flag from `deployment/config.json`.
-The root page and health response do not disclose the flag.
+An original local practical target. Harborline Dispatch is a small, coherent
+read-only training site: a home page links to a shift dashboard, shipment
+lookup, operations status, help center, and release/change notes. Discover its
+crawler policy and release metadata, browse the mistakenly exposed support
+exports directory, download a real ZIP backup, and recover the per-run flag
+from `deployment/config.json`. The application pages and health response do
+not disclose the flag.
 
-The native runtime embeds the Dockerfile, Python server, and index page into a
+The native runtime embeds the Dockerfile, Python server, HTML pages, and index page into a
 private temporary build context and generates `config.json` for each run.
 It requires Docker CLI and local daemon version 28 or newer. Remote Docker
 engines and legacy labs are unsupported; there is no simulated fallback.
@@ -61,3 +64,13 @@ flag rotation, active-connection cancellation, and teardown. The sandbox test
 checks absence of a default route and denied TCP access to 1.1.1.1:443.
 A passing standalone Python test is not
 evidence that Docker is available or that the container controls work.
+
+## Fixed target surface
+
+The intended navigation is `/`, `/dashboard`, `/shipments/lookup`,
+`/operations/status`, `/help`, and `/changes`. Read-only metadata routes are
+`/robots.txt`, `/site-map.txt`, `/site.webmanifest`, `/security.txt`, and
+`/api/releases`. The challenge clue is intentionally limited to the fixed
+`/support/exports/` directory linked by crawler/release metadata; it contains a
+per-run JSON backup and ZIP export. There are no user-controlled file paths,
+commands, credentials, uploads, or external network requests.

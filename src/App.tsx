@@ -248,7 +248,9 @@ export const App: React.FC = () => {
 
            {activeTab === 'watchtower' && (
              <div className="studio-page">
-               <Watchtower flows={flows} events={events} graph={graphData} />
+               <Watchtower flows={flows} events={events} graph={graphData}
+                  onOpenScan={(target) => { setActiveTab('network_engine'); window.setTimeout(() => window.dispatchEvent(new CustomEvent('netoze:scan-buddy-context', { detail: { targets: target } })), 0); }}
+                   onOpenCapture={(context) => { setActiveTab('conversations'); window.setTimeout(() => window.dispatchEvent(new CustomEvent('netoze:capture-buddy-context', { detail: { interfaceName: context.interface_name ?? context.interfaceName, provenance: context.provenance } })), 0); }} />
              </div>
            )}
 
@@ -284,16 +286,17 @@ export const App: React.FC = () => {
           )}
 
           {activeTab === 'edu_inspector' && (
-            <div className="flex-1 p-4 overflow-y-auto">
+            <div className="min-h-0 flex-1 p-4 overflow-y-auto">
               <EduInspectorModal
-                selectedField={selectedField || 'ja4'}
+                selectedField={selectedField}
                 onClose={() => setSelectedField(null)}
+                preferenceScope={user?.id || 'guest'}
               />
             </div>
           )}
 
           {(activeTab === 'labs' || activeTab === 'scenario_labs') && (
-            <ScenarioLabs />
+            <ScenarioLabs profileScope={user?.id || 'guest'} />
           )}
 
           {activeTab === 'detection_builder' && (
@@ -329,7 +332,8 @@ export const App: React.FC = () => {
           <div className="max-w-3xl w-full max-h-[90vh] overflow-y-auto">
             <EduInspectorModal
               selectedField={selectedField}
-              onClose={() => setSelectedField(null)}
+               onClose={() => setSelectedField(null)}
+               preferenceScope={user?.id || 'guest'}
             />
           </div>
         </div>

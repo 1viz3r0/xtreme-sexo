@@ -3,7 +3,9 @@ use crate::services::scan_buddy::{self, ScanBuddyState, ScanJob, ScanPlan, ScanR
 use tauri::State;
 
 #[tauri::command]
-pub fn scan_buddy_storage_status(state: State<'_, ScanBuddyState>) -> scan_buddy::ScanStorageStatus {
+pub fn scan_buddy_storage_status(
+    state: State<'_, ScanBuddyState>,
+) -> scan_buddy::ScanStorageStatus {
     state.storage_status()
 }
 
@@ -16,7 +18,10 @@ pub fn scan_buddy_plan(request: ScanRequest) -> Result<ScanPlan, String> {
 }
 
 #[tauri::command]
-pub async fn scan_buddy_start(request: ScanRequest, state: State<'_, ScanBuddyState>) -> Result<ScanJob, String> {
+pub async fn scan_buddy_start(
+    request: ScanRequest,
+    state: State<'_, ScanBuddyState>,
+) -> Result<ScanJob, String> {
     let mut audit = OperationAudit::new("scan_buddy_start");
     let job = state.start(request)?;
     audit.complete(job.plan.total_probes as u64);
@@ -24,7 +29,10 @@ pub async fn scan_buddy_start(request: ScanRequest, state: State<'_, ScanBuddySt
 }
 
 #[tauri::command]
-pub fn scan_buddy_status(job_id: String, state: State<'_, ScanBuddyState>) -> Result<ScanJob, String> {
+pub fn scan_buddy_status(
+    job_id: String,
+    state: State<'_, ScanBuddyState>,
+) -> Result<ScanJob, String> {
     let mut audit = OperationAudit::new("scan_buddy_status");
     let job = state.status(&job_id)?;
     audit.complete(job.completed_probes as u64);
@@ -32,7 +40,10 @@ pub fn scan_buddy_status(job_id: String, state: State<'_, ScanBuddyState>) -> Re
 }
 
 #[tauri::command]
-pub fn scan_buddy_cancel(job_id: String, state: State<'_, ScanBuddyState>) -> Result<ScanJob, String> {
+pub fn scan_buddy_cancel(
+    job_id: String,
+    state: State<'_, ScanBuddyState>,
+) -> Result<ScanJob, String> {
     let mut audit = OperationAudit::new("scan_buddy_cancel");
     let job = state.cancel(&job_id)?;
     audit.complete(job.completed_probes as u64);
@@ -45,4 +56,12 @@ pub fn scan_buddy_history(state: State<'_, ScanBuddyState>) -> Result<Vec<ScanJo
     let jobs = state.history()?;
     audit.complete(jobs.len() as u64);
     Ok(jobs)
+}
+
+#[tauri::command]
+pub fn scan_buddy_reset_history(state: State<'_, ScanBuddyState>) -> Result<(), String> {
+    let mut audit = OperationAudit::new("scan_buddy_reset_history");
+    state.reset_history()?;
+    audit.complete(0);
+    Ok(())
 }

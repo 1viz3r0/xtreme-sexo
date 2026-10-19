@@ -17,6 +17,10 @@ class TargetTests(unittest.TestCase):
         self.temp = tempfile.TemporaryDirectory()
         root = Path(self.temp.name)
         root.joinpath("index.html").write_bytes(Path(__file__).with_name("index.html").read_bytes())
+        pages = root.joinpath("pages")
+        pages.mkdir()
+        for page in Path(__file__).with_name("pages").glob("*.html"):
+            pages.joinpath(page.name).write_bytes(page.read_bytes())
         self.flag = "NET0ZE{web-exposure-test-run-only}"
         root.joinpath("config.json").write_text(json.dumps({"application": "Harborline Dispatch", "flag": self.flag}))
         self.server = HTTPServer(("127.0.0.1", 0), make_handler(root))
@@ -38,7 +42,19 @@ class TargetTests(unittest.TestCase):
         landing = self.get("/")
         self.assertIn(b"Harborline Dispatch", landing)
         self.assertNotIn(self.flag.encode(), landing)
+        for path, marker in {
+            "/dashboard": b"Shift dashboard",
+            "/shipments/lookup": b"Shipment lookup",
+            "/operations/status": b"Operations status",
+            "/help": b"Help center",
+            "/changes": b"Change notes",
+        }.items():
+            page = self.get(path)
+            self.assertIn(marker, page)
+            self.assertIn(b"Harborline", page)
         self.assertIn(b"/support/exports/", self.get("/robots.txt"))
+        self.assertIn(b"/dashboard", self.get("/site-map.txt"))
+        self.assertIn(b"Harborline Dispatch", self.get("/site.webmanifest"))
         release = json.loads(self.get("/api/releases"))
         directory = release["export_directory"]
         self.assertIn(release["deployment_export"].encode(), self.get(directory))
@@ -47,9 +63,16 @@ class TargetTests(unittest.TestCase):
         self.assertEqual(config["flag"], self.flag)
         self.assertEqual(json.loads(self.get(directory + release["config_backup"])), config)
         self.assertEqual(json.loads(self.get("/health")), {"healthy": True})
+        room = json.loads(self.get("/api/room"))
+        self.assertEqual(room["id"], "harborline-dispatch")
+        self.assertFalse(room["flag_disclosed"])
+        challenge = json.loads(self.get("/api/challenge"))
+        self.assertEqual([stage["id"] for stage in challenge["stages"]], ["surface", "metadata", "artifact", "submit"])
+        self.assertFalse(challenge["answer_included"])
+        self.assertNotIn(self.flag.encode(), self.get("/api/challenge"))
 
     def test_no_arbitrary_files_or_write_routes(self):
-        for path in ["/config.json", "/etc/passwd", "/../config.json", "/support/exports/../../config.json", "/execute", "/upload"]:
+        for path in ["/config.json", "/pages/dashboard.html", "/etc/passwd", "/../config.json", "/support/exports/../../config.json", "/execute", "/upload", "/shipments"]:
             with self.assertRaises(urllib.error.HTTPError) as error:
                 self.get(path)
             self.assertEqual(error.exception.code, 404)

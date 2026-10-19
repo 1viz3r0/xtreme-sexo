@@ -22,14 +22,26 @@ pub struct OperationAudit {
 }
 impl OperationAudit {
     pub fn new(operation: &'static str) -> Self {
-        Self { operation, started: std::time::Instant::now(), success: false, count: 0 }
+        Self {
+            operation,
+            started: std::time::Instant::now(),
+            success: false,
+            count: 0,
+        }
     }
-    pub fn complete(&mut self, count: u64) { self.success = true; self.count = count; }
+    pub fn complete(&mut self, count: u64) {
+        self.success = true;
+        self.count = count;
+    }
 }
 impl Drop for OperationAudit {
     fn drop(&mut self) {
-        tracing::info!(operation = self.operation, success = self.success, count = self.count,
-            duration_ms = self.started.elapsed().as_millis().min(u64::MAX as u128) as u64);
+        tracing::info!(
+            operation = self.operation,
+            success = self.success,
+            count = self.count,
+            duration_ms = self.started.elapsed().as_millis().min(u64::MAX as u128) as u64
+        );
     }
 }
 const DEFAULT_READ_BYTES: usize = 64 * 1024;
@@ -37,7 +49,8 @@ static RUNTIME: OnceLock<Arc<Mutex<Runtime>>> = OnceLock::new();
 
 pub fn india_timestamp(time: DateTime<Utc>) -> String {
     time.with_timezone(&FixedOffset::east_opt(19_800).expect("valid IST offset"))
-        .format("%Y-%m-%dT%H:%M:%S%.3f%:z").to_string()
+        .format("%Y-%m-%dT%H:%M:%S%.3f%:z")
+        .to_string()
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -80,13 +93,19 @@ fn rejected() -> io::Error {
 
 /// Reject links in every existing component, including app-data ancestors.
 fn check_directory(directory: &Path) -> io::Result<()> {
-    if !directory.is_absolute() { return Err(rejected()); }
+    if !directory.is_absolute() {
+        return Err(rejected());
+    }
     let mut prefix = PathBuf::new();
     for component in directory.components() {
-        if matches!(component, std::path::Component::ParentDir) { return Err(rejected()); }
+        if matches!(component, std::path::Component::ParentDir) {
+            return Err(rejected());
+        }
         prefix.push(component);
         let metadata = fs::symlink_metadata(&prefix)?;
-        if metadata.file_type().is_symlink() || !metadata.is_dir() { return Err(rejected()); }
+        if metadata.file_type().is_symlink() || !metadata.is_dir() {
+            return Err(rejected());
+        }
     }
     Ok(())
 }
@@ -94,7 +113,8 @@ fn check_directory(directory: &Path) -> io::Result<()> {
 fn prepare_directory(directory: &Path) -> io::Result<()> {
     check_directory(directory.parent().ok_or_else(rejected)?)?;
     let mut builder = fs::DirBuilder::new();
-    #[cfg(unix)] {
+    #[cfg(unix)]
+    {
         use std::os::unix::fs::DirBuilderExt;
         builder.mode(0o700);
     }
@@ -104,7 +124,8 @@ fn prepare_directory(directory: &Path) -> io::Result<()> {
         Err(error) => return Err(error),
     }
     check_directory(directory)?;
-    #[cfg(unix)] {
+    #[cfg(unix)]
+    {
         use std::os::unix::fs::PermissionsExt;
         fs::set_permissions(directory, fs::Permissions::from_mode(0o700))?;
     }
@@ -112,10 +133,15 @@ fn prepare_directory(directory: &Path) -> io::Result<()> {
 }
 
 fn valid_file(metadata: &fs::Metadata) -> bool {
-    if !metadata.is_file() || metadata.file_type().is_symlink() { return false; }
-    #[cfg(unix)] {
+    if !metadata.is_file() || metadata.file_type().is_symlink() {
+        return false;
+    }
+    #[cfg(unix)]
+    {
         use std::os::unix::fs::MetadataExt;
-        if metadata.nlink() != 1 { return false; }
+        if metadata.nlink() != 1 {
+            return false;
+        }
     }
     true
 }
@@ -134,32 +160,48 @@ fn open_checked(directory: &Path, name: &str, writable: bool) -> io::Result<File
     }
     let mut options = OpenOptions::new();
     options.read(true).write(writable).create(writable);
-    #[cfg(unix)] {
+    #[cfg(unix)]
+    {
         use std::os::unix::fs::OpenOptionsExt;
         options.mode(0o600);
         // Final-component O_NOFOLLOW race defense on supported platforms.
-        #[cfg(target_os = "linux")] options.custom_flags(0x20000);
-        #[cfg(target_os = "macos")] options.custom_flags(0x100);
+        #[cfg(target_os = "linux")]
+        options.custom_flags(0x20000);
+        #[cfg(target_os = "macos")]
+        options.custom_flags(0x100);
     }
     let file = options.open(&path)?;
     check_directory(directory)?;
     let entry = fs::symlink_metadata(&path)?;
     let actual = file.metadata()?;
-    if !valid_file(&entry) || !valid_file(&actual) { return Err(rejected()); }
-    #[cfg(unix)] {
+    if !valid_file(&entry) || !valid_file(&actual) {
+        return Err(rejected());
+    }
+    #[cfg(unix)]
+    {
         use std::os::unix::fs::{MetadataExt, PermissionsExt};
         let directory_after = fs::metadata(directory)?;
-        if entry.dev() != actual.dev() || entry.ino() != actual.ino()
+        if entry.dev() != actual.dev()
+            || entry.ino() != actual.ino()
             || directory_before.dev() != directory_after.dev()
-            || directory_before.ino() != directory_after.ino() { return Err(rejected()); }
-        if writable { file.set_permissions(fs::Permissions::from_mode(0o600))?; }
-        else if actual.mode() & 0o077 != 0 { return Err(rejected()); }
+            || directory_before.ino() != directory_after.ino()
+        {
+            return Err(rejected());
+        }
+        if writable {
+            file.set_permissions(fs::Permissions::from_mode(0o600))?;
+        } else if actual.mode() & 0o077 != 0 {
+            return Err(rejected());
+        }
     }
-    #[cfg(not(unix))] let _ = directory_before;
+    #[cfg(not(unix))]
+    let _ = directory_before;
     Ok(file)
 }
 
-fn slot_name(slot: usize) -> String { format!("runtime-{slot}.log") }
+fn slot_name(slot: usize) -> String {
+    format!("runtime-{slot}.log")
+}
 
 struct Runtime {
     directory: PathBuf,
@@ -176,19 +218,31 @@ struct Runtime {
 impl Runtime {
     fn new(directory: PathBuf, file_limit: u64) -> Self {
         let mut runtime = Self {
-            directory, file: None, _lock: None, file_bytes: 0, file_limit,
-            initialized_at: india_timestamp(Utc::now()), last_write_at: None, failure: None,
+            directory,
+            file: None,
+            _lock: None,
+            file_bytes: 0,
+            file_limit,
+            initialized_at: india_timestamp(Utc::now()),
+            last_write_at: None,
+            failure: None,
         };
         let result = (|| {
             prepare_directory(&runtime.directory)?;
             let lock = open_checked(&runtime.directory, "runtime.lock", true)?;
-            lock.try_lock().map_err(|_| io::Error::new(io::ErrorKind::WouldBlock, "runtime log in use"))?;
+            lock.try_lock()
+                .map_err(|_| io::Error::new(io::ErrorKind::WouldBlock, "runtime log in use"))?;
             runtime._lock = Some(lock);
             // Historical per-session files are not read, exposed, or deleted.
             for slot in 0..LOG_FILE_COUNT {
                 match open_checked(&runtime.directory, &slot_name(slot), false) {
                     Ok(file) if file.metadata()?.len() <= file_limit => (),
-                    Ok(_) => return Err(io::Error::new(io::ErrorKind::InvalidData, "oversize runtime log")),
+                    Ok(_) => {
+                        return Err(io::Error::new(
+                            io::ErrorKind::InvalidData,
+                            "oversize runtime log",
+                        ))
+                    }
                     Err(error) if error.kind() == io::ErrorKind::NotFound => (),
                     Err(error) => return Err(error),
                 }
@@ -198,7 +252,9 @@ impl Runtime {
             runtime.file = Some(file);
             Ok(())
         })();
-        if let Err(error) = result { runtime.disable(&error); }
+        if let Err(error) = result {
+            runtime.disable(&error);
+        }
         runtime
     }
 
@@ -216,8 +272,11 @@ impl Runtime {
             match open_checked(&self.directory, &name, false) {
                 Ok(_) => {
                     let path = self.directory.join(&name);
-                    if slot == LOG_FILE_COUNT - 1 { fs::remove_file(path)?; }
-                    else { fs::rename(path, self.directory.join(slot_name(slot + 1)))?; }
+                    if slot == LOG_FILE_COUNT - 1 {
+                        fs::remove_file(path)?;
+                    } else {
+                        fs::rename(path, self.directory.join(slot_name(slot + 1)))?;
+                    }
                 }
                 Err(error) if error.kind() == io::ErrorKind::NotFound => (),
                 Err(error) => return Err(error),
@@ -229,17 +288,26 @@ impl Runtime {
     }
 
     fn append(&mut self, bytes: &[u8]) -> io::Result<()> {
-        if self.file.is_none() { return Ok(()); }
+        if self.file.is_none() {
+            return Ok(());
+        }
         for chunk in bytes.chunks(self.file_limit.max(1) as usize) {
-            if self.file_bytes + chunk.len() as u64 > self.file_limit { self.rotate()?; }
+            if self.file_bytes + chunk.len() as u64 > self.file_limit {
+                self.rotate()?;
+            }
             let current = open_checked(&self.directory, &slot_name(0), false)?;
             let file = self.file.as_mut().ok_or_else(rejected)?;
-            #[cfg(unix)] {
+            #[cfg(unix)]
+            {
                 use std::os::unix::fs::MetadataExt;
                 let expected = current.metadata()?;
                 let actual = file.metadata()?;
-                if expected.dev() != actual.dev() || expected.ino() != actual.ino()
-                    || !valid_file(&actual) { return Err(rejected()); }
+                if expected.dev() != actual.dev()
+                    || expected.ino() != actual.ino()
+                    || !valid_file(&actual)
+                {
+                    return Err(rejected());
+                }
             }
             drop(current);
             file.write_all(chunk)?;
@@ -251,11 +319,17 @@ impl Runtime {
 
     fn snapshot(&self, limit: usize, read_content: bool) -> RecentRuntimeLogs {
         let mut status = RuntimeLogStatus {
-            available: self.file.is_some(), reason: self.failure.clone(),
-            generated_at: india_timestamp(Utc::now()), timezone: "Asia/Kolkata",
-            initialized_at: Some(self.initialized_at.clone()), last_write_at: self.last_write_at.clone(),
-            file_count: 0, retained_bytes: 0, max_file_bytes: self.file_limit,
-            max_files: LOG_FILE_COUNT, max_read_bytes: MAX_READ_BYTES,
+            available: self.file.is_some(),
+            reason: self.failure.clone(),
+            generated_at: india_timestamp(Utc::now()),
+            timezone: "Asia/Kolkata",
+            initialized_at: Some(self.initialized_at.clone()),
+            last_write_at: self.last_write_at.clone(),
+            file_count: 0,
+            retained_bytes: 0,
+            max_file_bytes: self.file_limit,
+            max_files: LOG_FILE_COUNT,
+            max_read_bytes: MAX_READ_BYTES,
         };
         let mut chunks = Vec::new();
         let mut remaining = limit;
@@ -265,7 +339,9 @@ impl Runtime {
                 let result = (|| -> io::Result<()> {
                     let mut file = open_checked(&self.directory, &slot_name(slot), false)?;
                     let metadata = file.metadata()?;
-                    if metadata.len() > self.file_limit { return Err(rejected()); }
+                    if metadata.len() > self.file_limit {
+                        return Err(rejected());
+                    }
                     status.file_count += 1;
                     status.retained_bytes += metadata.len();
                     if read_content && remaining > 0 && metadata.len() > 0 {
@@ -279,21 +355,32 @@ impl Runtime {
                         // Lossy replacement must not inflate the content bound.
                         let text = if text.len() > bytes.len() {
                             let mut start = text.len() - bytes.len();
-                            while !text.is_char_boundary(start) { start += 1; }
+                            while !text.is_char_boundary(start) {
+                                start += 1;
+                            }
                             text[start..].to_owned()
-                        } else { text };
+                        } else {
+                            text
+                        };
                         chunks.push(RuntimeLogChunk {
                             file_id: slot_name(slot),
-                            modified_at: metadata.modified().ok().map(|time| india_timestamp(time.into())),
-                            text, bytes_read: bytes.len(),
+                            modified_at: metadata
+                                .modified()
+                                .ok()
+                                .map(|time| india_timestamp(time.into())),
+                            text,
+                            bytes_read: bytes.len(),
                         });
                     }
                     Ok(())
                 })();
                 if let Err(error) = result {
-                    if error.kind() == io::ErrorKind::NotFound { continue; }
+                    if error.kind() == io::ErrorKind::NotFound {
+                        continue;
+                    }
                     status.available = false;
-                    status.reason = Some(format!("Runtime log read unavailable ({:?})", error.kind()));
+                    status.reason =
+                        Some(format!("Runtime log read unavailable ({:?})", error.kind()));
                     chunks.clear();
                     bytes_read = 0;
                     break;
@@ -301,8 +388,13 @@ impl Runtime {
             }
         }
         chunks.reverse();
-        RecentRuntimeLogs { truncated: read_content && status.retained_bytes > bytes_read as u64,
-            status, byte_limit: limit, bytes_read, chunks }
+        RecentRuntimeLogs {
+            truncated: read_content && status.retained_bytes > bytes_read as u64,
+            status,
+            byte_limit: limit,
+            bytes_read,
+            chunks,
+        }
     }
 }
 
@@ -311,11 +403,15 @@ impl Write for SafeWriter {
     fn write(&mut self, bytes: &[u8]) -> io::Result<usize> {
         let _ = io::stdout().write_all(bytes);
         if let Ok(mut runtime) = self.0.lock() {
-            if let Err(error) = runtime.append(bytes) { runtime.disable(&error); }
+            if let Err(error) = runtime.append(bytes) {
+                runtime.disable(&error);
+            }
         }
         Ok(bytes.len())
     }
-    fn flush(&mut self) -> io::Result<()> { Ok(()) }
+    fn flush(&mut self) -> io::Result<()> {
+        Ok(())
+    }
 }
 
 /// Free-form messages/errors, paths, URLs, packet fields and span values are
@@ -334,58 +430,131 @@ impl Visit for OperationalFields {
         }
     }
     fn record_i64(&mut self, field: &Field, value: i64) {
-        if value >= 0 { self.record_u64(field, value as u64); }
+        if value >= 0 {
+            self.record_u64(field, value as u64);
+        }
     }
     fn record_str(&mut self, field: &Field, value: &str) {
         let allowed = match field.name() {
             "platform" => matches!(value, "linux" | "windows" | "macos"),
             "timezone" => value == "Asia/Kolkata",
             "provider" => matches!(value, "ipify" | "ipwho.is"),
-            "operation" => matches!(value, "initialize" | "readiness" | "capture_start" | "capture_stop" | "capture_complete" | "import" | "export" | "search" | "refresh" | "scan_buddy_plan" | "scan_buddy_start" | "scan_buddy_status" | "scan_buddy_cancel" | "scan_buddy_history" | "scan_buddy_finish"),
-            "state" => matches!(value, "READY" | "UNAVAILABLE" | "NOT_STARTED" | "RUNNING" | "STOPPED" | "COMPLETED" | "FAILED" | "LIVE" | "CACHED" | "ERROR"),
+            "operation" => matches!(
+                value,
+                "initialize"
+                    | "readiness"
+                    | "capture_start"
+                    | "capture_stop"
+                    | "capture_complete"
+                    | "import"
+                    | "export"
+                    | "search"
+                    | "refresh"
+                    | "scan_buddy_plan"
+                    | "scan_buddy_start"
+                    | "scan_buddy_status"
+                    | "scan_buddy_cancel"
+                    | "scan_buddy_history"
+                    | "scan_buddy_reset_history"
+                    | "scan_buddy_finish"
+            ),
+            "state" => matches!(
+                value,
+                "READY"
+                    | "UNAVAILABLE"
+                    | "NOT_STARTED"
+                    | "RUNNING"
+                    | "STOPPED"
+                    | "COMPLETED"
+                    | "FAILED"
+                    | "LIVE"
+                    | "CACHED"
+                    | "ERROR"
+            ),
             _ => false,
         };
-        if allowed { self.0.push_str(&format!(" {}={value}", field.name())); }
+        if allowed {
+            self.0.push_str(&format!(" {}={value}", field.name()));
+        }
     }
     fn record_debug(&mut self, _field: &Field, _value: &dyn std::fmt::Debug) {}
 }
 
 struct OperationalFormat;
 impl<S, N> FormatEvent<S, N> for OperationalFormat
-where S: tracing::Subscriber + for<'a> LookupSpan<'a>, N: for<'a> FormatFields<'a> + 'static {
-    fn format_event(&self, _ctx: &FmtContext<'_, S, N>, mut writer: Writer<'_>, event: &tracing::Event<'_>) -> std::fmt::Result {
+where
+    S: tracing::Subscriber + for<'a> LookupSpan<'a>,
+    N: for<'a> FormatFields<'a> + 'static,
+{
+    fn format_event(
+        &self,
+        _ctx: &FmtContext<'_, S, N>,
+        mut writer: Writer<'_>,
+        event: &tracing::Event<'_>,
+    ) -> std::fmt::Result {
         let mut fields = OperationalFields::default();
         event.record(&mut fields);
-        writeln!(writer, "{} {} {}:{}{}", india_timestamp(Utc::now()), event.metadata().level(), event.metadata().target(), event.metadata().line().unwrap_or(0), fields.0)
+        writeln!(
+            writer,
+            "{} {} {}:{}{}",
+            india_timestamp(Utc::now()),
+            event.metadata().level(),
+            event.metadata().target(),
+            event.metadata().line().unwrap_or(0),
+            fields.0
+        )
     }
 }
 
 pub fn init_logging() {
-    let runtime = Arc::new(Mutex::new(Runtime::new(crate::database::sqlite::get_app_dir().join("logs"), LOG_FILE_BYTES)));
-    if RUNTIME.set(runtime.clone()).is_err() { return; }
+    let runtime = Arc::new(Mutex::new(Runtime::new(
+        crate::database::sqlite::get_app_dir().join("logs"),
+        LOG_FILE_BYTES,
+    )));
+    if RUNTIME.set(runtime.clone()).is_err() {
+        return;
+    }
     let writer = BoxMakeWriter::new(move || SafeWriter(runtime.clone()));
-    let subscriber = tracing_subscriber::fmt().with_max_level(tracing::Level::INFO)
-        .with_ansi(false).event_format(OperationalFormat).with_writer(writer).finish();
+    let subscriber = tracing_subscriber::fmt()
+        .with_max_level(tracing::Level::INFO)
+        .with_ansi(false)
+        .event_format(OperationalFormat)
+        .with_writer(writer)
+        .finish();
     if tracing::subscriber::set_global_default(subscriber).is_ok() {
-        tracing::info!(platform = std::env::consts::OS, timezone = "Asia/Kolkata", operation = "initialize", "Native backend logging initialized");
+        tracing::info!(
+            platform = std::env::consts::OS,
+            timezone = "Asia/Kolkata",
+            operation = "initialize",
+            "Native backend logging initialized"
+        );
     } else if let Some(runtime) = RUNTIME.get() {
         if let Ok(mut runtime) = runtime.lock() {
-            runtime.disable(&io::Error::new(io::ErrorKind::AlreadyExists, "subscriber already installed"));
+            runtime.disable(&io::Error::new(
+                io::ErrorKind::AlreadyExists,
+                "subscriber already installed",
+            ));
         }
     }
 }
 
 pub fn recent_runtime_logs(max_bytes: Option<usize>) -> RecentRuntimeLogs {
-    let limit = max_bytes.unwrap_or(DEFAULT_READ_BYTES).clamp(1, MAX_READ_BYTES);
+    let limit = max_bytes
+        .unwrap_or(DEFAULT_READ_BYTES)
+        .clamp(1, MAX_READ_BYTES);
     if let Some(runtime) = RUNTIME.get() {
-        if let Ok(runtime) = runtime.lock() { return runtime.snapshot(limit, true); }
+        if let Ok(runtime) = runtime.lock() {
+            return runtime.snapshot(limit, true);
+        }
     }
     unavailable_snapshot(limit)
 }
 
 pub fn runtime_log_status() -> RuntimeLogStatus {
     if let Some(runtime) = RUNTIME.get() {
-        if let Ok(runtime) = runtime.lock() { return runtime.snapshot(0, false).status; }
+        if let Ok(runtime) = runtime.lock() {
+            return runtime.snapshot(0, false).status;
+        }
     }
     unavailable_snapshot(0).status
 }
@@ -393,11 +562,22 @@ pub fn runtime_log_status() -> RuntimeLogStatus {
 fn unavailable_snapshot(limit: usize) -> RecentRuntimeLogs {
     RecentRuntimeLogs {
         status: RuntimeLogStatus {
-            available: false, reason: Some("Runtime logging is not initialized or unavailable".into()),
-            generated_at: india_timestamp(Utc::now()), timezone: "Asia/Kolkata", initialized_at: None,
-            last_write_at: None, file_count: 0, retained_bytes: 0, max_file_bytes: LOG_FILE_BYTES,
-            max_files: LOG_FILE_COUNT, max_read_bytes: MAX_READ_BYTES,
-        }, byte_limit: limit, bytes_read: 0, truncated: false, chunks: Vec::new(),
+            available: false,
+            reason: Some("Runtime logging is not initialized or unavailable".into()),
+            generated_at: india_timestamp(Utc::now()),
+            timezone: "Asia/Kolkata",
+            initialized_at: None,
+            last_write_at: None,
+            file_count: 0,
+            retained_bytes: 0,
+            max_file_bytes: LOG_FILE_BYTES,
+            max_files: LOG_FILE_COUNT,
+            max_read_bytes: MAX_READ_BYTES,
+        },
+        byte_limit: limit,
+        bytes_read: 0,
+        truncated: false,
+        chunks: Vec::new(),
     }
 }
 
@@ -409,30 +589,52 @@ mod tests {
     struct Sandbox(PathBuf);
     impl Sandbox {
         fn new() -> Self {
-            let base = std::env::temp_dir().join(format!("netoze-runtime-test-{}-{}", std::process::id(), NEXT.fetch_add(1, Ordering::Relaxed)));
-            fs::create_dir(&base).unwrap(); Self(base)
+            let base = std::env::temp_dir().join(format!(
+                "netoze-runtime-test-{}-{}",
+                std::process::id(),
+                NEXT.fetch_add(1, Ordering::Relaxed)
+            ));
+            fs::create_dir(&base).unwrap();
+            Self(base)
         }
-        fn logs(&self) -> PathBuf { self.0.join("logs") }
+        fn logs(&self) -> PathBuf {
+            self.0.join("logs")
+        }
     }
-    impl Drop for Sandbox { fn drop(&mut self) { let _ = fs::remove_dir_all(&self.0); } }
+    impl Drop for Sandbox {
+        fn drop(&mut self) {
+            let _ = fs::remove_dir_all(&self.0);
+        }
+    }
 
     #[test]
     fn ist_timestamp_crosses_utc_date_boundary() {
-        let utc = DateTime::parse_from_rfc3339("2026-10-03T20:45:00Z").unwrap().with_timezone(&Utc);
+        let utc = DateTime::parse_from_rfc3339("2026-10-03T20:45:00Z")
+            .unwrap()
+            .with_timezone(&Utc);
         assert_eq!(india_timestamp(utc), "2026-10-04T02:15:00.000+05:30");
     }
     #[test]
     fn rotation_retains_five_bounded_slots_and_newest_tail() {
         let sandbox = Sandbox::new();
         let mut runtime = Runtime::new(sandbox.logs(), 8);
-        for number in 0..9 { runtime.append(format!("{number:08}").as_bytes()).unwrap(); }
+        for number in 0..9 {
+            runtime.append(format!("{number:08}").as_bytes()).unwrap();
+        }
         let snapshot = runtime.snapshot(12, true);
         assert!(snapshot.status.available);
         assert_eq!(snapshot.status.file_count, 5);
         assert_eq!(snapshot.status.retained_bytes, 40);
         assert_eq!(snapshot.bytes_read, 12);
         assert!(snapshot.truncated);
-        assert_eq!(snapshot.chunks.iter().map(|chunk| chunk.text.as_str()).collect::<String>(), "000700000008");
+        assert_eq!(
+            snapshot
+                .chunks
+                .iter()
+                .map(|chunk| chunk.text.as_str())
+                .collect::<String>(),
+            "000700000008"
+        );
         assert!(!sandbox.logs().join("runtime-5.log").exists());
     }
     #[test]
@@ -442,7 +644,14 @@ mod tests {
         runtime.append("ééééééééé".as_bytes()).unwrap();
         let snapshot = runtime.snapshot(3, true);
         assert_eq!(snapshot.bytes_read, 3);
-        assert!(snapshot.chunks.iter().map(|chunk| chunk.text.len()).sum::<usize>() <= 3);
+        assert!(
+            snapshot
+                .chunks
+                .iter()
+                .map(|chunk| chunk.text.len())
+                .sum::<usize>()
+                <= 3
+        );
         assert!(snapshot.chunks.last().unwrap().text.ends_with('é'));
         assert!(snapshot.truncated);
         assert!(runtime.snapshot(99, true).status.retained_bytes <= 40);
@@ -478,16 +687,25 @@ mod tests {
         let recent = runtime.snapshot(99, true);
         assert!(!recent.truncated);
         assert_eq!(recent.bytes_read, 9);
-        assert!(recent.chunks.iter().all(|chunk| chunk.modified_at.as_ref().unwrap().ends_with("+05:30")));
+        assert!(recent.chunks.iter().all(|chunk| chunk
+            .modified_at
+            .as_ref()
+            .unwrap()
+            .ends_with("+05:30")));
     }
     #[test]
     fn unrelated_files_are_neither_returned_nor_removed() {
         let sandbox = Sandbox::new();
         let mut runtime = Runtime::new(sandbox.logs(), 8);
         fs::write(sandbox.logs().join("backend-old.log"), "private legacy").unwrap();
-        for _ in 0..8 { runtime.append(b"safe0000").unwrap(); }
+        for _ in 0..8 {
+            runtime.append(b"safe0000").unwrap();
+        }
         let snapshot = runtime.snapshot(100, true);
-        assert!(!snapshot.chunks.iter().any(|chunk| chunk.text.contains("private")));
+        assert!(!snapshot
+            .chunks
+            .iter()
+            .any(|chunk| chunk.text.contains("private")));
         assert!(sandbox.logs().join("backend-old.log").exists());
         assert!(check_directory(&sandbox.0.join("logs/../logs")).is_err());
     }
@@ -498,8 +716,18 @@ mod tests {
         let sandbox = Sandbox::new();
         let mut runtime = Runtime::new(sandbox.logs(), 8);
         runtime.append(b"safe").unwrap();
-        assert_eq!(fs::metadata(sandbox.logs()).unwrap().permissions().mode() & 0o777, 0o700);
-        assert_eq!(fs::metadata(sandbox.logs().join("runtime-0.log")).unwrap().permissions().mode() & 0o777, 0o600);
+        assert_eq!(
+            fs::metadata(sandbox.logs()).unwrap().permissions().mode() & 0o777,
+            0o700
+        );
+        assert_eq!(
+            fs::metadata(sandbox.logs().join("runtime-0.log"))
+                .unwrap()
+                .permissions()
+                .mode()
+                & 0o777,
+            0o600
+        );
         let secret = sandbox.0.join("secret");
         fs::write(&secret, "credentials").unwrap();
         fs::remove_file(sandbox.logs().join("runtime-0.log")).unwrap();
@@ -535,20 +763,43 @@ mod tests {
     }
     #[test]
     fn formatter_drops_credentials_paths_payloads_and_free_form_errors() {
-        #[derive(Clone)] struct Buffer(Arc<Mutex<Vec<u8>>>);
+        #[derive(Clone)]
+        struct Buffer(Arc<Mutex<Vec<u8>>>);
         impl Write for Buffer {
-            fn write(&mut self, bytes: &[u8]) -> io::Result<usize> { self.0.lock().unwrap().extend_from_slice(bytes); Ok(bytes.len()) }
-            fn flush(&mut self) -> io::Result<()> { Ok(()) }
+            fn write(&mut self, bytes: &[u8]) -> io::Result<usize> {
+                self.0.lock().unwrap().extend_from_slice(bytes);
+                Ok(bytes.len())
+            }
+            fn flush(&mut self) -> io::Result<()> {
+                Ok(())
+            }
         }
         let bytes = Arc::new(Mutex::new(Vec::new()));
         let output = bytes.clone();
-        let subscriber = tracing_subscriber::fmt().event_format(OperationalFormat)
-            .with_writer(move || Buffer(output.clone())).finish();
+        let subscriber = tracing_subscriber::fmt()
+            .event_format(OperationalFormat)
+            .with_writer(move || Buffer(output.clone()))
+            .finish();
         tracing::subscriber::with_default(subscriber, || {
-            tracing::warn!(success = false, operation = "export", password = "secret-value", payload = "packet-value", error = "sensitive-error", "token=message-secret /private/path");
+            tracing::warn!(
+                success = false,
+                operation = "export",
+                password = "secret-value",
+                payload = "packet-value",
+                error = "sensitive-error",
+                "token=message-secret /private/path"
+            );
         });
         let text = String::from_utf8(bytes.lock().unwrap().clone()).unwrap();
         assert!(text.contains("success=false operation=export"));
-        for secret in ["secret-value", "packet-value", "sensitive-error", "message-secret", "/private/path"] { assert!(!text.contains(secret)); }
+        for secret in [
+            "secret-value",
+            "packet-value",
+            "sensitive-error",
+            "message-secret",
+            "/private/path",
+        ] {
+            assert!(!text.contains(secret));
+        }
     }
 }

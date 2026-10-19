@@ -87,6 +87,8 @@ Linux recording now uses the dedicated native `netoze-capture-helper` at `/usr/l
 
 The helper is our Rust code using libpcap, not dumpcap/TShark. A passive `--check` confirms its effective capability without capturing traffic. Missing helper, inaccessible group, missing capability, or a restricted launch is surfaced before recording. After setup use **Recheck recording access**. Copying/extracting the package into a per-user directory does not run its privileged installer script and cannot enable capture.
 
+The AppImage is deliberately portable and never claims to install capture privilege: it does not carry the Debian maintainer script or privileged helper payload. When launched as an AppImage, Capture Buddy shows guidance to install the DEB through the system package manager for the one-time helper setup. Reviewing saved recordings remains available without that setup.
+
 Windows still uses Npcap access. `NoNewPrivs` restrictions are reported and never bypassed. Saved-file review requires no capture privilege. Installing the new DEB with the OS package manager is required to grant the helper access; the agent has not performed that administrator-only step or a live capture.
 
 ## Verification
