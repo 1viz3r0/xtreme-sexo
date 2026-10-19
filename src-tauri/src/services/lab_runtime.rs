@@ -384,14 +384,12 @@ impl LabRuntimeState {
         Ok(inner.status.clone())
     }
     pub fn status(&self) -> Result<LabRuntimeStatus, String> {
-        let mut inner = self.inner.lock().map_err(|_| "Lab runtime unavailable")?;
-        if inner.status.running {
-            let run = inner.run.as_ref().ok_or("Active target is unavailable")?;
-            if run.forwarder.as_ref().is_none_or(|proxy| proxy.worker.as_ref().is_none_or(|worker| worker.is_finished())) || owned_id(run, "container", &run.container).is_none() || !execute_run(run, &["container", "inspect", "--format", "{{.State.Running}}", &run.container]).is_ok_and(|v| v.trim() == "true") {
-                if let Some(run) = inner.run.as_mut() { run.forwarder.take(); run.url = None; }
-                inner.status.running = false; inner.status.phase = "error"; inner.status.target_url = None; inner.status.message = "The managed container is unavailable. Stop to clean up before restarting.".into();
-            }
-        }
+        // Status is polled by the Labs UI. Never run Docker inspection on this
+        // hot path: a daemon or socket stall would make the desktop appear
+        // frozen and can trigger the desktop environment's not-responding
+        // watchdog. Lifecycle operations still perform ownership-checked
+        // inspection and cleanup when the user explicitly stops or resets.
+        let inner = self.inner.lock().map_err(|_| "Lab runtime unavailable")?;
         Ok(inner.status.clone())
     }
     pub fn stop(&self) -> Result<LabRuntimeStatus, String> {
