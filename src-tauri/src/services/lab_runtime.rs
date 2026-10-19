@@ -484,12 +484,12 @@ mod tests {
     }
     #[test]
     fn sandbox_args_and_flag_comparison() {
-        let mut run = create_run("unix:///var/run/docker.sock".into()).unwrap();
+        let mut run = create_run("unix:///var/run/docker.sock".into(), "web-exposure").unwrap();
         let args = run_args(&run);
         for required in ["--read-only", "--cap-drop", "ALL", "no-new-privileges:true", "--memory", "--pids-limit", "--cpus", "10001:10001"] { assert!(args.iter().any(|arg| arg == required)); }
         for forbidden in ["--privileged", "--volume", "--mount", "--network=host", "--publish", "-p", "-P"] { assert!(!args.iter().any(|arg| arg == forbidden)); }
         assert!(same_flag(&run.flag, &run.flag)); assert!(!same_flag(&run.flag, "wrong")); assert!(!same_flag(&run.flag, &(run.flag.clone() + "x")));
-        let next = create_run(run.host.clone()).unwrap(); assert_ne!(next.flag, run.flag); assert_ne!(next.owner, run.owner);
+        let next = create_run(run.host.clone(), "web-exposure").unwrap(); assert_ne!(next.flag, run.flag); assert_ne!(next.owner, run.owner);
         fs::remove_dir_all(next.context).unwrap(); assert!(cleanup(&mut run));
     }
     #[test]
@@ -524,7 +524,7 @@ mod tests {
     #[test]
     fn submission_contract_has_no_flag_leak_and_rejects_extra_inputs() {
         // Verifier unit test only: no claim of a running container acceptance.
-        let mut run = create_run("unix:///var/run/docker.sock".into()).unwrap();
+        let mut run = create_run("unix:///var/run/docker.sock".into(), "web-exposure").unwrap();
         let flag = run.flag.clone();
         run.url = Some("http://127.0.0.1:49123/".into());
         let state = LabRuntimeState::default();
@@ -586,5 +586,18 @@ mod tests {
         assert!(unavailable.target_url.is_none());
         assert!(TcpStream::connect(listener_addr).is_err());
         assert_eq!(state.stop().unwrap().phase, "stopped");
+    }
+
+    #[test]
+    #[ignore = "Requires Docker >=28; verifies every provisioned room can start"]
+    fn docker_all_available_rooms_start_and_stop() {
+        for lab_id in ["web-exposure", "network-enumeration", "linux-permissions"] {
+            let state = LabRuntimeState::default();
+            let status = state.start(lab_id.into()).unwrap();
+            assert!(status.running, "{lab_id}: {}", status.message);
+            assert_eq!(status.lab_id.as_deref(), Some(lab_id));
+            assert!(status.target_url.as_deref().is_some_and(|url| url.starts_with("http://127.0.0.1:")));
+            assert_eq!(state.stop().unwrap().phase, "stopped");
+        }
     }
 }

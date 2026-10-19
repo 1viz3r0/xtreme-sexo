@@ -38,6 +38,7 @@ def make_handler(root: Path):
 <p>For the maintenance handoff, inspect the registry and the local service banner.</p>
 </body></html>"""),
         "/robots.txt": ("text/plain; charset=utf-8", b"User-agent: *\nDisallow: /ops/\nSitemap: /api/registry\n"),
+        "/health": ("application/json; charset=utf-8", b'{"healthy":true,"mode":"read-only"}'),
         "/api/health": ("application/json; charset=utf-8", b'{"healthy":true,"mode":"read-only"}'),
         "/api/registry": ("application/json; charset=utf-8", json.dumps({
             "application": "Northstar Yard", "release": "1.4.2",
