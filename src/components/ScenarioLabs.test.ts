@@ -36,7 +36,7 @@ test('setup guidance precedes confirmed start and backend-verified flag completi
     assert.match(host.textContent ?? '', /28 or newer/)
     assert.doesNotMatch(host.textContent ?? '', /Working/)
     const click = async (text: string) => { const b = [...host.querySelectorAll('button')].find(item => item.textContent === text) as HTMLButtonElement; assert.equal(b.disabled, false); await act(async () => b.click()) }
-    await click('Start')
+     await click('Start selected room')
     assert.ok(fixture.calls.some(call => JSON.stringify(call) === JSON.stringify(['lab_runtime_start', { labId: 'web-exposure' }])))
     assert.match(host.textContent ?? '', /Working/)
     assert.match(host.textContent ?? '', /curl -i http:\/\/127.0.0.1:42000\//)
@@ -69,7 +69,7 @@ test('category and level filters expose planned labs and empty results', async (
     const change = async (label: string, value: string) => { const select = host.querySelector(`[aria-label="${label}"]`) as HTMLSelectElement; await act(async () => { select.value = value; select.dispatchEvent(new Event('change', { bubbles: true })) }) }
     assert.equal(host.querySelectorAll('[data-topic-id]').length, 4)
     await change('Category', 'Linux'); assert.equal(host.querySelectorAll('[data-topic-id]').length, 1)
-    assert.match(host.querySelector('[data-topic-id]')?.textContent ?? '', /Planned/)
+     assert.match(host.querySelector('[data-topic-id]')?.textContent ?? '', /Ready to provision/)
     await change('Level', 'Beginner'); assert.equal(host.querySelectorAll('[data-topic-id]').length, 0)
     assert.match(host.textContent ?? '', /No labs match/)
   })
@@ -77,7 +77,7 @@ test('category and level filters expose planned labs and empty results', async (
 test('start returning setup-required never fabricates a running target', async () => {
   const adapter = { ...mock().adapter, start: async () => setup }
   await mounted(adapter, async host => {
-    await act(async () => ([...host.querySelectorAll('button')].find(item => item.textContent === 'Start') as HTMLButtonElement).click())
+     await act(async () => ([...host.querySelectorAll('button')].find(item => item.textContent === 'Start selected room') as HTMLButtonElement).click())
     assert.match(host.textContent ?? '', /Setup required/)
     assert.doesNotMatch(host.textContent ?? '', /Working/)
     assert.equal(host.querySelector('[aria-label="Target URL"]'), null)

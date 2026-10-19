@@ -9,7 +9,7 @@ test('adapter sends the new command contract without tracks or extra start argum
   const adapter = createLabRuntimeAdapter(async <T>(command: string, args?: Record<string, unknown>) => { calls.push([command, args]); return running as T })
   await adapter.status(); await adapter.start('web-exposure'); await adapter.open(); await adapter.reset(); await adapter.submitFlag('discovered-value'); await adapter.stop()
   assert.deepEqual(calls, [['lab_runtime_status', undefined], ['lab_runtime_start', { labId: 'web-exposure' }], ['lab_runtime_open', undefined], ['lab_runtime_reset', undefined], ['lab_runtime_action', { action: { action: 'submit_flag', flag: 'discovered-value' } }], ['lab_runtime_stop', undefined]])
-  await assert.rejects(adapter.start('network-enumeration'), /planned/)
+   await adapter.start('network-enumeration')
 })
 test('validator accepts setup-required and refuses unconfirmed or non-local running targets', () => {
   assert.deepEqual(validateLabRuntimeStatus({ ...stopped, phase: 'setup-required', message: 'Docker >=28 required' }).phase, 'setup-required')

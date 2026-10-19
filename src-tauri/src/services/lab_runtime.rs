@@ -16,6 +16,10 @@ const OUTPUT_LIMIT: u64 = 64 * 1024;
 const DOCKERFILE: &str = include_str!("../../../labs/web-exposure/Dockerfile");
 const SERVER: &str = include_str!("../../../labs/web-exposure/server.py");
 const INDEX: &str = include_str!("../../../labs/web-exposure/index.html");
+const NETWORK_DOCKERFILE: &str = include_str!("../../../labs/network-enumeration/Dockerfile");
+const NETWORK_SERVER: &str = include_str!("../../../labs/network-enumeration/server.py");
+const LINUX_DOCKERFILE: &str = include_str!("../../../labs/linux-permissions/Dockerfile");
+const LINUX_SERVER: &str = include_str!("../../../labs/linux-permissions/server.py");
 
 const MAX_PROXY_CONNECTIONS: usize = 8;
 const MAX_PROXY_REQUEST: usize = 64 * 1024;
@@ -137,6 +141,7 @@ impl Default for LabRuntimeStatus {
 }
 
 struct Run {
+    lab_id: String,
     owner: String,
     host: String,
     container: String,
@@ -208,22 +213,31 @@ fn entropy() -> Result<String, String> {
     return Err("Secure run entropy unavailable on this platform".into());
     Ok(bytes.iter().map(|b| format!("{b:02x}")).collect())
 }
-fn create_run(host: String) -> Result<Run, String> {
+fn create_run(host: String, lab_id: &str) -> Result<Run, String> {
     let owner = entropy()?;
-    let flag = format!("NET0ZE{{web-exposure-{}}}", entropy()?);
+    let flag = format!("NET0ZE{{{}-{}}}", lab_id, entropy()?);
     let context = std::env::temp_dir().join(format!("netoze-lab-{owner}"));
     let mut builder = fs::DirBuilder::new();
     #[cfg(unix)] { use std::os::unix::fs::DirBuilderExt; builder.mode(0o700); }
     builder.create(&context).map_err(|_| "Unable to create the private lab build context")?;
     let result = (|| {
-        for (name, bytes) in [("Dockerfile", DOCKERFILE.to_owned()), ("server.py", SERVER.to_owned()), ("index.html", INDEX.to_owned()),
-            ("config.json", serde_json::json!({"application":"Harborline Dispatch","environment":"training","backup_note":"Deployment mistakenly left its support backup public.","flag":flag}).to_string())] {
+        let (dockerfile, server, mut config) = match lab_id {
+            "web-exposure" => (DOCKERFILE, SERVER, serde_json::json!({"application":"Harborline Dispatch","environment":"training","backup_note":"Deployment mistakenly left its support backup public."})),
+            "network-enumeration" => (NETWORK_DOCKERFILE, NETWORK_SERVER, serde_json::json!({"application":"Northstar Yard","site":"Northstar Yard","environment":"training"})),
+            "linux-permissions" => (LINUX_DOCKERFILE, LINUX_SERVER, serde_json::json!({"application":"Ledger Sync Permission Review","environment":"training"})),
+            _ => return Err("Unknown practical lab".into()),
+        };
+        config["flag"] = serde_json::Value::String(flag.clone());
+        let mut assets = vec![("Dockerfile", dockerfile.to_owned()), ("server.py", server.to_owned()),
+            ("config.json", config.to_string())];
+        if lab_id == "web-exposure" { assets.push(("index.html", INDEX.to_owned())); }
+        for (name, bytes) in assets {
             fs::write(context.join(name), bytes).map_err(|_| "Unable to write bundled lab assets")?;
         }
         Ok::<_, String>(())
     })();
     if let Err(error) = result { let _ = fs::remove_dir_all(&context); return Err(error); }
-    Ok(Run { container: format!("netoze-target-{owner}"), network: format!("netoze-network-{owner}"), image: format!("netoze-lab-{owner}:local"), owner, host, context, flag, url: None, container_created: false, network_created: false, image_created: false, forwarder: None })
+    Ok(Run { lab_id: lab_id.to_owned(), container: format!("netoze-target-{owner}"), network: format!("netoze-network-{owner}"), image: format!("netoze-lab-{owner}:local"), owner, host, context, flag, url: None, container_created: false, network_created: false, image_created: false, forwarder: None })
 }
 fn run_args(run: &Run) -> Vec<String> {
     ["create", "--name", &run.container, "--label", &format!("{OWNER_LABEL}={}", run.owner), "--network", &run.network,
@@ -353,18 +367,18 @@ impl LabRuntimeState {
         Self::start_locked(&mut inner, lab_id)
     }
     fn start_locked(inner: &mut Inner, lab_id: String) -> Result<LabRuntimeStatus, String> {
-        if lab_id != "web-exposure" { return Err("Unknown practical lab; choose web-exposure".into()); }
+        if !["web-exposure", "network-enumeration", "linux-permissions"].contains(&lab_id.as_str()) { return Err("Unknown practical lab".into()); }
         if inner.run.is_some() { return Err("Stop the current lab or finish its cleanup before starting another".into()); }
         let host = match check_engine(|host, args| docker(host, args, Duration::from_secs(10))) {
             Ok(host) => host,
             Err(message) => { inner.status = LabRuntimeStatus { lab_id: Some(lab_id), phase: "setup-required", message, ..LabRuntimeStatus::default() }; return Ok(inner.status.clone()); }
         };
-        let mut run = match create_run(host) {
+        let mut run = match create_run(host, &lab_id) {
             Ok(run) => run,
             Err(message) => { inner.status = LabRuntimeStatus { lab_id: Some(lab_id), phase: "error", message, ..LabRuntimeStatus::default() }; return Ok(inner.status.clone()); }
         };
         match launch(&mut run) {
-            Ok(()) => { inner.status = LabRuntimeStatus { running: true, lab_id: Some(lab_id), phase: "running", target_url: run.url.clone(), message: "Harborline Dispatch is ready. Discover its exposed backup, recover the deployment config, and submit the flag.".into(), runtime: "docker", completed: false }; inner.run = Some(run); }
+            Ok(()) => { let message = match lab_id.as_str() { "network-enumeration" => "Northstar Yard is ready. Map the service registry, read the maintenance handoff, and recover the export flag.", "linux-permissions" => "Ledger Sync is ready. Review the permission evidence, identify the least-privilege issue, and submit the flag.", _ => "Harborline Dispatch is ready. Discover its exposed backup, recover the deployment config, and submit the flag." }; inner.status = LabRuntimeStatus { running: true, lab_id: Some(lab_id), phase: "running", target_url: run.url.clone(), message: message.into(), runtime: "docker", completed: false }; inner.run = Some(run); }
             Err(message) => { let clean = cleanup(&mut run); inner.status = LabRuntimeStatus { lab_id: Some(lab_id), phase: "error", message: if clean { message } else { format!("{message} Owned-resource cleanup remains pending; use Stop after repairing Docker access.") }, ..LabRuntimeStatus::default() }; if !clean { inner.run = Some(run); } }
         }
         Ok(inner.status.clone())
@@ -395,7 +409,8 @@ impl LabRuntimeState {
         if inner.status.lab_id.is_none() { return Err("No practical lab to reset".into()); }
         let stopped = Self::stop_locked(&mut inner)?;
         if stopped.phase != "stopped" { return Ok(stopped); }
-        Self::start_locked(&mut inner, "web-exposure".into())
+        let lab_id = inner.status.lab_id.clone().unwrap_or_else(|| "web-exposure".into());
+        Self::start_locked(&mut inner, lab_id)
     }
     pub fn action(&self, action: Value) -> Result<LabRuntimeStatus, String> {
         self.status()?;

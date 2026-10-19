@@ -22,7 +22,7 @@ export function validateLabRuntimeStatus(value: unknown): LabRuntimeStatus {
   const invalid = (): never => { throw new Error('Invalid lab runtime response. Refresh status before taking another action.') }
   if (!value || typeof value !== 'object' || Array.isArray(value)) return invalid()
   const v = value as Record<string, unknown>
-  if (typeof v.running !== 'boolean' || !(v.labId === null || v.labId === 'web-exposure') || !['stopped', 'running', 'setup-required', 'error'].includes(String(v.phase)) || !(v.targetUrl === null || typeof v.targetUrl === 'string') || typeof v.message !== 'string' || v.runtime !== 'docker' || typeof v.completed !== 'boolean') return invalid()
+  if (typeof v.running !== 'boolean' || !(v.labId === null || ['web-exposure', 'network-enumeration', 'linux-permissions'].includes(String(v.labId))) || !['stopped', 'running', 'setup-required', 'error'].includes(String(v.phase)) || !(v.targetUrl === null || typeof v.targetUrl === 'string') || typeof v.message !== 'string' || v.runtime !== 'docker' || typeof v.completed !== 'boolean') return invalid()
   if (v.running !== (v.phase === 'running') || (v.running && (!v.targetUrl || v.labId !== 'web-exposure')) || (!v.running && v.targetUrl !== null)) return invalid()
   if (v.targetUrl) {
     try { const url = new URL(v.targetUrl as string); if (url.protocol !== 'http:' || !['localhost', '127.0.0.1', '[::1]'].includes(url.hostname) || url.username || url.password) return invalid() } catch { return invalid() }
@@ -39,7 +39,7 @@ export const createLabRuntimeAdapter = (invoke: Invoke = nativeInvoke): LabRunti
   }
   return {
     status: () => call('lab_runtime_status'),
-    start: labId => { if (labId !== 'web-exposure') return Promise.reject(new Error('This lab is planned and cannot be provisioned.')); return call('lab_runtime_start', { labId }) },
+   start: labId => { if (!['web-exposure', 'network-enumeration', 'linux-permissions'].includes(labId)) return Promise.reject(new Error('This lab is planned and cannot be provisioned.')); return call('lab_runtime_start', { labId }) },
     stop: () => call('lab_runtime_stop'), reset: () => call('lab_runtime_reset'), open: () => call('lab_runtime_open'),
     submitFlag: flag => call('lab_runtime_action', { action: { action: 'submit_flag', flag } }),
   }
