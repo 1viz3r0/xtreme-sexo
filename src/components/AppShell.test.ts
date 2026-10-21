@@ -24,8 +24,6 @@ test('Studio header and monitoring navigation are accessible and concise', () =>
   const sidebar = renderToStaticMarkup(React.createElement(Sidebar, sidebarProps));
   assert.match(sidebar, /aria-label="Primary navigation"/);
   assert.match(sidebar, /Monitoring/);
-  assert.match(sidebar, /aria-label="Overview"/);
-  assert.ok(sidebar.indexOf('Overview') < sidebar.indexOf('Watchtower'));
   assert.match(sidebar, /aria-label="Watchtower"/);
   assert.ok(sidebar.indexOf('Watchtower') < sidebar.indexOf('Capture Buddy'));
   assert.match(sidebar, /aria-current="page" aria-label="Capture Buddy"/);
@@ -39,7 +37,8 @@ test('Studio header and monitoring navigation are accessible and concise', () =>
    assert.doesNotMatch(sidebar, /aria-label="Host &amp; Logs"/);
   assert.doesNotMatch(sidebar, /<details[^>]* open/);
   const experimental = sidebar.match(/<details class="studio-experimental"[\s\S]*?<\/details>/)?.[0] ?? '';
-  assert.doesNotMatch(experimental, /aria-label="Overview"/);
+  assert.match(experimental, /aria-label="Overview"/);
+  assert.ok(experimental.indexOf('Overview') < experimental.indexOf('Evidence'));
   assert.doesNotMatch(sidebar, /aria-label="Users"/);
   const admin = renderToStaticMarkup(React.createElement(Sidebar, { ...sidebarProps, user: { name: 'Admin fixture', email: 'fixture@example.test', isVerified: true, role: 'admin' } }));
   assert.match(admin, /aria-label="Users"/);
@@ -112,7 +111,7 @@ test('mounted shell preserves navigation, hiding, search, sign-in and sign-out c
     assert.equal(host.querySelector('aside'), null);
     await click('Show navigation');
     await click('Search locations');
-    assert.equal(host.querySelector('details')?.hasAttribute('open'), false);
+     assert.equal(host.querySelector('details')?.hasAttribute('open'), true);
     assert.equal(host.querySelector('[aria-current="page"]')?.getAttribute('aria-label'), 'Overview');
     await click('Sign in');
     assert.ok(host.querySelector('[aria-label="Users"]'));

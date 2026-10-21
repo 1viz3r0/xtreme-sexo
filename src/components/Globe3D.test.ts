@@ -2,13 +2,15 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import test from 'node:test';
 import * as THREE from 'three';
-import { disposeGroup, geoMarker, nearestGeography, visibleHit, MIN_CAMERA_DISTANCE, MAX_CAMERA_DISTANCE, MAX_ENDPOINT_MARKERS, MAX_FLOW_ARCS } from './Globe3D.tsx';
+import { captureDisplayState, disposeGroup, geoMarker, nearestGeography, telemetryMetric, telemetryStateHasValues, visibleHit, MIN_CAMERA_DISTANCE, MAX_CAMERA_DISTANCE, MAX_ENDPOINT_MARKERS, MAX_FLOW_ARCS, DEFAULT_CAMERA_POSITION } from './Globe3D.tsx';
 import { globePoint } from './globeGeometry.ts';
 
 const source = readFileSync(new URL('./Globe3D.tsx', import.meta.url), 'utf8');
 
 test('globe scene and overlay are strictly monochrome', () => {
   assert.doesNotMatch(source, /purple|cyan|text-slate|text-emerald|text-amber/i);
+  assert.doesNotMatch(source, /gradient/i);
+  assert.doesNotMatch(source, /ShaderMaterial/);
   for (const [, hex] of source.matchAll(/#([a-f0-9]{6})(?:[a-f0-9]{2})?/gi)) {
     assert.equal(hex.slice(0, 2), hex.slice(2, 4));
     assert.equal(hex.slice(2, 4), hex.slice(4, 6));
@@ -102,13 +104,52 @@ test('quality settings and camera bounds preserve continuous supported zoom', ()
   assert.match(source, /controls\.maxDistance = MAX_CAMERA_DISTANCE/);
   assert.match(source, /spherical\.radius = THREE\.MathUtils\.clamp/);
   assert.match(source, /antialias: true/);
-  assert.match(source, /setPixelRatio\(Math\.min\(window\.devicePixelRatio \|\| 1, 2\)\)/);
+  assert.match(source, /setPixelRatio\(Math\.min\(window\.devicePixelRatio \|\| 1, 1\.5\)\)/);
   assert.match(source, /canvas\.width = 4096/);
   assert.match(source, /canvas\.height = 2048/);
   assert.match(source, /getMaxAnisotropy\(\), 8/);
   assert.match(source, /texture\.minFilter = THREE\.LinearMipmapLinearFilter/);
   assert.match(source, /texture\.magFilter = THREE\.LinearFilter/);
   assert.match(source, /scaleMarkerMeshes\(endpoints/);
+});
+
+test('globe controls expose truthful source labels and safe motion behavior', () => {
+  assert.deepEqual(DEFAULT_CAMERA_POSITION, { lat: 20, lng: 10, distance: 3.2 });
+  assert.match(source, /aria-label="Globe controls"/);
+  assert.match(source, /aria-label="Zoom in"/);
+  assert.match(source, /aria-label="Zoom out"/);
+  assert.match(source, /aria-label="Reset globe view"/);
+  assert.match(source, /setAttribute\('aria-describedby', 'globe-instructions'\)/);
+  assert.match(source, /Escape clears the current selection/);
+  assert.match(source, /case '0': case 'Home'/);
+  assert.match(source, /NATIVE ENDPOINTS · REFERENCE GEOGRAPHY ONLY/);
+  assert.match(source, /REFERENCE LAYER: BUNDLED NATURAL EARTH DATA/);
+  assert.match(source, /NO NATIVE CAPTURE SNAPSHOT/);
+  assert.match(source, /prefers-reduced-motion/);
+  assert.match(source, /document\.visibilityState !== 'hidden'/);
+  assert.match(source, /if \(document\.visibilityState !== 'hidden'\)/);
+  assert.match(source, /if \(contextAvailable\) renderer\.render/);
+  assert.match(source, /document\.addEventListener\('visibilitychange'/);
+  assert.match(source, /document\.removeEventListener\('visibilitychange'/);
+  assert.match(source, /FLOW DESTINATION/);
+  assert.match(source, /selectedFocusLat = selectedNode\?\.lat \?\? selectedCountry\?\.lat/);
+  assert.match(source, /selected-endpoint-boundary/);
+});
+
+test('capture telemetry never presents fallback zeros as live measurements', () => {
+  assert.equal(captureDisplayState('RUNNING'), 'LIVE');
+  assert.equal(captureDisplayState('live'), 'LIVE');
+  assert.equal(captureDisplayState('STALE'), 'STALE');
+  assert.equal(captureDisplayState('STOPPED'), 'STOPPED');
+  assert.equal(captureDisplayState(''), 'UNAVAILABLE');
+  assert.equal(telemetryStateHasValues('LIVE'), true);
+  assert.equal(telemetryStateHasValues('STALE'), true);
+  assert.equal(telemetryStateHasValues('STOPPED'), false);
+  assert.equal(telemetryMetric(0, 1, false), '—');
+  assert.equal(telemetryMetric(12.345, 1), '12.3');
+  assert.match(source, /const status = captureDisplayState\(captureStatus \|\| captureMetrics\.status\)/);
+  assert.match(source, /const telemetryAvailable = telemetryStateHasValues\(status\)/);
+  assert.match(source, /telemetryMetric\(captureMetrics\.packets_per_sec, 1, telemetryAvailable\)/);
 });
 
 test('owned and shared resources are disposed once and groups are cleared', () => {
@@ -143,6 +184,7 @@ test('click handling rejects drag and other pointers and context loss exposes fa
   assert.match(source, /releasePointerCapture\(event\.pointerId\)/);
   assert.match(source, /latest\.current\.onSelectNode\(node\)/);
   assert.match(source, /latest\.current\.onSelectCountry\(countrySelection\(country\)\)/);
+  assert.match(source, /if \(document\.visibilityState !== 'hidden'\)/);
   assert.match(source, /if \(contextAvailable\) renderer\.render/);
   assert.match(source, /3D VIEW UNAVAILABLE/);
 });

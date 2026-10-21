@@ -21,18 +21,6 @@ interface GlobalIntelViewProps {
   openSearchToken?: number;
 }
 
-interface FlowRow {
-  time: string;
-  src: string;
-  dst: string;
-  protocol: string;
-  pkts: string;
-  bytes: string;
-  status: string;
-  location: string;
-  risk: string;
-}
-
 export const GlobalIntelView: React.FC<GlobalIntelViewProps> = ({
   selectedNode,
   setSelectedNode,
@@ -222,7 +210,6 @@ export const GlobalIntelView: React.FC<GlobalIntelViewProps> = ({
   };
 
   // Build real globe nodes from GeoIP + threat matches + flow aggregates
-  const geoByIp = new Map(geoip.map((g) => [g.ip, g]));
   const threatByIp = new Map<string, ThreatMatchEntry>();
   for (const match of threatMatches) {
     const prior = threatByIp.get(match.ip);
@@ -336,23 +323,6 @@ export const GlobalIntelView: React.FC<GlobalIntelViewProps> = ({
     };
   };
 
-  const displayedFlows: FlowRow[] = flows.slice(0, 50).map((f) => {
-    const ts = new Date(f.ts_end);
-    const location = geoByIp.get(f.dst_ip);
-    const threat = threatByIp.get(f.dst_ip);
-    return {
-      time: ts.toLocaleTimeString(),
-      src: `${f.src_ip}:${f.src_port}`,
-      dst: `${f.dst_ip}:${f.dst_port}`,
-      protocol: f.protocol,
-      pkts: f.packet_count.toString(),
-      bytes: formatBytes(f.total_bytes),
-      status: f.tcp_state,
-      location: location ? `${location.city}, ${location.country}` : 'Unresolved',
-      risk: highestSeverity(threat?.severity, threatByIp.get(f.src_ip)?.severity, f.severity),
-    };
-  });
-
   const sev = detSummary ?? {
     total_findings_count: 0,
     critical_count: 0,
@@ -384,49 +354,50 @@ export const GlobalIntelView: React.FC<GlobalIntelViewProps> = ({
           ? 'No observed endpoints with coordinates in this session.'
           : null;
   return (
-    <div className="flex-1 flex flex-col h-full overflow-y-auto bg-[#060913] text-slate-200">
+    <div className="flex min-h-0 flex-1 flex-col overflow-hidden bg-[#050505] font-mono text-slate-200">
       <OverviewSummary system={systemInfo} interfaces={networkInfo} snapshot={snapshot} unavailable={!desktopAvailable ? 'Native desktop required' : refreshError ? 'Snapshot stale' : null} onNavigate={setActiveTab} />
-      <div className="mx-3 mt-2 rounded border border-[#17243c] bg-[#081022] px-3 py-2 text-[10px] font-mono text-slate-500" role="status">
-         {snapshot ? `Current-session snapshot • ${new Date(snapshot.collected_at).toLocaleTimeString()}` : !desktopAvailable ? 'Browser mode — local telemetry unavailable' : refreshError ? 'Snapshot unavailable — refresh failed' : 'Loading current-session snapshot…'}
-         {refreshError && <span className="ml-2 text-amber-400">last successful snapshot is stale</span>}
-         <button onClick={handleRefresh} disabled={!desktopAvailable || isRefreshing} className="float-right text-slate-200 hover:underline disabled:cursor-not-allowed disabled:opacity-50">{isRefreshing ? 'Refreshing…' : desktopAvailable ? 'Refresh' : 'Refresh unavailable'}</button>
+      <div className="flex items-center justify-between gap-3 border-b border-[#292929] bg-[#090909] px-3 py-2 text-[10px] text-slate-500 sm:px-4">
+        <span>{snapshot ? `CURRENT SESSION · ${new Date(snapshot.collected_at).toLocaleTimeString()}` : !desktopAvailable ? 'BROWSER MODE · LOCAL TELEMETRY UNAVAILABLE' : refreshError ? 'LAST SNAPSHOT RETAINED · REFRESH FAILED' : 'LOADING NATIVE SNAPSHOT'}</span>
+        <button type="button" onClick={handleRefresh} disabled={!desktopAvailable || isRefreshing} className="border border-[#525252] px-2 py-1 text-slate-200 hover:bg-[#252525] disabled:cursor-not-allowed disabled:opacity-50">{isRefreshing ? 'REFRESHING…' : desktopAvailable ? 'REFRESH' : 'REFRESH UNAVAILABLE'}</button>
       </div>
-      <div className="grid grid-cols-12 gap-3 p-3 flex-1 min-h-[560px]">
-        <div className="col-span-12 lg:col-span-3 flex flex-col gap-3">
-          <div className="cyber-card p-3 flex flex-col gap-2">
-            <div className="flex items-center justify-between"><b className="text-[10px] tracking-wider text-slate-400">CAPTURE</b><span className={`text-[10px] ${captureRunning ? 'text-emerald-400' : 'text-slate-400'}`}>{captureStatus}</span></div>
-            <div className="flex gap-1.5"><select value={selectedInterface} onChange={(e) => setSelectedInterface(e.target.value)} disabled={!desktopAvailable || captureRunning || captureActionBusy} aria-label="Capture interface" className="min-w-0 flex-1 rounded border border-[#292929] bg-[#141414] px-2 py-1 text-[10px] font-mono"><option value="">No interface available</option>{interfaces.map((item) => <option key={item.id} value={item.id}>{item.name || item.id}</option>)}</select><button onClick={() => void handleCaptureAction()} disabled={!desktopAvailable || captureActionBusy || (!captureRunning && !selectedInterface)} className="rounded border border-[#525252] px-2 py-1 text-[10px] text-slate-200 hover:bg-[#252525] disabled:opacity-40">{captureActionBusy ? 'WORKING…' : captureRunning ? 'STOP' : 'START'}</button></div>
-            {captureActionError && <div className="text-[10px] text-rose-300">{captureActionError}</div>}
-            <div className="grid grid-cols-3 gap-1 border-t border-[#17243c] pt-2 text-center"><span>Packets<br/><b className="text-cyan-400">{metrics?.packets_captured ?? 0}</b></span><span>Dropped<br/><b className="text-amber-400">{metrics?.dropped_packets ?? 0}</b></span><span>Flows<br/><b className="text-emerald-400">{summary?.active_flows_count ?? 0}</b></span></div>
-            <details className="text-[10px] text-slate-500"><summary>Capture permissions</summary><p className="mt-1">Select an active adapter. Wi-Fi monitor mode is only needed for 802.11 management frames; permissions may be required by the OS.</p></details>
-          </div>
-          <div className="cyber-card p-3"><b className="text-[10px] tracking-wider text-slate-400">OBSERVED DEVICES</b><div className="mt-2 text-xl font-bold">{snapshot ? devices.length : 'Unavailable'}</div><div className="text-[10px] text-slate-500">Cached observations; no discovery scan performed.</div></div>
-          <div className="cyber-card p-3"><b className="text-[10px] tracking-wider text-slate-400">CONNECTIVITY</b><div className="mt-2 text-lg font-bold">{avgRtt > 0 ? `${avgRtt.toFixed(1)}ms RTT` : 'Unavailable'}</div><div className="text-[10px] text-slate-500">{connState} • {connectivity?.source || 'source unavailable'}</div></div>
-        </div>
-        <div className="col-span-12 lg:col-span-6 cyber-card relative flex flex-col overflow-hidden min-h-[460px]">
-           <div className="p-3 border-b border-[#17243c] flex items-center justify-between"><div><b className="text-xs font-mono text-white">Endpoint map</b><p className="mt-1 text-[10px] text-slate-500">Observed endpoints only; country and city shapes are bundled reference geography.</p></div><button onClick={() => setIsAutoRotate(!isAutoRotate)} className="rounded border border-[#525252] px-2 py-1 text-[10px] text-slate-200 hover:bg-[#252525]">AUTO-ROTATE: {isAutoRotate ? 'ON' : 'OFF'}</button></div>
-           <div className="flex-1 relative"><Globe3D nodes={globeNodes} selectedNode={selectedNode} selectedCountry={selectedCountry} onSelectNode={(node) => { setSelectedCountry(null); setSelectedNode(node); setIsDetailPanelOpen(true); }} onSelectCountry={(country) => { setSelectedNode(null); setSelectedCountry(country); setIsDetailPanelOpen(true); }} isAutoRotate={isAutoRotate} hub={hubInfo && hasCoordinates(hubInfo) ? { lat: hubInfo.latitude, lng: hubInfo.longitude } : null} captureStatus={captureStatus} captureMetrics={captureMetrics} activeFlows={locationNodes} />
-              {globeMessage && !selectedCountry && <div className="absolute inset-x-0 top-16 z-10 flex justify-center pointer-events-none"><div role="status" className="max-w-md bg-black/70 px-4 py-2 rounded border border-[#525252] text-center text-[11px] text-slate-400">{globeMessage}</div></div>}
+      <div className="grid min-h-0 flex-1 grid-cols-12 gap-3 overflow-y-auto p-3 sm:p-4">
+        <section className="col-span-12 flex min-h-[620px] min-w-0 flex-col overflow-hidden border border-[#292929] bg-[#0b0b0b] xl:col-span-9" aria-labelledby="map-title">
+          <header className="flex flex-wrap items-center justify-between gap-3 border-b border-[#292929] px-3 py-2">
+            <div><h2 id="map-title" className="text-xs tracking-[0.18em] text-white">GOD'S EYE / LIVE EARTH</h2><p className="mt-1 text-[10px] text-slate-500">Native endpoints and active flows over bundled reference geography.</p></div>
+            <div className="flex items-center gap-2 text-[10px]"><span className="text-slate-500">{globeNodes.length} endpoints · {locationNodes.length} active destinations</span><button type="button" onClick={() => setIsAutoRotate(!isAutoRotate)} className="border border-[#525252] px-2 py-1 text-slate-200 hover:bg-[#252525]">ROTATION: {isAutoRotate ? 'ON' : 'OFF'}</button></div>
+          </header>
+          <div className="relative min-h-[560px] flex-1">
+            <Globe3D nodes={globeNodes} selectedNode={selectedNode} selectedCountry={selectedCountry} onSelectNode={(node) => { setSelectedCountry(null); setSelectedNode(node); setIsDetailPanelOpen(true); }} onSelectCountry={(country) => { setSelectedNode(null); setSelectedCountry(country); setIsDetailPanelOpen(true); }} isAutoRotate={isAutoRotate} hub={hubInfo && hasCoordinates(hubInfo) ? { lat: hubInfo.latitude, lng: hubInfo.longitude } : null} captureStatus={captureStatus} captureMetrics={captureMetrics} activeFlows={locationNodes} />
+            {globeMessage && !selectedCountry && <div className="pointer-events-none absolute inset-x-0 top-16 z-10 flex justify-center"><div role="status" className="max-w-md border border-[#525252] bg-black/80 px-4 py-2 text-center text-[11px] text-slate-400">{globeMessage}</div></div>}
             {isDetailPanelOpen && (selectedNode || selectedCountry) && <CountryDetailPanel node={selectedNode} country={selectedCountry} vector={countryVector} regions={regions} selectedRegion={selectedRegion} onSelectRegion={setSelectedRegion} connectivity={connectivity} stats={selectedCountry ? countryStatsFor(selectedCountry.iso) : null} onClose={() => setIsDetailPanelOpen(false)} topOffset={selectedCountry ? '3.4rem' : '0.75rem'} />}
             <SearchModal isOpen={isSearchOpen} onClose={() => setIsSearchOpen(false)} onSelectGeo={handleSelectGeo} />
           </div>
-        </div>
-        <div className="col-span-12 lg:col-span-3 flex flex-col gap-3">
-          <div className="cyber-card p-3"><div className="flex justify-between"><b className="text-[10px] tracking-wider text-slate-400">Findings</b><span className="text-[10px] text-slate-500">current session</span></div><div className="mt-2 grid grid-cols-2 gap-2 text-[11px]"><span>Total <b>{snapshot ? sev.total_findings_count : 'Unavailable'}</b></span><span>Active <b>{snapshot ? sev.active_count : 'Unavailable'}</b></span><span>High+ <b>{snapshot ? sev.critical_count + sev.high_count : 'Unavailable'}</b></span><span>Resolved <b>{snapshot ? sev.resolved_count : 'Unavailable'}</b></span></div></div>
-           <div className="cyber-card p-3"><b className="text-[10px] tracking-wider text-slate-400">RECENT FINDINGS</b><div className="mt-2 flex flex-col gap-1">{recentFindings.length ? recentFindings.map((alert) => <button key={alert.finding_id} onClick={() => setSelectedFinding(selectedFinding === alert.finding_id ? null : alert.finding_id)} className="rounded border border-[#525252] bg-[#141414] p-2 text-left text-[10px] hover:bg-[#252525]"><span className="text-slate-200">{alert.severity} · {alert.title}</span><span className="block text-slate-500">{alert.source_ip} → {alert.destination_ip}</span>{selectedFinding === alert.finding_id && <span className="mt-1 block text-slate-300">Evidence: {alert.evidence || 'No evidence text reported.'}</span>}</button>) : <span className="text-slate-500">{emptyAlertMessage}</span>}</div></div>
-          <div className="cyber-card p-3 text-[10px] text-slate-500"><b className="text-slate-400">THREAT INTEL</b><div className="mt-2">{threatStatus?.feed_state || 'UNAVAILABLE'} • {threatStatus?.match_count ?? 'Unavailable'} observed matches</div><div>No ATT&CK coverage score is inferred from these counts.</div></div>
-        </div>
+        </section>
+
+        <aside className="col-span-12 flex min-w-0 flex-col gap-3 xl:col-span-3" aria-label="God's Eye controls and signals">
+          <section className="border border-[#292929] bg-[#0b0b0b] p-3">
+            <div className="flex items-center justify-between"><h2 className="text-[10px] tracking-[0.16em] text-slate-400">CAPTURE CONTROL</h2><span className={captureRunning ? 'text-emerald-300' : 'text-slate-500'}>{captureStatus}</span></div>
+            <div className="mt-2 flex gap-2"><select value={selectedInterface} onChange={(e) => setSelectedInterface(e.target.value)} disabled={!desktopAvailable || captureRunning || captureActionBusy} aria-label="Capture interface" className="min-w-0 flex-1 border border-[#525252] bg-[#111111] px-2 py-1 text-[10px]"><option value="">No interface available</option>{interfaces.map((item) => <option key={item.id} value={item.id}>{item.name || item.id}</option>)}</select><button type="button" onClick={() => void handleCaptureAction()} disabled={!desktopAvailable || captureActionBusy || (!captureRunning && !selectedInterface)} className="border border-[#525252] px-2 py-1 text-[10px] text-white hover:bg-[#252525] disabled:opacity-40">{captureActionBusy ? 'WORKING…' : captureRunning ? 'STOP' : 'START'}</button></div>
+            {captureActionError && <p className="mt-2 text-[10px] text-rose-300">{captureActionError}</p>}
+            <div className="mt-3 grid grid-cols-3 gap-2 border-t border-[#292929] pt-2 text-center text-[10px]"><span>PACKETS<br/><b className="text-white">{metrics?.packets_captured ?? '—'}</b></span><span>DROPPED<br/><b className="text-white">{metrics?.dropped_packets ?? '—'}</b></span><span>FLOWS<br/><b className="text-white">{summary?.active_flows_count ?? '—'}</b></span></div>
+          </section>
+
+          <section className="border border-[#292929] bg-[#0b0b0b] p-3">
+            <div className="flex items-center justify-between"><h2 className="text-[10px] tracking-[0.16em] text-slate-400">OBSERVED SIGNALS</h2><span className="text-[10px] text-slate-500">{connState}</span></div>
+            <div className="mt-3 grid grid-cols-2 gap-2 text-[10px]"><div className="border border-[#292929] p-2"><span className="text-slate-500">RTT</span><p className="mt-1 text-white">{avgRtt > 0 ? `${avgRtt.toFixed(1)} ms` : '—'}</p></div><div className="border border-[#292929] p-2"><span className="text-slate-500">THREAT FEED</span><p className="mt-1 text-white">{threatStatus?.feed_state || '—'}</p></div><div className="border border-[#292929] p-2"><span className="text-slate-500">FINDINGS</span><p className="mt-1 text-white">{snapshot ? sev.total_findings_count : '—'}</p></div><div className="border border-[#292929] p-2"><span className="text-slate-500">HIGH+</span><p className="mt-1 text-white">{snapshot ? sev.critical_count + sev.high_count : '—'}</p></div></div>
+          </section>
+
+          <section className="min-h-0 flex-1 border border-[#292929] bg-[#0b0b0b] p-3">
+            <div className="flex items-center justify-between"><h2 className="text-[10px] tracking-[0.16em] text-slate-400">CONTACTS</h2><span className="text-[10px] text-slate-500">click to track</span></div>
+            <div className="mt-2 flex max-h-64 flex-col gap-1 overflow-y-auto">{globeNodes.length ? globeNodes.slice(0, 24).map((node) => <button type="button" key={node.id} onClick={() => { setSelectedCountry(null); setSelectedNode(node); setIsDetailPanelOpen(true); }} className="border border-[#292929] bg-[#111111] p-2 text-left text-[10px] hover:bg-[#252525]"><span className="block truncate text-white">{node.name}</span><span className="mt-1 block text-slate-500">{node.ip} · {node.activeFlowsCount} flows · {node.threatLevel}</span></button>) : <p className="text-[10px] text-slate-500">{!desktopAvailable ? 'Native endpoint telemetry unavailable.' : refreshError ? 'Last endpoint snapshot is stale.' : 'No geolocated contacts in this session.'}</p>}</div>
+          </section>
+
+          <section className="border border-[#292929] bg-[#0b0b0b] p-3"><div className="flex items-center justify-between"><h2 className="text-[10px] tracking-[0.16em] text-slate-400">RECENT FINDINGS</h2><button type="button" onClick={() => setActiveTab('watchtower')} className="text-[10px] text-slate-300 hover:underline">WATCHTOWER →</button></div><div className="mt-2 flex flex-col gap-1">{recentFindings.length ? recentFindings.map((alert) => <button type="button" key={alert.finding_id} onClick={() => setSelectedFinding(selectedFinding === alert.finding_id ? null : alert.finding_id)} className="border border-[#292929] bg-[#111111] p-2 text-left text-[10px] hover:bg-[#252525]"><span className="text-white">{alert.severity} · {alert.title}</span><span className="mt-1 block text-slate-500">{alert.source_ip} → {alert.destination_ip}</span>{selectedFinding === alert.finding_id && <span className="mt-1 block text-slate-300">{alert.evidence || 'No evidence text reported.'}</span>}</button>) : <span className="text-slate-500">{emptyAlertMessage}</span>}</div></section>
+        </aside>
       </div>
-       <div className="p-3 pt-0"><div className="cyber-card p-3"><div className="flex items-center justify-between border-b border-[#17243c] pb-2"><b className="text-xs">CURRENT-SESSION FLOWS</b><button onClick={() => setActiveTab('conversations')} className="text-xs text-slate-200 hover:underline">View in Capture Buddy →</button></div><div className="overflow-x-auto"><table className="w-full text-left cyber-table"><thead><tr><th>Time</th><th>Source</th><th>Destination</th><th>Protocol</th><th>Packets</th><th>Bytes</th><th>Status</th><th>Location</th><th>Severity</th></tr></thead><tbody>{displayedFlows.length ? displayedFlows.map((row, idx) => <tr key={idx}><td>{row.time}</td><td className="text-cyan-400">{row.src}</td><td>{row.dst}</td><td>{row.protocol}</td><td>{row.pkts}</td><td>{row.bytes}</td><td>{row.status}</td><td>{row.location}</td><td>{row.risk}</td></tr>) : <tr><td colSpan={9} className="py-6 text-center text-slate-500">{!desktopAvailable ? 'Flow telemetry unavailable' : refreshError ? 'Flow snapshot stale' : 'No observed flows in this session'}</td></tr>}</tbody></table></div></div></div>
     </div>
   );
 };
-
-function formatBytes(bytes: number): string {
-  if (bytes >= 1024 * 1024) return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
-  if (bytes >= 1024) return `${(bytes / 1024).toFixed(1)} KB`;
-  return `${bytes} B`;
-}
 
 function hasCoordinates(entry: GeoIpEntry): entry is GeoIpEntry & { latitude: number; longitude: number } {
   return entry.latitude != null && entry.longitude != null

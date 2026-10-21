@@ -164,6 +164,16 @@ const colorFor = (_color: string) => '#f5f5f5';
 const metric = (value: number, decimals?: number) => Number.isFinite(value) && value >= 0
   ? decimals === undefined ? value.toLocaleString() : value.toFixed(decimals)
   : '—';
+export const telemetryMetric = (value: number, decimals?: number, available = true) => available ? metric(value, decimals) : '—';
+export const captureDisplayState = (value: string) => {
+  const normalized = value.trim().toUpperCase();
+  if (normalized === 'RUNNING' || normalized === 'LIVE') return 'LIVE';
+  if (normalized === 'STALE') return 'STALE';
+  if (normalized === 'STOPPED' || normalized === 'IDLE') return 'STOPPED';
+  return normalized || 'UNAVAILABLE';
+};
+
+export const telemetryStateHasValues = (state: string) => state === 'LIVE' || state === 'STALE';
 
 export function geoMarker(lat: number, lng: number, color: string, label: string, kind: 'region' | 'city'): THREE.Group {
   const group = new THREE.Group();
@@ -194,6 +204,7 @@ const MAX_REGION_MARKERS = 240;
 const MAX_CITY_MARKERS = 320;
 export const MAX_ENDPOINT_MARKERS = 500;
 export const MAX_FLOW_ARCS = 150;
+export const DEFAULT_CAMERA_POSITION = { lat: 20, lng: 10, distance: 3.2 };
 
 // Prefer the geography nearest the current view instead of truncating the
 // alphabetically ordered dataset to a handful of countries.
@@ -261,15 +272,17 @@ export const Globe3D: React.FC<Globe3DProps> = (props) => {
      texture.needsUpdate = true;
     const surface = new THREE.Mesh(new THREE.SphereGeometry(1, 64, 40), new THREE.MeshBasicMaterial({ map: texture }));
     globe.add(surface);
-    const atmosphere = new THREE.Mesh(new THREE.SphereGeometry(1.025, 48, 32), new THREE.ShaderMaterial({
-      transparent: true, side: THREE.BackSide, depthWrite: false,
-      uniforms: { glowColor: { value: new THREE.Color('#d4d4d4') } },
-      vertexShader: 'varying vec3 vNormal; varying vec3 vPosition; void main() { vNormal = normalize(normalMatrix * normal); vec4 p = modelViewMatrix * vec4(position, 1.0); vPosition = p.xyz; gl_Position = projectionMatrix * p; }',
-      fragmentShader: 'uniform vec3 glowColor; varying vec3 vNormal; varying vec3 vPosition; void main() { float rim = pow(1.0 - abs(dot(normalize(vNormal), normalize(-vPosition))), 3.0); gl_FragColor = vec4(glowColor, rim * 0.38); }',
+    // A restrained wire shell provides depth without a luminous wash or
+    // invented atmospheric data. It also remains legible when the map texture
+    // is unavailable on a constrained WebGL implementation.
+    const referenceShell = new THREE.Mesh(new THREE.SphereGeometry(1.025, 32, 20), new THREE.MeshBasicMaterial({
+      color: '#272727', wireframe: true, transparent: true, opacity: 0.24,
+      depthWrite: false, side: THREE.BackSide,
     }));
-    globe.add(atmosphere);
+    referenceShell.name = 'reference-shell';
+    globe.add(referenceShell);
     const camera = new THREE.PerspectiveCamera(42, 1, 0.05, 30);
-    camera.position.copy(globePoint(20, 10, 3.2));
+    camera.position.copy(globePoint(DEFAULT_CAMERA_POSITION.lat, DEFAULT_CAMERA_POSITION.lng, DEFAULT_CAMERA_POSITION.distance));
     const controls = new OrbitControls(camera, renderer.domElement);
     controls.enableDamping = true;
     controls.dampingFactor = 0.08;
@@ -279,11 +292,15 @@ export const Globe3D: React.FC<Globe3DProps> = (props) => {
     controls.zoomSpeed = 0.8;
     controls.autoRotateSpeed = 0.35;
     controls.rotateSpeed = 0.55;
-    renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
+    // A capped pixel ratio keeps the globe responsive on high-density displays.
+    renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 1.5));
     renderer.setClearColor(0x050505, 0);
-    renderer.domElement.style.cssText = 'display:block;width:100%;height:100%;touch-action:none;outline:none';
+    renderer.domElement.style.cssText = 'display:block;width:100%;height:100%;touch-action:none;outline:none;cursor:grab';
     renderer.domElement.tabIndex = 0;
-    renderer.domElement.setAttribute('aria-label', 'Interactive globe. Drag to rotate, scroll to zoom. Arrow keys rotate; plus and minus zoom. Use endpoint and country menus for keyboard selection.');
+    renderer.domElement.setAttribute('role', 'application');
+    renderer.domElement.setAttribute('aria-label', 'Interactive endpoint globe');
+    renderer.domElement.setAttribute('aria-describedby', 'globe-instructions');
+    renderer.domElement.setAttribute('aria-keyshortcuts', 'ArrowLeft ArrowRight ArrowUp ArrowDown + - Home 0');
     host.appendChild(renderer.domElement);
     const resize = () => {
       const width = Math.max(1, host.clientWidth);
@@ -331,6 +348,7 @@ export const Globe3D: React.FC<Globe3DProps> = (props) => {
       if (pointerStart) { moved = true; return; }
       pointerStart = { x: event.clientX, y: event.clientY, id: event.pointerId }; moved = false;
       setHovered('');
+      renderer.domElement.style.cursor = 'grabbing';
       renderer.domElement.setPointerCapture(event.pointerId);
     };
     const pointerMove = (event: PointerEvent) => {
@@ -343,22 +361,27 @@ export const Globe3D: React.FC<Globe3DProps> = (props) => {
       setHovered(label);
       renderer.domElement.style.cursor = label ? 'pointer' : 'grab';
     };
+    const clearSelection = () => {
+      latest.current.onSelectNode(null);
+      latest.current.onSelectCountry(null);
+    };
     const pointerUp = (event: PointerEvent) => {
       if (!pointerStart || event.pointerId !== pointerStart.id) return;
       const dragged = moved || Math.hypot(event.clientX - pointerStart.x, event.clientY - pointerStart.y) > 5;
       pointerStart = null;
       if (renderer.domElement.hasPointerCapture(event.pointerId)) renderer.domElement.releasePointerCapture(event.pointerId);
+      renderer.domElement.style.cursor = 'grab';
       if (dragged) return;
       const { node, coordinate } = hitAt(event);
       if (node) latest.current.onSelectNode(node);
       else if (coordinate) {
         const country = globeCountry(countries, coordinate.lat, coordinate.lng);
         if (country) latest.current.onSelectCountry(countrySelection(country));
-        else latest.current.onSelectNode(null);
-      } else latest.current.onSelectNode(null);
+        else clearSelection();
+      } else clearSelection();
     };
-    const pointerCancel = () => { pointerStart = null; setHovered(''); };
-    const pointerLeave = () => { setHovered(''); };
+    const pointerCancel = () => { pointerStart = null; renderer.domElement.style.cursor = 'grab'; setHovered(''); };
+    const pointerLeave = () => { if (!pointerStart) renderer.domElement.style.cursor = 'grab'; setHovered(''); };
     const keyboard = (event: KeyboardEvent) => {
       const spherical = new THREE.Spherical().setFromVector3(camera.position);
       switch (event.key) {
@@ -368,6 +391,16 @@ export const Globe3D: React.FC<Globe3DProps> = (props) => {
         case 'ArrowDown': spherical.phi += 0.12; break;
         case '+': case '=': spherical.radius *= 0.9; break;
         case '-': spherical.radius *= 1.1; break;
+        case '0': case 'Home':
+          camera.position.copy(globePoint(DEFAULT_CAMERA_POSITION.lat, DEFAULT_CAMERA_POSITION.lng, DEFAULT_CAMERA_POSITION.distance));
+          controls.target.set(0, 0, 0);
+          controls.update();
+          event.preventDefault();
+          return;
+        case 'Escape':
+          clearSelection();
+          event.preventDefault();
+          return;
         default: return;
       }
       event.preventDefault();
@@ -380,6 +413,13 @@ export const Globe3D: React.FC<Globe3DProps> = (props) => {
     const contextLost = (event: Event) => { event.preventDefault(); contextAvailable = false; setUnavailable(true); };
     const contextRestored = () => { contextAvailable = true; setUnavailable(false); };
     const canvas = renderer.domElement;
+    const prefersReducedMotion = window.matchMedia?.('(prefers-reduced-motion: reduce)').matches ?? false;
+    const visibilityChanged = () => {
+      // The animation loop remains scheduled so it can resume without rebuilding
+      // WebGL resources, but hidden tabs do not spend time rendering frames.
+      if (document.visibilityState === 'hidden') controls.autoRotate = false;
+    };
+    document.addEventListener('visibilitychange', visibilityChanged);
     let geographyDirection = new THREE.Vector3();
     let geographyTime = -Infinity;
     const refreshGeography = (time: number) => {
@@ -442,10 +482,12 @@ export const Globe3D: React.FC<Globe3DProps> = (props) => {
     const animate = (time: number) => {
       const delta = Math.min((time - lastTime) / 1000, 0.1);
       lastTime = time;
-      controls.autoRotate = latest.current.isAutoRotate;
-      controls.update(delta);
-      refreshGeography(time);
-      if (contextAvailable) renderer.render(scene, camera);
+      controls.autoRotate = latest.current.isAutoRotate && !prefersReducedMotion && document.visibilityState !== 'hidden';
+      if (document.visibilityState !== 'hidden') {
+        controls.update(delta);
+        refreshGeography(time);
+        if (contextAvailable) renderer.render(scene, camera);
+      }
       frame = requestAnimationFrame(animate);
     };
     frame = requestAnimationFrame(animate);
@@ -460,6 +502,7 @@ export const Globe3D: React.FC<Globe3DProps> = (props) => {
       canvas.removeEventListener('keydown', keyboard);
       canvas.removeEventListener('webglcontextlost', contextLost);
       canvas.removeEventListener('webglcontextrestored', contextRestored);
+      document.removeEventListener('visibilitychange', visibilityChanged);
       controls.dispose();
       controls.removeEventListener('change', onControlsChange);
       [globe, endpoints, arcs, selection, regionMarkers, cityMarkers].forEach(disposeGroup);
@@ -508,10 +551,17 @@ export const Globe3D: React.FC<Globe3DProps> = (props) => {
     if (!ready || !runtime) return;
     disposeGroup(runtime.selection);
     if (selectedNode && validCoordinate(selectedNode)) {
+      const point = globePoint(selectedNode.lat, selectedNode.lng, 1.03);
+      const normal = point.clone().normalize();
       const ring = new THREE.Mesh(new THREE.RingGeometry(0.023, 0.03, 32), new THREE.MeshBasicMaterial({ color: '#ffffff', side: THREE.DoubleSide }));
-      ring.position.copy(globePoint(selectedNode.lat, selectedNode.lng, 1.03));
-      ring.quaternion.setFromUnitVectors(new THREE.Vector3(0, 0, 1), ring.position.clone().normalize());
-      runtime.selection.add(ring);
+      ring.name = 'selected-endpoint-ring';
+      ring.position.copy(point);
+      ring.quaternion.setFromUnitVectors(new THREE.Vector3(0, 0, 1), normal);
+      const outerRing = new THREE.Mesh(new THREE.RingGeometry(0.034, 0.037, 32), new THREE.MeshBasicMaterial({ color: '#8a8a8a', side: THREE.DoubleSide, transparent: true, opacity: 0.8 }));
+      outerRing.name = 'selected-endpoint-boundary';
+      outerRing.position.copy(point);
+      outerRing.quaternion.copy(ring.quaternion);
+      runtime.selection.add(ring, outerRing);
     }
     if (selectedCountry) {
       const country = countries.find(item => item.iso === selectedCountry.iso);
@@ -522,43 +572,75 @@ export const Globe3D: React.FC<Globe3DProps> = (props) => {
     }
   }, [ready, selectedNode, selectedCountry]);
 
-  const selectedLat = selectedNode?.lat;
-  const selectedLng = selectedNode?.lng;
+  const selectedFocusLat = selectedNode?.lat ?? selectedCountry?.lat;
+  const selectedFocusLng = selectedNode?.lng ?? selectedCountry?.lng;
   useEffect(() => {
     const runtime = runtimeRef.current;
-    if (selectedLat === undefined || selectedLng === undefined) return;
-    const point = { lat: selectedLat, lng: selectedLng };
+    const focusLat = selectedFocusLat;
+    const focusLng = selectedFocusLng;
+    if (focusLat === undefined || focusLng === undefined) return;
+    const point = { lat: focusLat, lng: focusLng };
     if (!ready || !runtime || !validCoordinate(point)) return;
     runtime.camera.position.copy(globePoint(point.lat, point.lng, runtime.camera.position.length()));
     runtime.controls.update();
-  }, [ready, selectedLat, selectedLng]);
+  }, [ready, selectedFocusLat, selectedFocusLng]);
 
-  const status = captureStatus === 'RUNNING' || captureStatus === 'LIVE' ? 'LIVE' : captureStatus || 'UNAVAILABLE';
-  const selectClass = 'min-w-0 max-w-44 rounded border border-[#525252] bg-[#111111] px-2 py-1 text-[10px] text-neutral-200 outline-none focus:border-[#d4d4d4]';
+  const moveCamera = (factor: number) => {
+    const runtime = runtimeRef.current;
+    if (!runtime) return;
+    runtime.camera.position.setLength(THREE.MathUtils.clamp(runtime.camera.position.length() * factor, MIN_CAMERA_DISTANCE, MAX_CAMERA_DISTANCE));
+    runtime.controls.update();
+  };
+  const resetCamera = () => {
+    const runtime = runtimeRef.current;
+    if (!runtime) return;
+    runtime.camera.position.copy(globePoint(DEFAULT_CAMERA_POSITION.lat, DEFAULT_CAMERA_POSITION.lng, DEFAULT_CAMERA_POSITION.distance));
+    runtime.controls.target.set(0, 0, 0);
+    runtime.controls.update();
+  };
+
+  const status = captureDisplayState(captureStatus || captureMetrics.status);
+  const telemetryAvailable = telemetryStateHasValues(status);
+  const telemetrySource = status === 'STALE' ? 'LAST NATIVE CAPTURE SNAPSHOT' : telemetryAvailable ? 'NATIVE CAPTURE OBSERVATION' : 'NO NATIVE CAPTURE SNAPSHOT';
+  const flowDestinations = activeFlows.filter(node => validCoordinate(node) && node.activeFlowsCount > 0).length;
+  const flowTotal = activeFlows.reduce((total, node) => total + (Number.isFinite(node.activeFlowsCount) && node.activeFlowsCount > 0 ? node.activeFlowsCount : 0), 0);
+  const selectClass = 'min-w-0 w-full sm:max-w-44 rounded border border-[#525252] bg-[#111111] px-2 py-1 text-[10px] text-neutral-200 outline-none focus:border-[#d4d4d4]';
   return (
-    <div className="absolute inset-0 overflow-hidden bg-[#050505] font-mono" style={{ backgroundImage: 'radial-gradient(ellipse at center, #29292940 0%, #050505 72%)' }}>
+    <div className="absolute inset-0 overflow-hidden bg-[#050505] font-mono" aria-label="Endpoint globe workspace">
       <div ref={hostRef} className="absolute inset-0" style={{ visibility: unavailable ? 'hidden' : 'visible' }} />
-      <div className="pointer-events-none absolute left-4 top-4 text-[10px] leading-5 text-neutral-400">
-        <div className="tracking-[0.22em] text-white">GEOINT / EARTH</div>
-        <div>{validNodes.length} GEOLOCATED ENDPOINTS</div>
-        <div>{validCoordinate(hub) ? 'CAPTURE HUB LOCATED' : 'HUB LOCATION UNAVAILABLE'}</div>
+      <div className="pointer-events-none absolute inset-x-3 top-3 flex flex-col items-stretch gap-2 sm:inset-x-4 sm:top-4 sm:flex-row sm:items-start sm:justify-between">
+        <section aria-label="Globe provenance" className="max-w-full rounded border border-[#303030] bg-[#090909dd] px-3 py-2 text-[10px] leading-5 text-neutral-400 shadow-lg sm:max-w-[42%]">
+          <div className="tracking-[0.22em] text-white">GEOINT / EARTH</div>
+          <div>{validNodes.length} OBSERVED ENDPOINT{validNodes.length === 1 ? '' : 'S'}</div>
+          <div>{flowDestinations} FLOW DESTINATION{flowDestinations === 1 ? '' : 'S'} · {flowTotal.toLocaleString()} ACTIVE FLOWS</div>
+          <div>{validCoordinate(hub) ? 'NATIVE CAPTURE HUB LOCATED' : 'NATIVE HUB LOCATION UNAVAILABLE'}</div>
+          <div className="text-neutral-500">REFERENCE LAYER: BUNDLED NATURAL EARTH DATA</div>
+        </section>
+        <section aria-label="Capture telemetry" className="max-w-full rounded border border-[#303030] bg-[#090909dd] px-3 py-2 text-left text-[10px] leading-5 text-neutral-400 shadow-lg sm:max-w-[42%] sm:text-right">
+          <div className="text-[9px] tracking-[0.16em] text-neutral-500">CAPTURE TELEMETRY</div>
+          <div className="text-white">{status}</div>
+          <div>{telemetryMetric(captureMetrics.packets_per_sec, 1, telemetryAvailable)} pkt/s</div>
+          <div>{telemetryMetric(captureMetrics.bytes_per_sec, 0, telemetryAvailable)} B/s</div>
+          <div>{telemetryMetric(captureMetrics.packets_captured, undefined, telemetryAvailable)} pkts · {telemetryMetric(captureMetrics.bytes_captured, undefined, telemetryAvailable)} B</div>
+          <div className="text-[9px] text-neutral-500">{telemetrySource}</div>
+        </section>
       </div>
-      <div className="pointer-events-none absolute left-1/2 top-4 -translate-x-1/2 rounded border border-[#525252] bg-black/70 px-2 py-1 text-[10px] tracking-[0.18em] text-white" aria-label={`Zoom level ${zoomLevel}`}>
-        {zoomLevel} <span className="ml-2 tracking-normal text-neutral-500">● boundaries · {zoomLevel === 'WORLD' ? 'zoom for regions' : zoomLevel === 'REGIONS' ? 'city points at closer zoom' : 'bundled city/region data'}</span>
+      <div className="pointer-events-none absolute left-1/2 top-32 max-w-[calc(100%-2rem)] -translate-x-1/2 truncate rounded border border-[#525252] bg-black/80 px-2 py-1 text-[10px] tracking-[0.18em] text-white shadow-lg sm:top-4 sm:max-w-[48%]" aria-label={`Zoom level ${zoomLevel}`}>
+        {zoomLevel} <span className="ml-2 tracking-normal text-neutral-500">· {zoomLevel === 'WORLD' ? 'zoom for regions' : zoomLevel === 'REGIONS' ? 'zoom closer for cities' : 'bundled city/region data'}</span>
       </div>
-      <div className="pointer-events-none absolute right-4 top-4 text-right text-[10px] leading-5 text-neutral-400" aria-label="Capture telemetry">
-        <div className="text-white">{status}</div>
-        <div>{metric(captureMetrics.packets_per_sec, 1)} pkt/s</div>
-        <div>{metric(captureMetrics.bytes_per_sec, 0)} B/s</div>
-        <div>{metric(captureMetrics.packets_captured)} pkts · {metric(captureMetrics.bytes_captured)} B</div>
-      </div>
+      <p id="globe-instructions" className="sr-only">Drag to rotate the globe. Scroll, plus, and minus zoom. Arrow keys rotate. Home or zero resets the view. Escape clears the current selection. Select an observed endpoint or reference country from the controls below.</p>
       {unavailable && <div className="absolute inset-x-6 top-1/3 text-center text-xs text-white" role="status">
         <p className="mb-2 tracking-widest">3D VIEW UNAVAILABLE</p>
         <p className="text-neutral-400">WebGL is unavailable or its context was lost. Use the menus below to inspect endpoints and countries.</p>
       </div>}
-      {hovered && !unavailable && <div className="pointer-events-none absolute bottom-24 left-1/2 max-w-[90%] -translate-x-1/2 truncate rounded border border-[#737373] bg-[#111111]/95 px-3 py-2 text-[11px] text-white">{hovered}</div>}
-      <div className="absolute inset-x-4 bottom-4 flex flex-wrap items-end justify-between gap-3">
-        <div className="flex flex-wrap gap-2">
+      {hovered && !unavailable && <div className="pointer-events-none absolute bottom-36 left-1/2 max-w-[90%] -translate-x-1/2 truncate rounded border border-[#737373] bg-[#111111]/95 px-3 py-2 text-[11px] text-white sm:bottom-24">{hovered}</div>}
+      <div className="absolute right-3 top-24 flex gap-1 rounded border border-[#3c3c3c] bg-[#0b0b0be8] p-1 shadow-lg sm:right-4 sm:top-20" aria-label="Globe controls">
+        <button type="button" aria-label="Zoom in" title="Zoom in" onClick={() => moveCamera(0.82)} className="h-7 w-7 rounded text-sm text-neutral-200 hover:bg-[#252525] focus-visible:outline focus-visible:outline-1 focus-visible:outline-white">+</button>
+        <button type="button" aria-label="Zoom out" title="Zoom out" onClick={() => moveCamera(1.22)} className="h-7 w-7 rounded text-sm text-neutral-200 hover:bg-[#252525] focus-visible:outline focus-visible:outline-1 focus-visible:outline-white">−</button>
+        <button type="button" aria-label="Reset globe view" title="Reset globe view (Home)" onClick={resetCamera} className="rounded px-2 text-[9px] tracking-wider text-neutral-300 hover:bg-[#252525] focus-visible:outline focus-visible:outline-1 focus-visible:outline-white">RESET</button>
+      </div>
+      <div className="absolute inset-x-3 bottom-3 flex max-w-[calc(100%-1.5rem)] flex-col items-stretch gap-3 sm:inset-x-4 sm:bottom-4 sm:flex-row sm:items-end sm:justify-between sm:gap-3">
+        <div className="flex min-w-0 flex-col gap-2 sm:flex-row">
           <label className="flex flex-col gap-1 text-[9px] tracking-widest text-neutral-500">ENDPOINT
             <select aria-label="Select endpoint" className={selectClass} value={selectedNode?.id ?? ''} onChange={event => props.onSelectNode(validNodes.find(node => node.id === event.target.value) ?? null)}>
               <option value="">{validNodes.length ? 'Select endpoint' : 'No geolocated endpoints'}</option>
@@ -575,10 +657,10 @@ export const Globe3D: React.FC<Globe3DProps> = (props) => {
             </select>
           </label>
         </div>
-        <div className="pointer-events-none text-right text-[9px] leading-4 tracking-wider text-neutral-500">
+        <div className="pointer-events-none max-w-full text-left text-[9px] leading-4 tracking-wider text-neutral-500 sm:text-right">
           <div>{isAutoRotate ? 'ROTATION ACTIVE' : 'ROTATION PAUSED'}</div>
-          <div>DRAG TO ORBIT · SCROLL TO ZOOM</div>
-          <div>NATURAL EARTH · GEOGRAPHIC BOUNDARIES</div>
+          <div>DRAG TO ORBIT · SCROLL / +/- TO ZOOM · HOME TO RESET</div>
+          <div>NATIVE ENDPOINTS · REFERENCE GEOGRAPHY ONLY</div>
         </div>
       </div>
     </div>
