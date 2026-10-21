@@ -8,19 +8,32 @@ supplementary groups, capabilities, and writable directories. No host files are
 read and the target has no shell, command runner, credentials, uploads, or
 external network client.
 
-## Walkthrough
+## START HERE: route map
 
-1. Open the overview and note the service's stated job.
-2. Read `/api/service` and record the runtime user, supplementary groups,
+This is a guided permission review, not a shell exercise. The evidence is
+simulated and fixed, and the target never reads host files or executes your
+input.
+
+1. **Open `/`** — read the worker's stated job and follow the START HERE cards.
+2. **Open `/api/service`** — record the user, supplementary groups,
    capabilities, and writable paths.
-3. Read `/api/files`; for each sensitive-looking path, interpret the owner,
-   group, and `mode` together. Pay particular attention to who can read or
-   write the backup.
-4. Compare the access inventory with the worker's job. Identify the group and
-   file exposure that are broader than necessary, then write down a least-
-   privilege remediation (identity, groups, modes, and paths).
-5. Submit the recovered flag as JSON to `POST /api/submit` with a body of
-   `{"flag":"..."}`. The server validates it against the run's `config.json`.
+3. **Open `/api/files`** — read owner, group, and `mode` together. Pay special
+   attention to who can read or write the backup.
+4. **Use `/review` as your worksheet** — compare each access grant with the
+   worker's job. Write the smallest least-privilege remediation you can.
+5. **Confirm, then submit** — consult `/api/config` and `/api/findings` after
+   forming your conclusion. Submit JSON to `POST /api/submit` with
+   `{"flag":"..."}`.
+
+### Safe hints
+
+- For a mode such as `0644`, read the three classes in order: owner, group,
+  then everyone else. Do not infer access from a filename alone.
+- Separate **required** access from **convenient** or **unrelated** access.
+- The findings endpoint is a confirmation aid, not a substitute for comparing
+  the manifest and inventory yourself.
+- Stay on the fixed routes. There is no shell, upload, arbitrary file reader,
+  or command runner to discover.
 
 The walkthrough intentionally does not include the flag or the completed
 finding set. `/api/findings` contains review notes to consult after forming

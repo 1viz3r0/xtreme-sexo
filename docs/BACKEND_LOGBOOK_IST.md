@@ -1365,3 +1365,115 @@ STARTED: linux desktop build; full packaged application.
 ### 2026-10-07 10:57:51 IST (+05:30)
 
 STARTED: linux desktop build; full packaged application.
+
+### 2026-10-20 23:44:47 IST (+05:30)
+
+STARTED: linux desktop build; full packaged application.
+
+### 2026-10-20 23:49:41 IST (+05:30)
+
+FAILED: linux desktop build step node (exit 1). Inspect the build output for details.
+
+### 2026-10-21 00:36:49 IST (+05:30)
+
+STARTED: linux desktop build; full packaged application.
+
+### 2026-10-21 00:41:52 IST (+05:30)
+
+FAILED: linux desktop build step node (exit 1). Inspect the build output for details.
+
+### 2026-10-21 01:38:55 IST (+05:30)
+
+STARTED: linux desktop build; full packaged application.
+
+### 2026-10-21 01:43:22 IST (+05:30)
+
+FAILED: linux desktop build step node (exit 1). Inspect the build output for details.
+
+### 2026-10-21 02:25:00 IST (+05:30)
+
+STARTED: linux desktop build; full packaged application.
+
+### 2026-10-21 02:30:33 IST (+05:30)
+
+FAILED: linux desktop build step node (exit 1). Inspect the build output for details.
+
+### 2026-10-21 02:53:29 IST (+05:30)
+
+STARTED: linux desktop build; full packaged application.
+
+### 2026-10-21 02:59:14 IST (+05:30)
+
+FAILED: linux desktop build step node (exit 1). Inspect the build output for details.
+
+### 2026-10-21 12:44:30 IST (+05:30)
+
+STARTED: linux desktop build; full packaged application.
+
+### 2026-10-21 12:44:30 IST (+05:30)
+
+FAILED: linux desktop build step cargo (exit 127). Inspect the build output for details.
+
+### 2026-10-21 13:59:04 IST (+05:30)
+
+STARTED: linux desktop build; full packaged application.
+
+### 2026-10-21 13:59:04 IST (+05:30)
+
+FAILED: linux desktop build step cargo (exit 101). Inspect the build output for details.
+
+### 2026-10-21 14:33:35 IST (+05:30)
+
+STARTED: linux desktop build; full packaged application.
+
+### 2026-10-21 14:33:35 IST (+05:30)
+
+FAILED: linux desktop build step cargo (exit 101). Inspect the build output for details.
+
+### 2026-10-21 14:40:53 IST (+05:30)
+
+STARTED: linux desktop build; full packaged application.
+
+### 2026-10-21 14:46:00 IST (+05:30)
+
+FAILED: linux desktop build step cargo (exit 101). Inspect the build output for details.
+
+### 2026-10-21 15:00:10 IST (+05:30)
+
+STARTED: linux desktop build; full packaged application.
+
+### 2026-10-21 15:13:18 IST (+05:30)
+
+FAILED: linux desktop build step node (exit 1). Inspect the build output for details.
+
+### 2026-10-21 16:53:47 IST (+05:30)
+
+STARTED: linux desktop build; full packaged application.
+
+### 2026-10-21 17:02:12 IST (+05:30)
+
+COMPLETED: linux desktop build and artifact staging. See releases/linux/ and its manifest for exact files and checksums. Runtime validation is a separate check.
+
+### 2026-10-21 23:56:54 IST (+05:30)
+
+STARTED: linux desktop build; full packaged application.
+
+### 2026-10-22 01:29:51 IST (+05:30)
+
+STARTED: linux desktop build; full packaged application.
+
+### 2026-10-22 01:29:51 IST (+05:30)
+
+FAILED: linux desktop build step cargo (exit 101). Inspect the build output for details.
+
+### 2026-10-22 01:33:43 IST (+05:30)
+
+STARTED: linux desktop build; full packaged application.
+
+### 2026-10-22 01:37:58 IST (+05:30)
+
+STARTED: linux desktop build; full packaged application.
+
+### 2026-10-22 01:42:16 IST (+05:30)
+
+COMPLETED: linux desktop build and artifact staging. See releases/linux/ and its manifest for exact files and checksums. Runtime validation is a separate check.

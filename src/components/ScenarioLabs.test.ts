@@ -23,11 +23,13 @@ function mock() {
 }
 test('fresh practical room presents an honest guided Web Exposure briefing', () => {
   const markup = renderToStaticMarkup(createElement(ScenarioLabs, { runtimeAdapter: mock().adapter }))
-  assert.match(markup, /Mastering Scan Buddy/); assert.match(markup, /Mastering Capture Buddy/); assert.match(markup, /Start tutorial/)
-  assert.match(markup, /Web Exposure/); assert.match(markup, /Ready to provision/); assert.match(markup, /Planned/)
-  for (const label of ['Web', 'Network', 'Linux', 'Forensics', 'Beginner', 'Intermediate', 'Advanced']) assert.match(markup, new RegExp(label))
-  for (const label of ['Investigation objective', 'Target surface', '/robots.txt', '/api/releases', 'Investigation checklist', 'Evidence notes', 'Challenge guidance']) assert.match(markup, new RegExp(label.replace('/', '\\/')))
-  assert.doesNotMatch(markup, /Working|Red Team|Blue Team|red-|blue-|Purple|asset-aurora|NET0ZE\{/)
+   assert.match(markup, /Mastering Scan Buddy/); assert.match(markup, /Mastering Capture Buddy/); assert.match(markup, /Learning tutorials/); assert.match(markup, /Start tutorial/)
+   assert.match(markup, /Practice the investigation, one room at a time/); assert.match(markup, /Browse CTF catalog/); assert.match(markup, /Open tool tutorials/); assert.match(markup, /Beginner onboarding/)
+    assert.match(markup, /id="ctf-catalog"/); assert.match(markup, /CTF catalog/); assert.match(markup, /Room index/); assert.match(markup, /ROUTE MAP/); assert.match(markup, /New beginner rooms/); assert.match(markup, /id="first-contact"|ROOM \/\/ first-contact/); assert.match(markup, /id="service-signals"|ROOM \/\/ service-signals/); assert.match(markup, /id="learning-tutorials"/); assert.match(markup, /Web Exposure/); assert.match(markup, /First Contact/); assert.match(markup, /Service Signals/); assert.match(markup, /ROOM \/\/ first-contact/); assert.match(markup, /ROOM \/\/ service-signals/); assert.match(markup, /Ready to provision/); assert.match(markup, /Planned/); assert.match(markup, /Practical CTFs/)
+    for (const label of ['Web', 'Network', 'Linux', 'Forensics', 'Easy', 'Medium', 'Hard']) assert.match(markup, new RegExp(label))
+    for (const id of ['web-exposure', 'network-enumeration', 'linux-permissions', 'header-trail', 'protocol-archive', 'first-contact', 'service-signals', 'forensics-timeline']) assert.match(markup, new RegExp(`ROOM \\/\\/ ${id}`))
+   for (const label of ['Investigation objective', 'Target surface', '/robots.txt', '/api/releases', 'Investigation checklist', 'Evidence notes', 'Challenge guidance', 'Walkthrough prompts']) assert.match(markup, new RegExp(label.replace('/', '\\/')))
+   assert.doesNotMatch(markup, /Working|Red Team|Blue Team|red-|blue-|Purple|asset-aurora|NET0ZE\{|emerald-|amber-|fuchsia-|violet-|cyan-/)
 })
 test('setup guidance precedes confirmed start and backend-verified flag completion', async () => {
   const fixture = mock()
@@ -36,7 +38,7 @@ test('setup guidance precedes confirmed start and backend-verified flag completi
     assert.match(host.textContent ?? '', /28 or newer/)
     assert.doesNotMatch(host.textContent ?? '', /Working/)
     const click = async (text: string) => { const b = [...host.querySelectorAll('button')].find(item => item.textContent === text) as HTMLButtonElement; assert.equal(b.disabled, false); await act(async () => b.click()) }
-     await click('Start selected room')
+     await click('Start selected CTF')
     assert.ok(fixture.calls.some(call => JSON.stringify(call) === JSON.stringify(['lab_runtime_start', { labId: 'web-exposure' }])))
     assert.match(host.textContent ?? '', /Working/)
     assert.match(host.textContent ?? '', /curl -i http:\/\/127.0.0.1:42000\//)
@@ -59,25 +61,25 @@ test('setup guidance precedes confirmed start and backend-verified flag completi
     assert.ok(fixture.calls.some(call => JSON.stringify(call) === JSON.stringify(['lab_runtime_action', { action: { action: 'submit_flag', flag: 'my-discovered-value' } }])))
     assert.match(host.textContent ?? '', /Completed — flag accepted/)
     assert.equal(input.value, '')
-    await click('Open target'); await click('Reset'); await click('Stop')
+     await click('Open target'); await click('Reset CTF'); await click('Stop CTF')
     assert.equal(host.querySelector('[aria-label="Target URL"]'), null)
     assert.doesNotMatch(host.textContent ?? '', /Working/)
   })
 })
-test('category and level filters expose planned labs and empty results', async () => {
+test('category and stage filters expose planned CTFs and empty results', async () => {
   await mounted(mock().adapter, async host => {
     const change = async (label: string, value: string) => { const select = host.querySelector(`[aria-label="${label}"]`) as HTMLSelectElement; await act(async () => { select.value = value; select.dispatchEvent(new Event('change', { bubbles: true })) }) }
-    assert.equal(host.querySelectorAll('[data-topic-id]').length, 4)
+     assert.equal(host.querySelectorAll('[data-topic-id]').length, 8)
     await change('Category', 'Linux'); assert.equal(host.querySelectorAll('[data-topic-id]').length, 1)
      assert.match(host.querySelector('[data-topic-id]')?.textContent ?? '', /Ready to provision/)
-    await change('Level', 'Beginner'); assert.equal(host.querySelectorAll('[data-topic-id]').length, 0)
-    assert.match(host.textContent ?? '', /No labs match/)
+      await change('Stage', 'Easy'); assert.equal(host.querySelectorAll('[data-topic-id]').length, 0)
+      assert.match(host.textContent ?? '', /No CTFs match/)
   })
 })
 test('start returning setup-required never fabricates a running target', async () => {
   const adapter = { ...mock().adapter, start: async () => setup }
   await mounted(adapter, async host => {
-     await act(async () => ([...host.querySelectorAll('button')].find(item => item.textContent === 'Start selected room') as HTMLButtonElement).click())
+      await act(async () => ([...host.querySelectorAll('button')].find(item => item.textContent === 'Start selected CTF') as HTMLButtonElement).click())
     assert.match(host.textContent ?? '', /Setup required/)
     assert.doesNotMatch(host.textContent ?? '', /Working/)
     assert.equal(host.querySelector('[aria-label="Target URL"]'), null)

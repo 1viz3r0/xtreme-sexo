@@ -14,7 +14,8 @@ from urllib.parse import urlsplit
 
 def make_handler(root):
     config = json.loads((root / "config.json").read_text(encoding="utf-8"))
-    if not isinstance(config.get("flag"), str) or not config["flag"].startswith("NET0ZE{"):
+    if (not isinstance(config.get("flag"), str) or not config["flag"].startswith("NET0ZE{")
+            or not config["flag"].endswith("}") or len(config["flag"]) > 256):
         raise ValueError("per-run deployment config is required")
     archive = io.BytesIO()
     with zipfile.ZipFile(archive, "w", zipfile.ZIP_DEFLATED) as backup:

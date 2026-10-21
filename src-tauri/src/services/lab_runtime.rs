@@ -20,6 +20,14 @@ const NETWORK_DOCKERFILE: &str = include_str!("../../../labs/network-enumeration
 const NETWORK_SERVER: &str = include_str!("../../../labs/network-enumeration/server.py");
 const LINUX_DOCKERFILE: &str = include_str!("../../../labs/linux-permissions/Dockerfile");
 const LINUX_SERVER: &str = include_str!("../../../labs/linux-permissions/server.py");
+const HEADER_DOCKERFILE: &str = include_str!("../../../labs/header-trail/Dockerfile");
+const HEADER_SERVER: &str = include_str!("../../../labs/header-trail/server.py");
+const PROTOCOL_DOCKERFILE: &str = include_str!("../../../labs/protocol-archive/Dockerfile");
+const PROTOCOL_SERVER: &str = include_str!("../../../labs/protocol-archive/server.py");
+const FIRST_CONTACT_DOCKERFILE: &str = include_str!("../../../labs/first-contact/Dockerfile");
+const FIRST_CONTACT_SERVER: &str = include_str!("../../../labs/first-contact/server.py");
+const SERVICE_SIGNALS_DOCKERFILE: &str = include_str!("../../../labs/service-signals/Dockerfile");
+const SERVICE_SIGNALS_SERVER: &str = include_str!("../../../labs/service-signals/server.py");
 
 const MAX_PROXY_CONNECTIONS: usize = 8;
 const MAX_PROXY_REQUEST: usize = 64 * 1024;
@@ -225,6 +233,10 @@ fn create_run(host: String, lab_id: &str) -> Result<Run, String> {
             "web-exposure" => (DOCKERFILE, SERVER, serde_json::json!({"application":"Harborline Dispatch","environment":"training","backup_note":"Deployment mistakenly left its support backup public."})),
             "network-enumeration" => (NETWORK_DOCKERFILE, NETWORK_SERVER, serde_json::json!({"application":"Northstar Yard","site":"Northstar Yard","environment":"training"})),
             "linux-permissions" => (LINUX_DOCKERFILE, LINUX_SERVER, serde_json::json!({"application":"Ledger Sync Permission Review","environment":"training"})),
+            "header-trail" => (HEADER_DOCKERFILE, HEADER_SERVER, serde_json::json!({"application":"Signal Kiosk","environment":"training"})),
+            "protocol-archive" => (PROTOCOL_DOCKERFILE, PROTOCOL_SERVER, serde_json::json!({"application":"Copperline Protocol Archive","environment":"training"})),
+            "first-contact" => (FIRST_CONTACT_DOCKERFILE, FIRST_CONTACT_SERVER, serde_json::json!({"application":"First Contact","environment":"training"})),
+            "service-signals" => (SERVICE_SIGNALS_DOCKERFILE, SERVICE_SIGNALS_SERVER, serde_json::json!({"application":"Service Signals","environment":"training"})),
             _ => return Err("Unknown practical lab".into()),
         };
         config["flag"] = serde_json::Value::String(flag.clone());
@@ -367,7 +379,7 @@ impl LabRuntimeState {
         Self::start_locked(&mut inner, lab_id)
     }
     fn start_locked(inner: &mut Inner, lab_id: String) -> Result<LabRuntimeStatus, String> {
-        if !["web-exposure", "network-enumeration", "linux-permissions"].contains(&lab_id.as_str()) { return Err("Unknown practical lab".into()); }
+        if !["web-exposure", "network-enumeration", "linux-permissions", "header-trail", "protocol-archive", "first-contact", "service-signals"].contains(&lab_id.as_str()) { return Err("Unknown practical lab".into()); }
         if inner.run.is_some() { return Err("Stop the current lab or finish its cleanup before starting another".into()); }
         let host = match check_engine(|host, args| docker(host, args, Duration::from_secs(10))) {
             Ok(host) => host,
@@ -378,7 +390,7 @@ impl LabRuntimeState {
             Err(message) => { inner.status = LabRuntimeStatus { lab_id: Some(lab_id), phase: "error", message, ..LabRuntimeStatus::default() }; return Ok(inner.status.clone()); }
         };
         match launch(&mut run) {
-            Ok(()) => { let message = match lab_id.as_str() { "network-enumeration" => "Northstar Yard is ready. Map the service registry, read the maintenance handoff, and recover the export flag.", "linux-permissions" => "Ledger Sync is ready. Review the permission evidence, identify the least-privilege issue, and submit the flag.", _ => "Harborline Dispatch is ready. Discover its exposed backup, recover the deployment config, and submit the flag." }; inner.status = LabRuntimeStatus { running: true, lab_id: Some(lab_id), phase: "running", target_url: run.url.clone(), message: message.into(), runtime: "docker", completed: false }; inner.run = Some(run); }
+            Ok(()) => { let message = match lab_id.as_str() { "network-enumeration" => "Northstar Yard is ready. Map the service registry, read the maintenance handoff, and recover the export value.", "linux-permissions" => "Ledger Sync is ready. Review the permission evidence, identify the least-privilege issue, and submit the recovered value.", "header-trail" => "Signal Kiosk is ready. Follow the release bulletin and recover the signed training value.", "protocol-archive" => "Copperline is ready. Follow the protocol sequence and decode the fixed archive record.", "first-contact" => "First Contact is ready. Follow the clue, open the welcome note, and submit the recovered value.", "service-signals" => "Service Signals is ready. Read the inventory, follow its maintenance note, and submit the recovered value.", _ => "Harborline Dispatch is ready. Discover its exposed backup, recover the deployment config, and submit the recovered value." }; inner.status = LabRuntimeStatus { running: true, lab_id: Some(lab_id), phase: "running", target_url: run.url.clone(), message: message.into(), runtime: "docker", completed: false }; inner.run = Some(run); }
             Err(message) => { let clean = cleanup(&mut run); inner.status = LabRuntimeStatus { lab_id: Some(lab_id), phase: "error", message: if clean { message } else { format!("{message} Owned-resource cleanup remains pending; use Stop after repairing Docker access.") }, ..LabRuntimeStatus::default() }; if !clean { inner.run = Some(run); } }
         }
         Ok(inner.status.clone())
@@ -591,7 +603,7 @@ mod tests {
     #[test]
     #[ignore = "Requires Docker >=28; verifies every provisioned room can start"]
     fn docker_all_available_rooms_start_and_stop() {
-        for lab_id in ["web-exposure", "network-enumeration", "linux-permissions"] {
+        for lab_id in ["web-exposure", "network-enumeration", "linux-permissions", "header-trail", "protocol-archive", "first-contact", "service-signals"] {
             let state = LabRuntimeState::default();
             let status = state.start(lab_id.into()).unwrap();
             assert!(status.running, "{lab_id}: {}", status.message);

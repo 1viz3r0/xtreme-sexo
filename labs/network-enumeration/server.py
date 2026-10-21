@@ -25,18 +25,48 @@ def load_config(root: Path) -> dict:
 def make_handler(root: Path):
     config = load_config(root)
     export = json.dumps({"site": config.get("site", "Northstar Yard"), "flag": config["flag"]}, indent=2).encode()
+    style = """
+    :root{color-scheme:dark;--bg:#070b12;--panel:#101927;--panel2:#152337;--line:#263b55;--text:#edf4ff;--muted:#9eb0c7;--cyan:#61e7e0;--gold:#ffc86b;--pink:#ff7c9c}
+    *{box-sizing:border-box}body{margin:0;background:radial-gradient(circle at 85% 0,#192e48 0,transparent 38%),var(--bg);color:var(--text);font:15px/1.6 ui-monospace,SFMono-Regular,Consolas,monospace}
+    header,main,footer{max-width:1120px;margin:auto}header{padding:26px 28px 18px;border-bottom:1px solid var(--line);display:flex;justify-content:space-between;gap:20px;align-items:end;flex-wrap:wrap}
+    .brand{color:var(--cyan);font-weight:800;letter-spacing:.14em}.signal{color:var(--gold);font-size:12px}nav{display:flex;gap:16px;flex-wrap:wrap}a{color:var(--cyan);text-decoration:none}a:hover{text-decoration:underline}
+    main{padding:52px 28px 70px;min-height:680px}.eyebrow{color:var(--gold);font-size:12px;letter-spacing:.16em}h1{font:800 clamp(42px,8vw,84px)/.95 Georgia,serif;letter-spacing:-.04em;margin:14px 0 22px;max-width:760px}h2{font:700 25px Georgia,serif;margin:0 0 12px}.lead{color:var(--muted);font:20px/1.55 Georgia,serif;max-width:740px}
+    .route{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:10px;margin:32px 0}.step,.panel{border:1px solid var(--line);background:linear-gradient(145deg,var(--panel2),var(--panel));padding:18px}.step{min-height:130px}.step b{display:block;color:var(--gold);font-size:12px;letter-spacing:.1em;margin-bottom:12px}.step strong{display:block;font-size:17px;margin-bottom:5px}.step p,.panel p,.panel li{color:var(--muted);margin:0;line-height:1.7}.step.active{border-color:var(--cyan);box-shadow:0 0 0 1px #61e7e033}.panel{margin-top:18px}.panel + .panel{margin-top:12px}.hint{border-left:3px solid var(--cyan);padding:12px 16px;background:#10262b;color:#c8f8f0!important}.pill{display:inline-block;color:var(--bg);background:var(--cyan);padding:3px 9px;font-size:11px;font-weight:800;letter-spacing:.08em}
+    footer{padding:18px 28px 30px;color:#6d819b;font-size:11px;border-top:1px solid var(--line)}code{color:#ffd38d;background:#0a111b;padding:2px 5px}
+    @media(max-width:620px){header,main,footer{padding-left:18px;padding-right:18px}main{padding-top:34px}.lead{font-size:18px}}
+    """
+
+    def page(title, content):
+        return ("<!doctype html><html lang='en'><head><meta charset='utf-8'><meta name='viewport' "
+                "content='width=device-width,initial-scale=1'><title>" + title + " · Northstar Yard</title>"
+                "<style>" + style + "</style></head><body><header><div><div class='brand'>NORTHSTAR / YARD</div>"
+                "<div class='signal'>READ-ONLY TRAINING SURFACE · SIGNAL ONLINE</div></div><nav>"
+                "<a href='/'>Start here</a><a href='/status'>Status</a><a href='/robots.txt'>Robots</a>"
+                "<a href='/api/registry'>Registry</a></nav></header><main>" + content +
+                "</main><footer>AUTHORIZED PRACTICE TARGET · NO SHELL · NO CREDENTIALS · NO HOST FILE ACCESS</footer></body></html>").encode()
+
+    home = page("Start here", """
+        <div class='eyebrow'>MISSION 01 / SERVICE ENUMERATION</div>
+        <h1>Find the handoff.</h1>
+        <p class='lead'>Northstar Yard is a quiet operations network. Your job is to map its visible services, follow the clues, and recover the maintenance export.</p>
+        <div class='route'>
+          <div class='step active'><b>01 · START HERE</b><strong>Read this brief</strong><p>Notice the links and the read-only boundary.</p></div>
+          <div class='step'><b>02 · MAP</b><strong>Check metadata</strong><p>Use <a href='/robots.txt'>robots.txt</a>, then inspect the <a href='/api/registry'>registry</a>.</p></div>
+          <div class='step'><b>03 · PIVOT</b><strong>Talk to TCP</strong><p>The registry names a second service. Read its banner and HELP.</p></div>
+          <div class='step'><b>04 · RECOVER</b><strong>Follow the export</strong><p>Use the maintenance route to locate the deployment record.</p></div>
+          <div class='step'><b>05 · VERIFY</b><strong>Submit your find</strong><p>Send the recovered value to <code>/verify?flag=...</code>.</p></div>
+        </div>
+        <section class='panel'><h2>Your first move</h2><p>Start with normal observation: page title, links, response headers, and crawler policy. Keep a small note of every host, port, protocol, and path you discover.</p><p class='hint'><span class='pill'>SAFE HINT</span> This target is read-only. You do not need to guess commands, upload anything, or probe arbitrary paths.</p></section>
+    """)
+    status = page("Status", """
+        <div class='eyebrow'>MISSION 01 / OBSERVATION</div><h1>Status is a clue.</h1>
+        <p class='lead'>Telemetry is nominal. The interesting work is in the maintenance handoff, not in changing the system.</p>
+        <div class='route'><div class='step active'><b>YOU ARE HERE</b><strong>HTTP status</strong><p>This page confirms the web service is alive.</p></div><div class='step'><b>NEXT</b><strong><a href='/robots.txt'>Read crawler policy</a></strong><p>Metadata often points to operational paths.</p></div><div class='step'><b>THEN</b><strong><a href='/api/registry'>Inspect registry</a></strong><p>Look for another protocol and port.</p></div></div>
+        <section class='panel'><h2>Maintenance handoff</h2><p>For the next step, inspect the registry and the local service banner. Treat every response as evidence: record what it reveals before moving on.</p><p class='hint'><span class='pill'>SAFE HINT</span> A <code>404</code> is useful information. Stay on fixed routes and avoid sending POST requests; this surface is intentionally read-only.</p></section>
+    """)
     routes = {
-        "/": ("text/html; charset=utf-8", b"""<!doctype html>
-<html><head><title>Northstar Yard</title></head><body>
-<h1>Northstar Yard telemetry</h1>
-<p>Read-only equipment status for the yard coordination network.</p>
-<ul><li><a href='/status'>Status board</a></li><li><a href='/api/registry'>Service registry</a></li></ul>
-</body></html>"""),
-        "/status": ("text/html; charset=utf-8", b"""<!doctype html>
-<html><head><title>Northstar status</title></head><body>
-<h1>Northstar Yard status</h1><p>Telemetry is nominal.</p>
-<p>For the maintenance handoff, inspect the registry and the local service banner.</p>
-</body></html>"""),
+        "/": ("text/html; charset=utf-8", home),
+        "/status": ("text/html; charset=utf-8", status),
         "/robots.txt": ("text/plain; charset=utf-8", b"User-agent: *\nDisallow: /ops/\nSitemap: /api/registry\n"),
         "/health": ("application/json; charset=utf-8", b'{"healthy":true,"mode":"read-only"}'),
         "/api/health": ("application/json; charset=utf-8", b'{"healthy":true,"mode":"read-only"}'),
@@ -69,7 +99,7 @@ def make_handler(root: Path):
             self.send_header("Content-Length", str(len(body)))
             self.send_header("Cache-Control", "no-store")
             self.send_header("X-Content-Type-Options", "nosniff")
-            self.send_header("Content-Security-Policy", "default-src 'none'")
+            self.send_header("Content-Security-Policy", "default-src 'none'; style-src 'unsafe-inline'; base-uri 'none'; frame-ancestors 'none'")
             self.end_headers()
             self.wfile.write(body)
 

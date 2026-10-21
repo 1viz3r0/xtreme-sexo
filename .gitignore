@@ -46,4 +46,5 @@ docs/NETOZE_LABS_RESUME_*.zip.sha256
 # Local OmniRush session data, generated native artifacts, and Python caches
 .omnirush/
 *.AppImage
+squashfs-root/
 __pycache__/
