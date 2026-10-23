@@ -9,6 +9,8 @@ const linuxInstaller = readFileSync(path.join(root, 'scripts/install-linux.sh'),
 const windowsInstaller = readFileSync(path.join(root, 'scripts/install-windows.ps1'), 'utf8');
 const packageJson = JSON.parse(readFileSync(path.join(root, 'package.json'), 'utf8'));
 const distributionGuide = readFileSync(path.join(root, 'docs/NETOZE_DISTRIBUTION.md'), 'utf8');
+const windowsGuide = readFileSync(path.join(root, 'docs/NETOZE_WINDOWS_INSTALLER.md'), 'utf8');
+const windowsWorkflow = readFileSync(path.join(root, '.github/workflows/windows-installer.yml'), 'utf8');
 
 test('distribution entrypoints cover staged Linux and Windows artifacts', () => {
   assert.match(linuxInstaller, /releases\/linux/);
@@ -42,4 +44,16 @@ test('package scripts expose the platform-specific install commands', () => {
   assert.equal(packageJson.scripts['install:linux'], 'bash scripts/install-linux.sh');
   assert.equal(packageJson.scripts['install:windows'], 'powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts/install-windows.ps1');
   assert.match(packageJson.scripts['test:release'], /install-flow\.test\.mjs/);
+});
+
+test('Windows release documentation and workflow define one-click publishing boundaries', () => {
+  assert.match(windowsGuide, /NET0ZE_2\.0\.0_x64-setup\.exe/);
+  assert.match(windowsGuide, /WebView2 bootstrapper/);
+  assert.match(windowsGuide, /Npcap SDK/);
+  assert.match(windowsGuide, /Do not silently download or redistribute/i);
+  assert.match(windowsGuide, /Overview\/GOD'S EYE VIEW is currently hidden/);
+  assert.match(windowsWorkflow, /windows-latest/);
+  assert.match(windowsWorkflow, /npm run dist:windows/);
+  assert.match(windowsWorkflow, /actions\/upload-artifact/);
+  assert.match(windowsWorkflow, /softprops\/action-gh-release/);
 });

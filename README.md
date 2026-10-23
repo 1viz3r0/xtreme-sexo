@@ -97,6 +97,18 @@ appear unchanged.
 
 ### Windows: native release artifacts
 
+The normal one-click download is the NSIS installer:
+
+```text
+NET0ZE_2.0.0_x64-setup.exe
+```
+
+Run that file once. It installs NET0ZE for the current Windows user and uses
+the configured WebView2 bootstrapper when WebView2 is missing. The repository
+also includes a GitHub Actions workflow that builds, checksums, and publishes
+the `.exe`, `.msi`, and `manifest.json` from a native Windows runner. See
+[`docs/NETOZE_WINDOWS_INSTALLER.md`](docs/NETOZE_WINDOWS_INSTALLER.md).
+
 A native Windows release is staged under:
 
 ```text
@@ -125,9 +137,9 @@ msiexec /i .\NET0ZE_2.0.0_x64_en-US.msi
 
 The Tauri configuration includes a WebView2 bootstrapper. Npcap is a separate
 Windows runtime prerequisite for live packet capture; it is not the same thing
-as the Npcap SDK required to compile the application. Windows runtime behavior
-and live capture are not claimed as verified here, so publish a Windows build
-only with a Windows-machine startup and IPC check.
+as the Npcap SDK required to compile the application. The installer does not
+silently redistribute an unlicensed Npcap package. If Npcap is unavailable,
+NET0ZE must show capture as unavailable rather than fabricating live telemetry.
 
 ## What the application does
 

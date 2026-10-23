@@ -57,6 +57,16 @@ corresponding operation. A staged AppImage does not require root privileges.
 
 ## Windows
 
+For the normal end-user path, use the single NSIS installer:
+
+```text
+NET0ZE_2.0.0_x64-setup.exe
+```
+
+It installs the current-user application and uses the configured WebView2
+bootstrapper. See [`NETOZE_WINDOWS_INSTALLER.md`](NETOZE_WINDOWS_INSTALLER.md)
+for the complete download, release, and Npcap boundary.
+
 Install one staged Windows installer from PowerShell:
 
 ```powershell

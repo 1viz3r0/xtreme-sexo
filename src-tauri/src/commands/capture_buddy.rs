@@ -724,7 +724,7 @@ pub fn buddy_start(
                 .map_err(|e| format!("Capture filter: {e}"))?;
         }
         let folder = crate::database::sqlite::get_app_dir().join("captures");
-        prepare_capture_folder(&folder, map)?;
+        prepare_capture_folder(&folder, &map)?;
         let key = id();
         let path = folder.join(format!("{key}.pcap"));
         let mut file = std::fs::OpenOptions::new()

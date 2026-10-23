@@ -5,7 +5,6 @@ import { Sidebar } from './components/Sidebar';
 import type { TabType } from './components/Sidebar';
 import { CaptureBuddy } from './components/CaptureBuddy';
 import { SystemLogs } from './components/SystemLogs';
-import type { LocationNode } from './components/Globe3D';
 import { authSession, authLogout } from './services/tauri/auth';
 import { getActiveFlows } from './services/tauri/flows';
 import { getDetections } from './services/tauri/detections';
@@ -15,7 +14,6 @@ import type { FlowRecord } from './services/tauri/flows';
 import type { DetectionFinding } from './services/tauri/detections';
 import type { AttackGraph } from './services/tauri/graph';
 
-const GlobalIntelView = lazy(() => import('./components/GlobalIntelView').then((module) => ({ default: module.GlobalIntelView })));
 const StorylineInspector = lazy(() => import('./components/StorylineInspector').then((module) => ({ default: module.StorylineInspector })));
 const EvidencePanel = lazy(() => import('./components/EvidencePanel').then((module) => ({ default: module.EvidencePanel })));
 const AttackGraphPanel = lazy(() => import('./components/AttackGraph').then((module) => ({ default: module.AttackGraph })));
@@ -31,8 +29,6 @@ const Watchtower = lazy(() => import('./components/Watchtower').then((module) =>
 
 export const App: React.FC = () => {
   const [activeTab, setActiveTab] = useState<TabType>('conversations');
-  const [selectedNode, setSelectedNode] = useState<LocationNode | null>(null);
-  const [searchOpenToken, setSearchOpenToken] = useState<number>(0);
   const [isAuthOpen, setIsAuthOpen] = useState<boolean>(false);
   const [hasOpenedAuth, setHasOpenedAuth] = useState(false);
   const openAuth = () => { setHasOpenedAuth(true); setIsAuthOpen(true); };
@@ -137,7 +133,7 @@ export const App: React.FC = () => {
     };
   }, [activeTab, pageVisible]);
 
-  // Escape dismisses overlays (geo shortcuts live in GlobalIntelView).
+  // Escape dismisses overlays.
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
       if (e.key === 'Escape') {
@@ -207,7 +203,6 @@ export const App: React.FC = () => {
     <div className="studio-shell">
       {/* Top Navbar */}
       <TopNavbar
-        onOpenSearch={() => { setActiveTab('global_intel'); setSearchOpenToken((t) => t + 1); }}
         onOpenAuth={openAuth}
         user={user}
         onLogout={handleLogout}
@@ -231,15 +226,6 @@ export const App: React.FC = () => {
         {/* View Routing Workspace */}
         <main id="studio-workspace" aria-label="Workspace" className="studio-workspace">
           <Suspense fallback={<div role="status" className="p-4 text-sm text-slate-400">Loading view…</div>}>
-          {activeTab === 'global_intel' && (
-            <GlobalIntelView
-              selectedNode={selectedNode}
-              setSelectedNode={setSelectedNode}
-              setActiveTab={setActiveTab}
-              openSearchToken={searchOpenToken}
-            />
-          )}
-
            {activeTab === 'conversations' && (
             <div className="studio-page">
               <CaptureBuddy />
@@ -345,7 +331,7 @@ export const App: React.FC = () => {
         onClose={() => setIsAuthOpen(false)}
         onLoginSuccess={(userData) => {
           setUser(userData);
-          if (userData.role === 'admin') setActiveTab('global_intel');
+          if (userData.role === 'admin') setActiveTab('watchtower');
           else setActiveTab('user_profile');
         }}
       />}

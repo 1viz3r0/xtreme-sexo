@@ -1,0 +1,65 @@
+name: Windows installer
+
+on:
+  workflow_dispatch:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+
+jobs:
+  build-windows-installer:
+    runs-on: windows-latest
+    env:
+      NPCAP_SDK_URL: https://npcap.com/dist/npcap-sdk-1.17.zip
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Set up Rust MSVC
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-pc-windows-msvc
+
+      - name: Install the Npcap SDK for compilation
+        shell: pwsh
+        run: |
+          $archive = Join-Path $env:RUNNER_TEMP 'npcap-sdk.zip'
+          $sdkRoot = Join-Path $env:RUNNER_TEMP 'npcap-sdk'
+          Invoke-WebRequest -Uri $env:NPCAP_SDK_URL -OutFile $archive
+          Expand-Archive -LiteralPath $archive -DestinationPath $sdkRoot -Force
+          $wpcap = Get-ChildItem -LiteralPath $sdkRoot -Filter wpcap.lib -File -Recurse | Select-Object -First 1
+          if (-not $wpcap) { throw 'Npcap SDK download did not contain wpcap.lib.' }
+          "NPCAP_SDK=$sdkRoot" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          "LIBPCAP_LIBDIR=$($wpcap.DirectoryName)" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+
+      - name: Install locked JavaScript dependencies
+        run: npm ci
+
+      - name: Run release contract tests
+        run: npm run test:release
+
+      - name: Build and stage the Windows installers
+        run: npm run dist:windows
+
+      - name: Upload Windows installers
+        uses: actions/upload-artifact@v4
+        with:
+          name: NET0ZE-windows-${{ github.ref_name }}
+          path: releases/windows/**
+          if-no-files-found: error
+
+      - name: Publish tagged Windows release
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: releases/windows/**/*
+          generate_release_notes: true

@@ -1,10 +1,9 @@
 import React from 'react';
-import { Search, User, ShieldCheck, LogOut, PanelLeft, PanelLeftClose, Monitor, Globe } from 'lucide-react';
+import { User, ShieldCheck, LogOut, PanelLeft, PanelLeftClose, Monitor, Globe } from 'lucide-react';
 import { isTauriEnvironment } from '../services/tauri/isTauri';
 import { BrandLogo } from './BrandLogo';
 
 interface TopNavbarProps {
-  onOpenSearch: () => void;
   onOpenAuth: () => void;
   user: { name: string; email: string; isVerified: boolean; role?: string } | null;
   onLogout: () => void;
@@ -13,7 +12,7 @@ interface TopNavbarProps {
 }
 
 export const TopNavbar: React.FC<TopNavbarProps> = ({
-  onOpenSearch, onOpenAuth, user, onLogout, isFullyHidden, setIsFullyHidden,
+  onOpenAuth, user, onLogout, isFullyHidden, setIsFullyHidden,
 }) => {
   const isDesktop = isTauriEnvironment();
   return (
@@ -29,10 +28,6 @@ export const TopNavbar: React.FC<TopNavbarProps> = ({
         <BrandLogo />
         <span className="studio-design-marker">Studio UI</span>
       </div>
-      <button type="button" onClick={onOpenSearch} className="studio-search" aria-label="Search locations">
-        <Search size={17} aria-hidden="true" />
-        <span>Search locations</span>
-      </button>
       <div className="studio-header-actions">
         <span className="studio-runtime" title={isDesktop ? 'Native desktop runtime' : 'Browser preview; native capabilities unavailable'}>
           {isDesktop ? <Monitor size={14} aria-hidden="true" /> : <Globe size={14} aria-hidden="true" />}

@@ -9,7 +9,7 @@ import { Sidebar } from './Sidebar';
 import type { TabType } from './Sidebar';
 
 const noop = () => {};
-const headerProps = { onOpenSearch: noop, onOpenAuth: noop, onLogout: noop, user: null, isFullyHidden: false, setIsFullyHidden: noop };
+const headerProps = { onOpenAuth: noop, onLogout: noop, user: null, isFullyHidden: false, setIsFullyHidden: noop };
 const sidebarProps = { activeTab: 'conversations' as TabType, setActiveTab: noop, user: null, isCollapsed: false, setIsCollapsed: noop, isFullyHidden: false, setIsFullyHidden: noop };
 
 test('Studio header and monitoring navigation are accessible and concise', () => {
@@ -17,7 +17,7 @@ test('Studio header and monitoring navigation are accessible and concise', () =>
   assert.match(header, /aria-label="NET0ZE application header"/);
   assert.match(header, /Studio UI/);
   assert.match(header, /Browser/);
-  assert.match(header, /aria-label="Search locations"/);
+  assert.doesNotMatch(header, /Search locations/);
   assert.match(header, /Sign in/);
   assert.equal((header.match(/<header/g) || []).length, 1);
   assert.doesNotMatch(header, /UTC|Host:|Detected|Unavailable|v2\.0\.0/);
@@ -36,23 +36,26 @@ test('Studio header and monitoring navigation are accessible and concise', () =>
    assert.doesNotMatch(sidebar, />Experimental</);
    assert.doesNotMatch(sidebar, /aria-label="Host &amp; Logs"/);
   assert.doesNotMatch(sidebar, /<details[^>]* open/);
-  const experimental = sidebar.match(/<details class="studio-experimental"[\s\S]*?<\/details>/)?.[0] ?? '';
-  assert.match(experimental, /aria-label="Overview"/);
-  assert.ok(experimental.indexOf('Overview') < experimental.indexOf('Evidence'));
+   assert.doesNotMatch(sidebar, /Overview/);
+   assert.match(sidebar, /aria-label="Evidence"/);
   assert.doesNotMatch(sidebar, /aria-label="Users"/);
   const admin = renderToStaticMarkup(React.createElement(Sidebar, { ...sidebarProps, user: { name: 'Admin fixture', email: 'fixture@example.test', isVerified: true, role: 'admin' } }));
   assert.match(admin, /aria-label="Users"/);
+  assert.doesNotMatch(admin, /Overview/);
+  const collapsed = renderToStaticMarkup(React.createElement(Sidebar, { ...sidebarProps, isCollapsed: true }));
+  assert.doesNotMatch(collapsed, /Overview/);
   assert.equal(renderToStaticMarkup(React.createElement(Sidebar, { ...sidebarProps, isFullyHidden: true })), '');
 });
 
-test('App opens Capture Buddy while keeping overview search and authenticated routing', () => {
+test('App opens Capture Buddy and hides all Overview entry points including admin sign-in', () => {
   const app = readFileSync(new URL('../App.tsx', import.meta.url), 'utf8');
   assert.match(app, /useState<TabType>\('conversations'\)/);
   assert.match(app, /const Watchtower = lazy\(\(\) => import\('\.\/components\/Watchtower'\)/);
   assert.match(app, /activeTab === 'watchtower'[\s\S]*?<Watchtower flows=\{flows\} events=\{events\} graph=\{graphData\}(?:[\s\S]*?)\/>/);
   assert.match(app, /activeTab === 'watchtower'[\s\S]*?flows: true, detections: true, graph: true/);
   assert.match(app, /activeTab === 'conversations'[\s\S]*?<CaptureBuddy \/>/);
-  assert.match(app, /onOpenSearch=\{\(\) => \{ setActiveTab\('global_intel'\); setSearchOpenToken/);
+  assert.doesNotMatch(app, /global_intel|GlobalIntelView|onOpenSearch/);
+  assert.match(app, /userData\.role === 'admin'\) setActiveTab\('watchtower'\)/);
   assert.match(app, /authSession\(stored\)/);
   assert.match(app, /authLogout\(stored\)/);
   assert.doesNotMatch(app, /animate-pulse/);
@@ -68,7 +71,7 @@ test('Studio shell uses a neutral monochrome palette', () => {
   assert.doesNotMatch(studioCss, /#(?:101e34|293d59|0b1424|14233b|223c60|3c5b83|0e1b30|354b6b|93b7ff|27466f|4c74a9|a3c6ff|5275a2|1b2d49|22334d)/i);
 });
 
-test('mounted shell preserves navigation, hiding, search, sign-in and sign-out callbacks', async () => {
+test('mounted shell preserves navigation and sign-in without exposing Overview or location search', async () => {
   const window = new Window({ url: 'http://localhost/' });
   const names = ['window', 'document', 'navigator', 'HTMLElement', 'Event', 'MouseEvent', 'IS_REACT_ACT_ENVIRONMENT'];
   const previous = new Map(names.map(name => [name, Object.getOwnPropertyDescriptor(globalThis, name)]));
@@ -85,7 +88,6 @@ test('mounted shell preserves navigation, hiding, search, sign-in and sign-out c
     const [user, setUser] = React.useState<null | { name: string; email: string; isVerified: boolean; role: string }>(null);
     return React.createElement(React.Fragment, null,
       React.createElement(TopNavbar, { ...headerProps, user, isFullyHidden: hidden, setIsFullyHidden: setHidden,
-        onOpenSearch: () => { calls.push('search'); setTab('global_intel'); },
         onOpenAuth: () => { calls.push('auth'); setUser({ name: 'Fixture', email: 'fixture@example.test', isVerified: true, role: 'admin' }); },
         onLogout: () => { calls.push('logout'); setUser(null); },
       }),
@@ -110,15 +112,14 @@ test('mounted shell preserves navigation, hiding, search, sign-in and sign-out c
     await click('Hide navigation');
     assert.equal(host.querySelector('aside'), null);
     await click('Show navigation');
-    await click('Search locations');
-     assert.equal(host.querySelector('details')?.hasAttribute('open'), true);
-    assert.equal(host.querySelector('[aria-current="page"]')?.getAttribute('aria-label'), 'Overview');
+     assert.equal(host.querySelector('[aria-label="Search locations"]'), null);
+     assert.equal(host.querySelector('[aria-label="Overview"]'), null);
     await click('Sign in');
     assert.ok(host.querySelector('[aria-label="Users"]'));
     assert.match(host.textContent, /Admin/);
     await click('Sign out');
     assert.equal(host.querySelector('[aria-label="Users"]'), null);
-    assert.deepEqual(calls, ['search', 'auth', 'logout']);
+     assert.deepEqual(calls, ['auth', 'logout']);
   } finally {
     await act(async () => { root.unmount(); });
     await window.happyDOM.close();

@@ -1,12 +1,10 @@
 import React from 'react';
 import {
-  Globe,
   MessageSquare,
   Terminal,
   Cpu,
   Layers,
   GitFork,
-  ShieldAlert,
   BookOpen,
   FlaskConical,
   Sliders,
@@ -55,7 +53,6 @@ export const Sidebar: React.FC<SidebarProps> = ({
   setIsFullyHidden
 }) => {
   const menuItems: { id: TabType; label: string; icon: React.ReactNode; adminOnly?: boolean; experimental?: boolean }[] = [
-    { id: 'global_intel', label: 'Overview', icon: <Globe className="w-3.5 h-3.5" />, experimental: true },
     { id: 'watchtower', label: 'Watchtower', icon: <Activity className="w-3.5 h-3.5" /> },
     { id: 'conversations', label: 'Capture Buddy', icon: <MessageSquare className="w-3.5 h-3.5" /> },
     { id: 'network_engine', label: 'Scan Buddy', icon: <Cpu className="w-3.5 h-3.5" /> },
