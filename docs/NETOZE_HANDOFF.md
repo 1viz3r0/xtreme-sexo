@@ -8,8 +8,8 @@ Continue polishing the NET0ZE desktop cybersecurity platform. The current user p
 
 - Repository: `/home/addie/omnirush.ai/xtreme-sexo`
 - Branch: `master`
-- Latest committed revision: `7b9641c fix: make all lab targets startable`
-- Current changes are local and **uncommitted**. Do not reset or clean them.
+- Latest committed revision: `6d23ff2 docs: record windows installer build session`
+- The working tree is **clean**; all pending work is committed and queued for push to `origin/master`.
 - The launcher artifact has been rebuilt at `/home/addie/Applications/NET0ZE.AppImage`.
 - Current AppImage SHA-256: `a75ffcbfccaf0335901e4a27adfb66a6b4d339939e0ac96dafb790c5b497a5a8`.
 - Fully close the running app before launching the updated AppImage from the application launcher.

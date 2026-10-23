@@ -256,12 +256,18 @@ Relevant local/remote commits:
 4. `bab99e7 docs: record github backup and resume state` — recorded the remote,
    branch, files, and continuation instructions.
 
-Remote currently points to commit `bab99e7` on `master`.
+Remote previously pointed to commit `bab99e7` on `master`. Local `master` is now
+ahead by the packaging/overview/labs work: `d25f256`, `764e5b1`, `c5694ea`,
+`6d23ff2`. The catalog grew to seven provisioned rooms after this file was
+first written (Web Exposure, Northstar Yard Enumeration, Signal Kiosk: Header
+Trail, First Contact, Service Signals, Ledger Sync Permission Review, Copperline
+Protocol Archive); `docs/NETOZE_HANDOFF.md` is the source of truth for the
+current room list, and this section is the Git/backup record only.
 
-The optional `.github/workflows/desktop-build.yml` is not on GitHub because the
-authorized CLI OAuth token had `repo` but not `workflow` scope. It was removed
-before the successful push. Restore it only after explicitly granting that
-scope, then commit and push it separately.
+`.github/workflows/windows-installer.yml` is now tracked and is the first
+workflow file added to the repository. Pushing it needs a token with `workflow`
+scope; if the push is rejected for that reason, run
+`gh auth refresh -s workflow` and retry instead of deleting the workflow.
 
 ## 9. Exact current continuation order
 
