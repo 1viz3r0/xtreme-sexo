@@ -1,5 +1,8 @@
 # NET0ZE
 
+For a complete source, desktop, Docker Labs, capture, packaging, verification,
+and troubleshooting walkthrough, see [`Full-Setup-Guide.md`](Full-Setup-Guide.md).
+
 NET0ZE is a native desktop cybersecurity investigation platform for **local,
 authorized** use. It combines a React/TypeScript/Vite interface with a Tauri 2
 application and Rust services. The native side owns local capture, host and
