@@ -6,6 +6,15 @@ copies them into `releases/`, and the platform installer scripts consume one
 staged artifact. The installers do not download code, rebuild the app, or run
 destructive cleanup.
 
+## Published artifacts
+
+The `releases/` directory is intentionally not tracked by Git. Finished build
+output is published to GitHub instead, at
+`https://github.com/1viz3r0/xtreme-sexo/releases`. Release `v2.0.0` carries the
+Linux `.deb` and `.AppImage`, the Windows NSIS `-setup.exe`, both per-platform
+`manifest.json` files, and `SHA256SUMS.txt`. Rebuild from source to regenerate
+the staging directory locally.
+
 ## Staged layout
 
 After a successful native build and staging, artifacts are placed under:

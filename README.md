@@ -38,6 +38,17 @@ platform directory when it is published, keep its `manifest.json` beside the
 installers, and verify the listed SHA-256 values before launching. Generated
 release directories are normally ignored by Git and are not source dependencies.
 
+Prebuilt installers are published as GitHub releases:
+
+```text
+https://github.com/1viz3r0/xtreme-sexo/releases
+```
+
+Each release attaches the platform artifacts, both `manifest.json` files, and a
+`SHA256SUMS.txt`. These are development builds: the Linux packages are built and
+staged locally, and the Windows NSIS installer is cross-built and has not been
+executed on Windows.
+
 For maintainers who already have a staged artifact in this checkout, the
 repository also provides strict one-command helpers. They validate the selected
 artifact first and never rebuild or delete unrelated files:
