@@ -1477,3 +1477,103 @@ STARTED: linux desktop build; full packaged application.
 ### 2026-10-22 01:42:16 IST (+05:30)
 
 COMPLETED: linux desktop build and artifact staging. See releases/linux/ and its manifest for exact files and checksums. Runtime validation is a separate check.
+
+### 2026-10-23 12:12:36 IST (+05:30)
+
+STARTED: linux desktop build; full packaged application.
+
+### 2026-10-23 12:12:36 IST (+05:30)
+
+FAILED: linux desktop build step cargo (exit 101). Inspect the build output for details.
+
+### 2026-10-23 12:13:25 IST (+05:30)
+
+STARTED: linux desktop build; full packaged application.
+
+### 2026-10-23 12:32:20 IST (+05:30)
+
+STARTED: linux desktop build; full packaged application.
+
+### 2026-10-23 12:34:39 IST (+05:30)
+
+COMPLETED: linux desktop build and artifact staging. See releases/linux/ and its manifest for exact files and checksums. Runtime validation is a separate check.
+
+### 2026-10-23 15:40:48 IST (+05:30)
+
+STARTED: windows cross desktop build; full packaged application.
+
+### 2026-10-23 15:41:15 IST (+05:30)
+
+FAILED: windows desktop build step node (exit 1). Inspect the build output for details.
+
+### 2026-10-23 15:46:11 IST (+05:30)
+
+STARTED: windows cross desktop build; full packaged application.
+
+### 2026-10-23 15:57:49 IST (+05:30)
+
+FAILED: windows desktop build step node (exit 1). Inspect the build output for details.
+
+### 2026-10-23 16:07:45 IST (+05:30)
+
+STARTED: windows cross desktop build; full packaged application.
+
+### 2026-10-23 16:08:02 IST (+05:30)
+
+FAILED: windows desktop build step node (exit 1). Inspect the build output for details.
+
+### 2026-10-23 16:09:14 IST (+05:30)
+
+STARTED: windows cross desktop build; full packaged application.
+
+### 2026-10-23 16:09:29 IST (+05:30)
+
+FAILED: windows desktop build step node (exit 1). Inspect the build output for details.
+
+### 2026-10-23 16:14:29 IST (+05:30)
+
+STARTED: windows cross desktop build; full packaged application.
+
+### 2026-10-23 16:14:41 IST (+05:30)
+
+FAILED: windows desktop build step node (exit 1). Inspect the build output for details.
+
+### 2026-10-23 16:16:40 IST (+05:30)
+
+STARTED: windows cross desktop build; full packaged application.
+
+### 2026-10-23 16:22:00 IST (+05:30)
+
+FAILED: windows desktop build step node (exit 1). Inspect the build output for details.
+
+### 2026-10-23 16:23:35 IST (+05:30)
+
+STARTED: windows cross desktop build; full packaged application.
+
+### 2026-10-23 16:23:55 IST (+05:30)
+
+FAILED: windows desktop build step node (exit 1). Inspect the build output for details.
+
+### 2026-10-23 16:27:12 IST (+05:30)
+
+STARTED: windows cross desktop build; full packaged application.
+
+### 2026-10-23 16:29:23 IST (+05:30)
+
+FAILED: windows desktop build step node (exit 1). Inspect the build output for details.
+
+### 2026-10-23 16:32:11 IST (+05:30)
+
+STARTED: windows cross desktop build; full packaged application.
+
+### 2026-10-23 16:34:28 IST (+05:30)
+
+COMPLETED: windows NSIS-only cross desktop build and artifact staging. See releases/windows/ and its manifest for exact files and checksums. Runtime validation is a separate check.
+
+### 2026-10-23 16:36:42 IST (+05:30)
+
+STARTED: linux desktop build; full packaged application.
+
+### 2026-10-23 16:39:32 IST (+05:30)
+
+COMPLETED: linux desktop build and artifact staging. See releases/linux/ and its manifest for exact files and checksums. Runtime validation is a separate check.
