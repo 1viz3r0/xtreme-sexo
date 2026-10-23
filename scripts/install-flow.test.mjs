@@ -46,6 +46,32 @@ test('package scripts expose the platform-specific install commands', () => {
   assert.match(packageJson.scripts['test:release'], /install-flow\.test\.mjs/);
 });
 
+test('release installers download, verify, and install published artifacts', () => {
+  const releaseLinux = readFileSync(path.join(root, 'scripts/install-release.sh'), 'utf8');
+  const releaseWindows = readFileSync(path.join(root, 'scripts/install-release.ps1'), 'utf8');
+
+  assert.match(releaseLinux, /releases\/latest/);
+  assert.match(releaseLinux, /releases\/download/);
+  assert.match(releaseLinux, /sha256sum -c/);
+  assert.match(releaseLinux, /checksum mismatch/);
+  assert.match(releaseLinux, /--dry-run/);
+  assert.match(releaseLinux, /--appimage/);
+  assert.match(releaseLinux, /--deb/);
+  assert.doesNotMatch(releaseLinux, /docker system prune/);
+
+  assert.match(releaseWindows, /Get-FileHash/);
+  assert.match(releaseWindows, /SHA256SUMS\.txt/);
+  assert.match(releaseWindows, /checksum mismatch/);
+  assert.match(releaseWindows, /Start-Process/);
+  assert.match(releaseWindows, /-DryRun/);
+  assert.doesNotMatch(releaseWindows, /docker system prune/i);
+});
+
+test('package scripts expose the published-release installers', () => {
+  assert.equal(packageJson.scripts['install:release'], 'bash scripts/install-release.sh');
+  assert.equal(packageJson.scripts['install:release:windows'], 'powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts/install-release.ps1');
+});
+
 test('Windows release documentation and workflow define one-click publishing boundaries', () => {
   assert.match(windowsGuide, /NET0ZE_2\.0\.0_x64-setup\.exe/);
   assert.match(windowsGuide, /WebView2 bootstrapper/);

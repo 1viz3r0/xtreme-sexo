@@ -172,8 +172,24 @@ architecture. The directory remains only as a retirement note.
 ## 6. Install a published release
 
 Published releases are intended for end users. End users do not need Node.js,
-Rust, npm, or a web server. Download the complete platform directory, keep its
-`manifest.json` beside the installer, verify SHA-256 values, and then install.
+Rust, npm, or a web server. Two commands cover the normal install; the manual
+steps below exist for people who prefer to verify and install by hand.
+
+Windows, one command:
+
+```powershell
+irm https://raw.githubusercontent.com/1viz3r0/xtreme-sexo/master/scripts/install-release.ps1 | iex
+```
+
+Linux, one command:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/1viz3r0/xtreme-sexo/master/scripts/install-release.sh | bash
+```
+
+Both scripts resolve the newest release, download only the artifact for the
+current machine, verify its SHA-256 against the published `SHA256SUMS.txt`, and
+install. Neither rebuilds anything or removes unrelated files.
 
 Release page:
 
@@ -183,18 +199,26 @@ https://github.com/1viz3r0/xtreme-sexo/releases
 
 ### 6.1 Linux DEB: recommended installed path
 
-From a release directory containing the package:
+One command, on Debian, Ubuntu, or Kali:
 
 ```bash
-cd releases/linux/2.0.0-x64
-sha256sum NET0ZE_2.0.0_amd64.deb
-sudo apt install ./NET0ZE_2.0.0_amd64.deb
+curl -fsSL https://raw.githubusercontent.com/1viz3r0/xtreme-sexo/master/scripts/install-release.sh | bash
+```
+
+The script selects the `.deb`, verifies its checksum, and installs it with `apt`.
+To do the same steps manually, download the package with the permanent link:
+
+```bash
+curl -fLO https://github.com/1viz3r0/xtreme-sexo/releases/latest/download/NET0ZE_amd64.deb
+curl -fLO https://github.com/1viz3r0/xtreme-sexo/releases/latest/download/SHA256SUMS.txt
+sha256sum -c --ignore-missing SHA256SUMS.txt
+sudo apt install ./NET0ZE_amd64.deb
 ```
 
 If a lower-level recovery is required:
 
 ```bash
-sudo dpkg -i ./NET0ZE_2.0.0_amd64.deb
+sudo dpkg -i ./NET0ZE_amd64.deb
 sudo apt-get install -f
 ```
 
@@ -208,9 +232,18 @@ window keeps its previously loaded frontend.
 
 ### 6.2 Linux AppImage: portable alternative
 
+Force the portable build with the same one-command installer:
+
 ```bash
-cd releases/linux/2.0.0-x64
-sha256sum NET0ZE_2.0.0_amd64.AppImage
+curl -fsSL https://raw.githubusercontent.com/1viz3r0/xtreme-sexo/master/scripts/install-release.sh \
+  | bash -s -- --appimage
+```
+
+That places the AppImage at `~/.local/share/netoze/NET0ZE.AppImage`, marks it
+executable, and writes a menu entry. Manual equivalent:
+
+```bash
+curl -fLO https://github.com/1viz3r0/xtreme-sexo/releases/download/v2.0.0/NET0ZE_2.0.0_amd64.AppImage
 chmod +x NET0ZE_2.0.0_amd64.AppImage
 ./NET0ZE_2.0.0_amd64.AppImage
 ```
@@ -238,16 +271,33 @@ bash scripts/install-linux.sh \
 
 ### 6.3 Windows installer
 
-The normal Windows end-user download is the NSIS installer:
+One-click download — this link always points at the newest installer:
 
 ```text
-NET0ZE_2.0.0_x64-setup.exe
+https://github.com/1viz3r0/xtreme-sexo/releases/latest/download/NET0ZE_x64-setup.exe
 ```
 
-Run it once, then launch NET0ZE from the Windows Start menu. The Tauri bundle is
-configured with a WebView2 bootstrapper for systems where WebView2 is missing.
+Run it once, then launch NET0ZE from the Windows Start menu. The installer is
+configured for the current user, so no administrator prompt appears, and it ships
+a WebView2 bootstrapper for systems where WebView2 is missing.
 
-From PowerShell, the repository helper can launch one staged installer:
+The build is unsigned, so SmartScreen shows a warning the first time: choose
+**More info → Run anyway**. Removing that warning requires an Authenticode
+signing certificate; it is not something the project can fix in code.
+
+One-command install from PowerShell:
+
+```powershell
+irm https://raw.githubusercontent.com/1viz3r0/xtreme-sexo/master/scripts/install-release.ps1 | iex
+```
+
+Run the script directly to install without any wizard pages:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\install-release.ps1 -Silent
+```
+
+From a source checkout, the repository helper can launch one staged installer:
 
 ```powershell
 .\scripts\install-windows.ps1 -Artifact ".\releases\windows\2.0.0-x64\NET0ZE_2.0.0_x64-setup.exe"

@@ -36,18 +36,55 @@ than being presented as successful telemetry.
 
 ## Install from a release artifact
 
-End users do not need Node.js, Rust, npm, or a web server. Download the complete
-platform directory when it is published, keep its `manifest.json` beside the
-installers, and verify the listed SHA-256 values before launching. Generated
-release directories are normally ignored by Git and are not source dependencies.
+End users do not need Node.js, Rust, npm, or a web server.
 
-Prebuilt installers are published as GitHub releases:
+### Windows — download and run
 
 ```text
-https://github.com/1viz3r0/xtreme-sexo/releases
+https://github.com/1viz3r0/xtreme-sexo/releases/latest/download/NET0ZE_x64-setup.exe
 ```
 
-Each release attaches the platform artifacts, both `manifest.json` files, and a
+That link always resolves to the newest installer. Run the file once: it
+installs for the current user without an administrator prompt and pulls in
+WebView2 when it is missing. Because the build is unsigned, Windows SmartScreen
+shows a warning on first run; choose **More info → Run anyway**.
+
+Or install from PowerShell in one command:
+
+```powershell
+irm https://raw.githubusercontent.com/1viz3r0/xtreme-sexo/master/scripts/install-release.ps1 | iex
+```
+
+Add `-Silent` by running the script directly to skip the wizard pages:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\install-release.ps1 -Silent
+```
+
+### Linux — one command
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/1viz3r0/xtreme-sexo/master/scripts/install-release.sh | bash
+```
+
+The script resolves the latest release, downloads the artifact for your machine,
+verifies its SHA-256 against the published checksums, and then installs it. It
+uses the `.deb` on Debian-family systems and the AppImage everywhere else.
+
+Prefer an explicit download? Use the permanent links:
+
+```text
+https://github.com/1viz3r0/xtreme-sexo/releases/latest/download/NET0ZE_amd64.deb
+https://github.com/1viz3r0/xtreme-sexo/releases/latest/download/SHA256SUMS.txt
+```
+
+Then install with one command:
+
+```bash
+sudo apt install ./NET0ZE_amd64.deb
+```
+
+Every release also attaches the per-platform `manifest.json` files and
 `SHA256SUMS.txt`. These are development builds: the Linux packages are built and
 staged locally, and the Windows NSIS installer is cross-built and has not been
 executed on Windows.

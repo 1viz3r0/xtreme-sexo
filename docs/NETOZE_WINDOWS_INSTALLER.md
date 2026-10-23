@@ -10,8 +10,12 @@ NET0ZE_2.0.0_x64-setup.exe
 
 Run it once. The NSIS installer installs NET0ZE for the current Windows user
 and uses the configured WebView2 bootstrapper when the Evergreen WebView2
-runtime is missing. No Node.js, Rust, npm, Docker, or development tools are
-required on the end-user machine.
+runtime is missing. No Node.js, Rust, npm, or development tools are required on
+the end-user machine.
+
+Docker is not needed to launch the application, but the Labs module requires a
+local Docker daemon (version 28 or newer) with an accessible socket; without it,
+Labs reports `setup-required`.
 
 The release directory also contains an MSI for managed deployment. Use the
 NSIS `.exe` for the ordinary one-click download/install path.

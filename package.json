@@ -18,6 +18,8 @@
     "dist:linux": "node scripts/build-desktop.mjs linux",
     "install:linux": "bash scripts/install-linux.sh",
     "install:windows": "powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts/install-windows.ps1",
+    "install:release": "bash scripts/install-release.sh",
+    "install:release:windows": "powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts/install-release.ps1",
     "test:release": "node --test scripts/native-release.test.mjs scripts/install-flow.test.mjs"
   },
   "dependencies": {

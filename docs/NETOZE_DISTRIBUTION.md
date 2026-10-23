@@ -15,6 +15,21 @@ Linux `.deb` and `.AppImage`, the Windows NSIS `-setup.exe`, both per-platform
 `manifest.json` files, and `SHA256SUMS.txt`. Rebuild from source to regenerate
 the staging directory locally.
 
+End users can install with one command instead of handling files:
+
+```bash
+# Linux: resolves the latest release, verifies the checksum, installs
+curl -fsSL https://raw.githubusercontent.com/1viz3r0/xtreme-sexo/master/scripts/install-release.sh | bash
+```
+
+```powershell
+# Windows
+irm https://raw.githubusercontent.com/1viz3r0/xtreme-sexo/master/scripts/install-release.ps1 | iex
+```
+
+Permanent download links follow the `releases/latest/download/<name>` pattern and
+use the stable names `NET0ZE_x64-setup.exe` and `NET0ZE_amd64.deb`.
+
 ## Staged layout
 
 After a successful native build and staging, artifacts are placed under:
