@@ -31,6 +31,18 @@ test('separate platform releases preserve artifacts and produce checksums', () =
         assert.equal(readFileSync(path.join(result.destination, file.name), 'utf8'), `test fixture ${path.extname(file.name)}`);
       }
     }
+    // Stable aliases keep releases/latest/download links working across versions.
+    const linuxDir = path.join(root, 'releases/linux/2.0.0-x64');
+    const windowsDir = path.join(root, 'releases/windows/2.0.0-x64');
+    assert.ok(existsSync(path.join(linuxDir, 'NET0ZE_amd64.deb')));
+    assert.ok(existsSync(path.join(linuxDir, 'NET0ZE_amd64.AppImage')));
+    assert.ok(existsSync(path.join(windowsDir, 'NET0ZE_x64-setup.exe')));
+    assert.equal(readFileSync(path.join(linuxDir, 'NET0ZE_amd64.deb'), 'utf8'), 'test fixture .deb');
+    const sums = readFileSync(path.join(linuxDir, 'SHA256SUMS.txt'), 'utf8');
+    assert.match(sums, /NET0ZE_2\.0\.0\.deb/);
+    assert.match(sums, /NET0ZE_amd64\.deb/);
+    const manifestFiles = JSON.parse(readFileSync(path.join(linuxDir, 'manifest.json'))).files.map((file) => file.name);
+    assert.deepEqual(manifestFiles.sort(), ['NET0ZE_2.0.0.AppImage', 'NET0ZE_2.0.0.deb']);
     rmSync(path.join(root, 'src-tauri/target/release/bundle/appimage'), { recursive: true });
     assert.throws(() => stageNativeRelease(root, 'linux', 'arm64'), /Missing native bundle/);
     assert.equal(existsSync(path.join(root, 'releases/linux/2.0.0-arm64')), false);

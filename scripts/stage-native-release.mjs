@@ -38,8 +38,30 @@ export function stageNativeRelease(root, platform, arch = process.arch, options 
     copyFileSync(source, path.join(destination, name));
     return { name, bytes: statSync(source).size, sha256: createHash('sha256').update(readFileSync(source)).digest('hex') };
   });
-  writeFileSync(path.join(destination, 'manifest.json'), JSON.stringify({ product: config.productName, version: config.version, platform, arch, target: triple ?? null, formats, generated_at: new Date().toISOString(), files }, null, 2));
-  return { destination, files };
+
+  // Stable aliases keep releases/latest/download/<name> links working across
+  // versions. They are copies, never renames: manifest.json stays authoritative.
+  const stableAlias = (name) => {
+    if (arch === 'x64' && platform === 'windows' && name.endsWith('.exe')) return 'NET0ZE_x64-setup.exe';
+    if (arch === 'x64' && platform === 'linux' && name.endsWith('.deb')) return 'NET0ZE_amd64.deb';
+    if (arch === 'x64' && platform === 'linux' && name.endsWith('.AppImage')) return 'NET0ZE_amd64.AppImage';
+    return null;
+  };
+  const aliases = [];
+  for (const file of files) {
+    const alias = stableAlias(file.name);
+    if (!alias) continue;
+    copyFileSync(path.join(destination, file.name), path.join(destination, alias));
+    aliases.push({ name: alias, target: file.name, sha256: file.sha256 });
+  }
+  if (aliases.length) {
+    const lines = [...files, ...aliases.map(({ name, sha256 }) => ({ name, sha256 }))]
+      .map(({ name, sha256 }) => `${sha256}  ${name}`)
+      .join('\n');
+    writeFileSync(path.join(destination, 'SHA256SUMS.txt'), `${lines}\n`);
+  }
+  writeFileSync(path.join(destination, 'manifest.json'), JSON.stringify({ product: config.productName, version: config.version, platform, arch, target: triple ?? null, formats, generated_at: new Date().toISOString(), files, aliases }, null, 2));
+  return { destination, files, aliases };
 }
 
 if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {

@@ -53,16 +53,15 @@ $Repo = if ($env:NET0ZE_REPO) { $env:NET0ZE_REPO } else { '1viz3r0/xtreme-sexo' 
 function Say([string]$Message) { Write-Host "[NET0ZE] $Message" }
 
 if ($Version -eq 'latest') {
-    Say 'resolving the latest release'
-    $latest = Invoke-RestMethod -Uri "https://api.github.com/repos/$Repo/releases/latest" `
-        -Headers @{ 'User-Agent' = 'netoze-installer'; 'Accept' = 'application/vnd.github+json' }
-    $Version = $latest.tag_name
-    if (-not $Version) { throw '[NET0ZE] ERROR: could not determine the latest release tag.' }
+    # Stable asset name: no API call, no tag parsing, no rate limit.
+    $assetName = 'NET0ZE_x64-setup.exe'
+    $baseUrl = "https://github.com/$Repo/releases/latest/download"
 }
-
-$numeric = $Version.TrimStart('v')
-$assetName = "NET0ZE_${numeric}_x64-setup.exe"
-$baseUrl = "https://github.com/$Repo/releases/download/$Version"
+else {
+    $numeric = $Version.TrimStart('v')
+    $assetName = "NET0ZE_${numeric}_x64-setup.exe"
+    $baseUrl = "https://github.com/$Repo/releases/download/$Version"
+}
 $workDir = Join-Path $env:TEMP ("netoze-install-" + [Guid]::NewGuid().ToString('N').Substring(0, 8))
 
 New-Item -ItemType Directory -Path $workDir -Force | Out-Null
@@ -71,7 +70,8 @@ try {
     $installerPath = Join-Path $workDir $assetName
     $sumsPath = Join-Path $workDir 'SHA256SUMS.txt'
 
-    Say "release $Version, windows x64 build"
+    $label = if ($Version -eq 'latest') { 'latest release' } else { "release $Version" }
+    Say "$label, windows x64 build"
 
     Say "downloading $assetName"
     Invoke-WebRequest -Uri "$baseUrl/$assetName" -OutFile $installerPath -UseBasicParsing `
