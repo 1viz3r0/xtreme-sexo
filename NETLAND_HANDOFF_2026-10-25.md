@@ -11,9 +11,6 @@ local Net-Land worktree is `/tmp/opencode/nl`.
 - Landing-page files are promoted to the Net-Land repository root.
 - The requested icon/logo source is used throughout the landing page:
   `https://github.com/1viz3r0/xtreme-sexo/raw/master/public/netoze-icon.png`.
-- Windows links directly to the NET0ZE 2.0.0 x64 installer.
-- Linux links directly to the NET0ZE 2.0.0 DEB and AppImage assets.
-- macOS and Android remain not released and link to release status.
 - Every Windows, Linux, macOS, and Android platform button downloads the same
   `NET0ZE-release.txt` file.
 - The file only says the release will be out soon; it contains no thank-you note.
@@ -29,10 +26,10 @@ local Net-Land worktree is `/tmp/opencode/nl`.
 ## Git and deployment
 
 - Net-Land previous import commit: `9c5d914`.
-- Net-Land direct-download fix is the next focused commit.
+- Net-Land platform text-file fix: `1b5d64d`, pushed to `origin/main`.
+- Source platform text-file fix: `275a655`, pushed to `origin/master`.
 - Source handoff is kept in this private repository.
-- Existing `https://netoze.surge.sh` is the current deployment and must be
-  republished after the direct-download fix.
+- Existing `https://netoze.surge.sh` was republished after the platform fix.
 
 ## Supabase limitation
 
