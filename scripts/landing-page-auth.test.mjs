@@ -11,26 +11,22 @@ const read = (path) => readFile(join(root, path), 'utf8');
 
 const html = await read('landing-page/index.html');
 const auth = await read('landing-page/thankyou.js');
-const css = await read('landing-page/styles.css');
 const netlify = await read('netlify.toml');
 
 assert.match(html, /data-auth-dialog/);
 assert.match(html, /data-signup-otp-form/);
-assert.match(html, /data-download-link=/);
-assert.match(html, /<button[^>]+data-download-link=/);
 assert.match(html, /github\.com\/1viz3r0\/xtreme-sexo\/raw\/master\/public\/netoze-icon\.png/);
 assert.doesNotMatch(html, /href="javascript:void\(0\)"/);
+assert.equal([...html.matchAll(/<button[^>]+data-download-link="release"/g)].length, 5);
+assert.doesNotMatch(html, /NET0ZE_2\.0\.0_|ThankYou\.txt|Thank-you note/);
 assert.match(auth, /email_confirmed_at/);
 assert.match(auth, /type: 'sms'/);
 assert.doesNotMatch(auth, /phone_change/);
-assert.match(auth, /ThankYou\.txt/);
-assert.match(auth, /NET0ZE will be out soon/);
+assert.match(auth, /NET0ZE-release\.txt/);
+assert.match(auth, /downloadReleaseText/);
 assert.match(auth, /button\[data-download-link\]/);
-assert.doesNotMatch(auth, /pending\.link|finishPendingDownload/);
-assert.match(css, /download-gated\[aria-disabled="true"\]/);
 assert.match(netlify, /publish = "landing-page"/);
 assert.match(netlify, /scripts\/build-landing-page\.mjs/);
-assert.match(html, /github\.com\/1viz3r0\/xtreme-sexo/);
 await assert.rejects(access(join(root, 'landing-page/ThankYou.txt')));
 
 const temp = await mkdtemp(join(tmpdir(), 'netoze-auth-test-'));
@@ -47,4 +43,4 @@ try {
   await rm(temp, { recursive: true, force: true });
 }
 
-console.log('landing-page download/auth checks passed');
+console.log('landing-page release download/auth checks passed');

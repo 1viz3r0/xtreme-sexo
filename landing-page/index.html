@@ -172,36 +172,36 @@
           <div class="section-intro reveal">
             <p class="eyebrow">Take the investigation with you</p>
             <h2 id="downloads-title">Run NET0ZE where you work.</h2>
-            <p>Windows and Linux installer access is temporarily paused while the verified early-access flow is prepared. Each ready card downloads a short ThankYou.txt note when clicked; refreshing this page never starts a download.</p>
+            <p>Every platform button downloads the same temporary NET0ZE release text file.</p>
           </div>
           <div class="download-grid">
             <article class="download-card download-card-ready reveal">
-              <div class="download-card-top"><span class="platform-icon">⊞</span><span class="download-status">Thank-you note</span></div>
+              <div class="download-card-top"><span class="platform-icon">⊞</span><span class="download-status">Available</span></div>
               <h3>Windows</h3>
-              <p>The Windows x64 installer is being prepared. Click below to download a temporary thank-you note while the release is finished.</p>
-              <button class="button button-primary download-gated" type="button" data-download-link="thankyou">Download Thanks <span aria-hidden="true">↓</span></button>
+              <p>Download the temporary NET0ZE release text file.</p>
+              <button class="button button-primary download-gated" type="button" data-download-link="release">Download Windows <span aria-hidden="true">↓</span></button>
               <small>Windows x64 · installer</small>
             </article>
             <article class="download-card download-card-ready reveal reveal-delay-1">
-               <div class="download-card-top"><span class="platform-icon">⌘</span><span class="download-status">Thank-you note</span></div>
+               <div class="download-card-top"><span class="platform-icon">⌘</span><span class="download-status">Available</span></div>
               <h3>Linux</h3>
-               <p>Linux packages are being prepared. Click either button to download the same temporary thank-you note.</p>
-               <div class="download-actions"><button class="button button-primary download-gated" type="button" data-download-link="thankyou">Download Thanks <span aria-hidden="true">↓</span></button><button class="button button-quiet download-gated" type="button" data-download-link="thankyou">AppImage ↗</button></div>
+               <p>Both Linux buttons download the same temporary NET0ZE release text file.</p>
+               <div class="download-actions"><button class="button button-primary download-gated" type="button" data-download-link="release">Download DEB <span aria-hidden="true">↓</span></button><button class="button button-quiet download-gated" type="button" data-download-link="release">Download AppImage <span aria-hidden="true">↓</span></button></div>
               <small>Linux x86_64 · DEB + AppImage</small>
             </article>
             <article class="download-card download-card-unavailable reveal reveal-delay-2">
-              <div class="download-card-top"><span class="platform-icon">●</span><span class="download-status">Not released</span></div>
+              <div class="download-card-top"><span class="platform-icon">●</span><span class="download-status">Available</span></div>
               <h3>macOS</h3>
-              <p>The current NET0ZE release does not ship a packaged macOS target. Follow the project for future support.</p>
-              <a class="button button-quiet" href="https://github.com/1viz3r0/netoze" target="_blank" rel="noreferrer">View project status <span aria-hidden="true">↗</span></a>
-              <small>macOS · no packaged target yet</small>
+              <p>The macOS package is not ready yet, but this button downloads the same temporary release text file.</p>
+              <button class="button button-quiet download-gated" type="button" data-download-link="release">Download macOS <span aria-hidden="true">↓</span></button>
+              <small>macOS · placeholder release file</small>
             </article>
             <article class="download-card download-card-unavailable reveal reveal-delay-2">
-              <div class="download-card-top"><span class="platform-icon">▦</span><span class="download-status">Not released</span></div>
+              <div class="download-card-top"><span class="platform-icon">▦</span><span class="download-status">Available</span></div>
               <h3>Android</h3>
-              <p>NET0ZE is currently a native desktop application. An Android package is not available in the current project.</p>
-              <a class="button button-quiet" href="https://github.com/1viz3r0/netoze" target="_blank" rel="noreferrer">View project status <span aria-hidden="true">↗</span></a>
-              <small>Android · no mobile package yet</small>
+              <p>The Android package is not ready yet, but this button downloads the same temporary release text file.</p>
+              <button class="button button-quiet download-gated" type="button" data-download-link="release">Download Android <span aria-hidden="true">↓</span></button>
+              <small>Android · placeholder release file</small>
             </article>
           </div>
         </section>
@@ -239,11 +239,11 @@
               <ol class="auth-steps" aria-label="Account steps">
                 <li><b>01</b><span>Choose an account</span></li>
                 <li><b>02</b><span>Verify your phone once</span></li>
-                 <li><b>03</b><span>Confirm email for updates</span></li>
+                 <li><b>03</b><span>Receive release updates</span></li>
               </ol>
             </aside>
             <section class="auth-content">
-               <p class="auth-lede" data-auth-copy>Sign in or create an account for early-access updates. The temporary ThankYou.txt note is available from the download cards without signing in.</p>
+               <p class="auth-lede" data-auth-copy>Sign in or create an account for early-access and release updates. Downloads are available directly from the release cards.</p>
               <div class="auth-tabs" role="tablist" aria-label="Authentication mode">
                 <button class="auth-tab is-active" type="button" role="tab" aria-selected="true" data-auth-mode="signin">Sign in</button>
                 <button class="auth-tab" type="button" role="tab" aria-selected="false" data-auth-mode="signup">Create account</button>
@@ -252,7 +252,7 @@
                 <label>Email<input type="email" name="email" autocomplete="email" required /></label>
                 <label>Password<input type="password" name="password" autocomplete="current-password" minlength="12" required /></label>
                 <label class="auth-signup-only" hidden>Phone number<input type="tel" name="phone" placeholder="+1 555 123 4567" autocomplete="tel" /></label>
-                 <label class="auth-signup-only auth-consent" hidden><input type="checkbox" name="consent" /> <span>I agree to use this email and phone only for account verification and early-access updates.</span></label>
+                 <label class="auth-signup-only auth-consent" hidden><input type="checkbox" name="consent" /> <span>I agree to use this email and phone only for account verification and release updates.</span></label>
                 <button class="button button-primary" type="submit" data-auth-submit>Sign in</button>
               </form>
               <form class="auth-form auth-otp-form" data-signup-otp-form hidden>

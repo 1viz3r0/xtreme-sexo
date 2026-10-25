@@ -6,8 +6,8 @@
 (() => {
   'use strict';
 
-  const FILE_NAME = 'ThankYou.txt';
-  const FALLBACK = 'Thank you for your interest in NET0ZE!\n\nNET0ZE will be out soon — we are working hard to bring you something great.\n\n— The NET0ZE team\n';
+  const FILE_NAME = 'NET0ZE-release.txt';
+  const RELEASE_TEXT = 'NET0ZE release file\n\nThe release will be out soon.\n';
   const config = window.NET0ZE_AUTH_CONFIG ?? {};
   const dialog = document.querySelector('[data-auth-dialog]');
   const authForm = document.querySelector('[data-auth-form]');
@@ -49,7 +49,7 @@
     if (typeof dialog.showModal === 'function') dialog.showModal();
     else dialog.setAttribute('open', '');
     if (!isConfigured()) {
-      setStatus('Authentication is not configured on this deployment yet. The thank-you note is still available from the download cards.', 'error');
+      setStatus('Authentication is not configured on this deployment yet. Release downloads remain available.', 'error');
       return;
     }
     if (isVerified()) setStatus('Verified account ready. Early-access updates are enabled.');
@@ -71,8 +71,8 @@
     if (signupOtpForm) signupOtpForm.hidden = !pendingSignup;
   };
 
-  const downloadNote = () => {
-    const blob = new Blob([FALLBACK], { type: 'text/plain;charset=utf-8' });
+  const downloadReleaseText = () => {
+    const blob = new Blob([RELEASE_TEXT], { type: 'text/plain;charset=utf-8' });
     const url = URL.createObjectURL(blob);
     const anchor = document.createElement('a');
     anchor.href = url;
@@ -92,14 +92,13 @@
 
   document.addEventListener('click', (event) => {
     const target = event.target instanceof Element ? event.target : null;
-    const button = target?.closest('#downloads .download-card-ready button[data-download-link]');
-    if (!button) return;
-    downloadNote();
+    const button = target?.closest('#downloads button[data-download-link]');
+    if (button) downloadReleaseText();
   }, true);
 
   authForm?.addEventListener('submit', async (event) => {
     event.preventDefault();
-    if (!client) return setStatus('Authentication is not configured on this deployment yet. The thank-you note is still available.', 'error');
+    if (!client) return setStatus('Authentication is not configured on this deployment yet. Release downloads remain available.', 'error');
     const form = new FormData(authForm);
     const email = String(form.get('email') || '').trim();
     const password = String(form.get('password') || '');

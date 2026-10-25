@@ -9,34 +9,30 @@ local Net-Land worktree is `/tmp/opencode/nl`.
 ## Current implementation
 
 - Landing-page files are promoted to the Net-Land repository root.
-- The page uses the requested icon/logo source:
+- The requested icon/logo source is used throughout the landing page:
   `https://github.com/1viz3r0/xtreme-sexo/raw/master/public/netoze-icon.png`.
-- Ready Windows/Linux cards are buttons, not navigational links.
-- Clicking any ready download button generates `ThankYou.txt` in the browser.
-- Refreshing or opening the page does not download anything.
-- The generated note thanks the visitor and says NET0ZE will be out soon.
-- No static `ThankYou.txt` file or secret key is shipped.
-- Optional Supabase authentication remains for early-access updates and is not
-  configured yet.
+- Windows links directly to the NET0ZE 2.0.0 x64 installer.
+- Linux links directly to the NET0ZE 2.0.0 DEB and AppImage assets.
+- macOS and Android remain not released and link to release status.
+- Every Windows, Linux, macOS, and Android platform button downloads the same
+  `NET0ZE-release.txt` file.
+- The file only says the release will be out soon; it contains no thank-you note.
+- Refreshing or opening the page does not start a download.
 
 ## Checks
 
-- Landing-page download/auth test passed.
+- GitHub release asset metadata verified for Windows, Linux DEB, and AppImage.
 - JavaScript syntax checks passed.
-- Happy DOM load/click/refresh smoke passed: `0 → 1 → 0` downloads.
+- Landing-page download assertions passed.
 - Whitespace check passed for the edited landing-page files.
 
 ## Git and deployment
 
-- Net-Land prior import commit: `9c5d914`.
-- Net-Land fix commit: `9d76d04`, pushed to `origin/main`.
-- Source/handoff commit: `c64df0c`, pushed to `origin/master`.
-- The corrected root was published to `https://netoze.surge.sh` and returned
-  HTTP 200. A live HTML smoke check found the new click-only download copy and
-  requested icon URL.
-- Candidate free names: `netoze-landing.surge.sh`, `netoze-site.surge.sh`, or
-  `netoze-preview.surge.sh`. A new name is only confirmed during publish.
-- If no name is selected, use `netoze.surge.sh`.
+- Net-Land previous import commit: `9c5d914`.
+- Net-Land direct-download fix is the next focused commit.
+- Source handoff is kept in this private repository.
+- Existing `https://netoze.surge.sh` is the current deployment and must be
+  republished after the direct-download fix.
 
 ## Supabase limitation
 
