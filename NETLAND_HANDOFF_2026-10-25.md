@@ -29,9 +29,11 @@ local Net-Land worktree is `/tmp/opencode/nl`.
 ## Git and deployment
 
 - Net-Land prior import commit: `9c5d914`.
-- Current fixes are intentionally uncommitted until reviewed as a focused change.
-- Existing Surge project `netoze.surge.sh` is registered and returned HTTP 200,
-  but the last fetched HTML was stale. It needs a fresh publish of Net-Land.
+- Net-Land fix commit: `9d76d04`, pushed to `origin/main`.
+- Source/handoff commit: `c64df0c`, pushed to `origin/master`.
+- The corrected root was published to `https://netoze.surge.sh` and returned
+  HTTP 200. A live HTML smoke check found the new click-only download copy and
+  requested icon URL.
 - Candidate free names: `netoze-landing.surge.sh`, `netoze-site.surge.sh`, or
   `netoze-preview.surge.sh`. A new name is only confirmed during publish.
 - If no name is selected, use `netoze.surge.sh`.
