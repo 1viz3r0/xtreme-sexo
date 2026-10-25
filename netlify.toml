@@ -1,0 +1,11 @@
+[build]
+  command = "node scripts/build-landing-page.mjs"
+  publish = "landing-page"
+
+[build.environment]
+  NODE_VERSION = "22"
+
+[[headers]]
+  for = "/auth-config.js"
+  [headers.values]
+    Cache-Control = "no-store"

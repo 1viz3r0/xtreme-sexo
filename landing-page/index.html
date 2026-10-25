@@ -1,0 +1,276 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="description" content="NET0ZE is a local-first cybersecurity investigation platform for network monitoring, packet capture, host telemetry, and evidence-first incident analysis." />
+    <meta name="keywords" content="NET0ZE, network monitoring, cybersecurity investigation, packet capture, network forensics, host telemetry, incident response, Linux, Windows" />
+    <meta name="theme-color" content="#0b0d0e" />
+    <meta property="og:title" content="NET0ZE — Local-first cybersecurity investigation" />
+    <meta property="og:description" content="Understand network traffic, host activity, and investigation evidence from one calm, local-first desktop workflow." />
+    <meta property="og:type" content="website" />
+    <meta property="og:image" content="https://github.com/1viz3r0/xtreme-sexo/raw/master/public/netoze-icon.png" />
+    <meta name="twitter:card" content="summary" />
+    <meta name="twitter:title" content="NET0ZE — See the network as evidence" />
+    <meta name="twitter:description" content="Evidence-first network monitoring and cybersecurity investigation for authorized local use." />
+    <title>NET0ZE — Local-first cybersecurity investigation platform</title>
+    <script type="application/ld+json">
+      {
+        "@context": "https://schema.org",
+        "@type": "SoftwareApplication",
+        "name": "NET0ZE",
+        "applicationCategory": "SecurityApplication",
+        "description": "Local-first network monitoring and cybersecurity investigation for authorized use.",
+        "operatingSystem": "Windows, Linux",
+        "softwareVersion": "2.0.0",
+        "downloadUrl": "https://github.com/1viz3r0/netoze/releases/latest",
+        "codeRepository": "https://github.com/1viz3r0/netoze"
+      }
+    </script>
+    <link rel="stylesheet" href="./styles.css" />
+  </head>
+  <body>
+    <div class="site-shell">
+      <header class="site-header" data-header>
+        <a class="brand" href="#top" aria-label="NET0ZE home">
+          <span class="brand-mark"><img src="https://github.com/1viz3r0/xtreme-sexo/raw/master/public/netoze-icon.png" alt="NET0ZE" width="34" height="34" /></span>
+          <span>NET<span class="brand-zero">0</span>ZE</span>
+        </a>
+
+        <nav class="desktop-nav" aria-label="Primary navigation">
+          <a href="#product">Capabilities</a>
+          <a href="#workflow">How it works</a>
+          <a href="#networking">Network view</a>
+          <a href="#downloads">Downloads</a>
+        </nav>
+
+        <div class="header-actions">
+          <a class="text-link header-github" href="https://github.com/1viz3r0/netoze" target="_blank" rel="noreferrer">GitHub <span aria-hidden="true">↗</span></a>
+          <button class="text-link auth-trigger" type="button" data-auth-open>Sign in</button>
+          <a class="button button-small button-light" href="#downloads">Download NET0ZE <span aria-hidden="true">↓</span></a>
+          <button class="menu-toggle" type="button" aria-expanded="false" aria-controls="mobile-nav" data-menu-toggle>
+            <span></span><span></span><span></span>
+            <span class="sr-only">Open navigation</span>
+          </button>
+        </div>
+
+        <nav class="mobile-nav" id="mobile-nav" aria-label="Mobile navigation" data-mobile-nav>
+          <a href="#product">Capabilities</a>
+          <a href="#workflow">How it works</a>
+          <a href="#networking">Network view</a>
+          <a href="#downloads">Downloads</a>
+          <a href="https://github.com/1viz3r0/netoze" target="_blank" rel="noreferrer">GitHub ↗</a>
+          <button class="mobile-nav-action" type="button" data-auth-open>Sign in</button>
+        </nav>
+      </header>
+
+      <main id="top">
+        <section class="hero section-frame" aria-labelledby="hero-title">
+          <div class="hero-copy reveal">
+            <p class="eyebrow"><span class="eyebrow-dot"></span> Local-first network monitoring</p>
+            <h1 id="hero-title">Turn network activity into <em>decisions.</em></h1>
+            <p class="hero-lede">NET0ZE is a desktop cybersecurity investigation platform for network monitoring, packet capture, host telemetry, and evidence-led incident response.</p>
+            <div class="hero-actions">
+              <a class="button button-primary" href="#downloads">Download NET0ZE <span aria-hidden="true">↓</span></a>
+              <a class="button button-quiet" href="#workflow">See how it works <span aria-hidden="true">→</span></a>
+            </div>
+            <div class="hero-notes" aria-label="Product principles">
+              <span>Windows + Linux ready</span>
+              <span>Authorized local use</span>
+              <span>Evidence stays explicit</span>
+            </div>
+          </div>
+
+          <div class="hero-visual globe-hero reveal reveal-delay-1" aria-label="Dark interactive world map globe">
+            <div class="globe-stage">
+              <canvas id="globe-canvas" class="globe-canvas" aria-label="Interactive dark world map globe"></canvas>
+            </div>
+          </div>
+        </section>
+
+        <section class="principles section-frame reveal" aria-label="NET0ZE principles">
+          <div class="principle-item"><span class="principle-index">01</span><div><strong>See the system</strong><p>Start with your local host, interfaces, flows, and the network context around them.</p></div></div>
+          <div class="principle-item"><span class="principle-index">02</span><div><strong>Trace the why</strong><p>Move from a packet or event to the relationship and finding that explains it.</p></div></div>
+          <div class="principle-item"><span class="principle-index">03</span><div><strong>Keep the boundary</strong><p>Unavailable, stale, and permission-limited data stays visible instead of becoming a guess.</p></div></div>
+        </section>
+
+        <section class="content-section section-frame" id="product" aria-labelledby="product-title">
+          <div class="section-intro reveal">
+            <p class="eyebrow">One place to investigate</p>
+            <h2 id="product-title">A clear view of what happened.</h2>
+            <p>NET0ZE brings network monitoring, packet analysis, host context, and practical cybersecurity labs into one focused desktop workflow.</p>
+          </div>
+
+          <div class="feature-grid">
+            <article class="feature-card feature-card-large reveal">
+              <div class="feature-card-top"><span class="feature-number">01</span><span class="feature-tag">Overview</span></div>
+              <div class="mini-globe" aria-hidden="true"><span class="globe-orbit orbit-one"></span><span class="globe-orbit orbit-two"></span><span class="globe-core"></span><span class="globe-marker marker-one"></span><span class="globe-marker marker-two"></span><span class="globe-marker marker-three"></span></div>
+              <h3>Start with the whole picture.</h3>
+              <p>See your local network context, observed activity, and freshness before you follow a single signal.</p>
+              <a class="card-link" href="#workflow">Follow the evidence <span aria-hidden="true">↗</span></a>
+            </article>
+
+            <article class="feature-card reveal reveal-delay-1">
+              <div class="feature-card-top"><span class="feature-number">02</span><span class="feature-tag">Watchtower</span></div>
+              <div class="signal-stack" aria-hidden="true"><span><i></i> source / host</span><span><i></i> flow / session</span><span><i></i> finding / context</span></div>
+              <h3>Turn events into a trail.</h3>
+              <p>Follow recent network observations while keeping the source and provenance that make them useful for incident response.</p>
+              <a class="card-link" href="#networking">See the trail <span aria-hidden="true">↗</span></a>
+            </article>
+
+            <article class="feature-card reveal reveal-delay-2">
+              <div class="feature-card-top"><span class="feature-number">03</span><span class="feature-tag">Capture Buddy</span></div>
+              <div class="packet-list" aria-hidden="true"><span><b>DNS</b><em>query observed</em><time>now</time></span><span><b>TCP</b><em>session closed</em><time>12s</time></span><span><b>HTTP</b><em>metadata ready</em><time>28s</time></span></div>
+              <h3>Inspect without the ceremony.</h3>
+              <p>Move from bounded packet capture evidence to a readable investigation brief, then export the evidence you need.</p>
+              <a class="card-link" href="#workflow">See the workflow <span aria-hidden="true">↗</span></a>
+            </article>
+          </div>
+        </section>
+
+        <section class="networking-section section-frame" id="networking" aria-labelledby="networking-title">
+          <div class="networking-copy reveal">
+            <p class="eyebrow">Network context that holds up</p>
+            <h2 id="networking-title">Every connection gets context.</h2>
+            <p>Good network security UX does not dump every field on screen. It reveals the right layer at the right time: host, flow, session, and finding.</p>
+            <ul class="check-list">
+              <li><span>✓</span><div><strong>Know the source</strong><small>Separate host inventory, packet capture, and derived context before you interpret a signal.</small></div></li>
+              <li><span>✓</span><div><strong>Follow the relationship</strong><small>Move across hosts, flows, sessions, and findings without dropping the connection.</small></div></li>
+              <li><span>✓</span><div><strong>Respect the scope</strong><small>Keep authorization, freshness, and unavailable data explicit at every step.</small></div></li>
+            </ul>
+          </div>
+          <div class="protocol-panel reveal reveal-delay-1">
+            <div class="protocol-tabs" role="tablist" aria-label="Evidence layer examples">
+              <button class="protocol-tab is-active" type="button" role="tab" aria-selected="true" data-protocol="flow">Flow</button>
+              <button class="protocol-tab" type="button" role="tab" aria-selected="false" data-protocol="host">Host</button>
+              <button class="protocol-tab" type="button" role="tab" aria-selected="false" data-protocol="finding">Finding</button>
+            </div>
+            <div class="protocol-body" data-protocol-panel>
+              <div class="protocol-kicker">network relationship</div>
+              <div class="protocol-title">192.168.1.8 <span>→</span> gateway</div>
+              <div class="protocol-fields"><span><small>transport</small><strong>TCP</strong></span><span><small>service</small><strong>443 / TLS</strong></span><span><small>source</small><strong>capture</strong></span></div>
+              <div class="protocol-note"><i class="status-dot"></i><span data-protocol-note>Observed relationship, ready for context.</span></div>
+            </div>
+            <div class="protocol-footer"><span>Evidence layer</span><strong data-protocol-label>FLOW RECORD</strong></div>
+          </div>
+        </section>
+
+        <section class="workflow-section section-frame" id="workflow" aria-labelledby="workflow-title">
+          <div class="section-intro reveal">
+            <p class="eyebrow">A calmer operating loop</p>
+            <h2 id="workflow-title">From signal to story in three steps.</h2>
+            <p>The interface guides attention from what is happening to why it matters — without skipping the evidence in between.</p>
+          </div>
+          <div class="workflow-grid">
+            <article class="workflow-step reveal"><span class="step-number">01</span><div class="step-line"></div><h3>Orient</h3><p>Start with the current host and network snapshot. Know what is fresh, stale, unavailable, or waiting.</p></article>
+            <article class="workflow-step reveal reveal-delay-1"><span class="step-number">02</span><div class="step-line"></div><h3>Trace</h3><p>Open the relationship: a flow, event, graph edge, or capture record that deserves your attention.</p></article>
+            <article class="workflow-step reveal reveal-delay-2"><span class="step-number">03</span><div class="step-line"></div><h3>Explain</h3><p>Turn the evidence into an exportable finding while keeping the boundary of what is known intact.</p></article>
+          </div>
+        </section>
+
+        <section class="downloads-section section-frame" id="downloads" aria-labelledby="downloads-title">
+          <div class="section-intro reveal">
+            <p class="eyebrow">Take the investigation with you</p>
+            <h2 id="downloads-title">Run NET0ZE where you work.</h2>
+            <p>Windows and Linux installer access is temporarily paused while the verified early-access flow is prepared. Each ready card downloads a short ThankYou.txt note when clicked; refreshing this page never starts a download.</p>
+          </div>
+          <div class="download-grid">
+            <article class="download-card download-card-ready reveal">
+              <div class="download-card-top"><span class="platform-icon">⊞</span><span class="download-status">Thank-you note</span></div>
+              <h3>Windows</h3>
+              <p>The Windows x64 installer is being prepared. Click below to download a temporary thank-you note while the release is finished.</p>
+              <button class="button button-primary download-gated" type="button" data-download-link="thankyou">Download Thanks <span aria-hidden="true">↓</span></button>
+              <small>Windows x64 · installer</small>
+            </article>
+            <article class="download-card download-card-ready reveal reveal-delay-1">
+               <div class="download-card-top"><span class="platform-icon">⌘</span><span class="download-status">Thank-you note</span></div>
+              <h3>Linux</h3>
+               <p>Linux packages are being prepared. Click either button to download the same temporary thank-you note.</p>
+               <div class="download-actions"><button class="button button-primary download-gated" type="button" data-download-link="thankyou">Download Thanks <span aria-hidden="true">↓</span></button><button class="button button-quiet download-gated" type="button" data-download-link="thankyou">AppImage ↗</button></div>
+              <small>Linux x86_64 · DEB + AppImage</small>
+            </article>
+            <article class="download-card download-card-unavailable reveal reveal-delay-2">
+              <div class="download-card-top"><span class="platform-icon">●</span><span class="download-status">Not released</span></div>
+              <h3>macOS</h3>
+              <p>The current NET0ZE release does not ship a packaged macOS target. Follow the project for future support.</p>
+              <a class="button button-quiet" href="https://github.com/1viz3r0/netoze" target="_blank" rel="noreferrer">View project status <span aria-hidden="true">↗</span></a>
+              <small>macOS · no packaged target yet</small>
+            </article>
+            <article class="download-card download-card-unavailable reveal reveal-delay-2">
+              <div class="download-card-top"><span class="platform-icon">▦</span><span class="download-status">Not released</span></div>
+              <h3>Android</h3>
+              <p>NET0ZE is currently a native desktop application. An Android package is not available in the current project.</p>
+              <a class="button button-quiet" href="https://github.com/1viz3r0/netoze" target="_blank" rel="noreferrer">View project status <span aria-hidden="true">↗</span></a>
+              <small>Android · no mobile package yet</small>
+            </article>
+          </div>
+        </section>
+
+        <section class="labs-section section-frame" id="labs" aria-labelledby="labs-title">
+          <div class="labs-copy reveal"><p class="eyebrow">Practical learning</p><h2 id="labs-title">Build better instincts.</h2><p>Docker-backed Labs give the investigation loop a safe place to become muscle memory. Start with original, local challenges built around the same evidence-first workflow.</p><a class="button button-light" href="https://github.com/1viz3r0/netoze" target="_blank" rel="noreferrer">Read the project notes <span aria-hidden="true">↗</span></a></div>
+          <div class="labs-right reveal reveal-delay-1">
+            <div class="lab-console" aria-label="Illustrative lab console"><div class="console-bar"><span class="console-dot"></span><span class="console-dot"></span><span class="console-dot"></span><span class="console-title">netoze / labs / harborline</span></div><div class="console-body"><p><span class="console-muted">$</span> start web-exposure</p><p class="console-success">✓ target running on loopback</p><p><span class="console-muted">$</span> inspect evidence</p><p class="console-cyan">→ metadata / robots / support-export</p><p><span class="console-muted">$</span> submit finding</p><p class="console-muted">bounded runtime · owned resources · resettable state</p></div></div>
+            <aside class="operator-memes" aria-label="Operator notes">
+              <div class="operator-memes-heading"><span>FIELD NOTES / UNOFFICIAL</span><small>text only · no evidence lost</small></div>
+              <p><span>me:</span> “I’ll just check one packet.”</p>
+              <p><span>the packet:</span> “I have a whole storyline.”</p>
+              <p><span>NET0ZE:</span> “Cool. Keep the source attached.”</p>
+            </aside>
+          </div>
+        </section>
+
+        <section class="closing-section section-frame reveal" aria-labelledby="closing-title">
+          <p class="eyebrow">Build the habit of knowing</p>
+          <h2 id="closing-title">Your network already tells a story.<br /><em>Read it clearly.</em></h2>
+          <div class="closing-actions"><a class="button button-primary" href="#top">Back to the top <span aria-hidden="true">↑</span></a><a class="button button-quiet" href="https://github.com/1viz3r0/netoze" target="_blank" rel="noreferrer">View NET0ZE on GitHub <span aria-hidden="true">↗</span></a></div>
+        </section>
+      </main>
+
+       <footer class="site-footer section-frame"><a class="brand" href="#top"><span class="brand-mark"><img src="https://github.com/1viz3r0/xtreme-sexo/raw/master/public/netoze-icon.png" alt="NET0ZE" width="28" height="28" /></span><span>NET<span class="brand-zero">0</span>ZE</span></a><p>Local-first network monitoring and cybersecurity investigation for authorized use.</p><span class="footer-meta">© 2026 · authorized use only</span></footer>
+      <dialog class="auth-dialog" data-auth-dialog aria-labelledby="auth-title">
+        <div class="auth-panel">
+          <button class="auth-close" type="button" data-auth-close aria-label="Close authentication dialog">×</button>
+          <div class="auth-layout">
+            <aside class="auth-aside">
+               <span class="auth-logo"><img src="https://github.com/1viz3r0/xtreme-sexo/raw/master/public/netoze-icon.png" alt="NET0ZE" /></span>
+              <p class="eyebrow"><span class="eyebrow-dot"></span> Early access</p>
+              <h2 id="auth-title">Access the preview.</h2>
+              <p class="auth-aside-copy">One calm gate. Phone verification happens once during account creation, never during ordinary sign-in.</p>
+              <ol class="auth-steps" aria-label="Account steps">
+                <li><b>01</b><span>Choose an account</span></li>
+                <li><b>02</b><span>Verify your phone once</span></li>
+                 <li><b>03</b><span>Confirm email for updates</span></li>
+              </ol>
+            </aside>
+            <section class="auth-content">
+               <p class="auth-lede" data-auth-copy>Sign in or create an account for early-access updates. The temporary ThankYou.txt note is available from the download cards without signing in.</p>
+              <div class="auth-tabs" role="tablist" aria-label="Authentication mode">
+                <button class="auth-tab is-active" type="button" role="tab" aria-selected="true" data-auth-mode="signin">Sign in</button>
+                <button class="auth-tab" type="button" role="tab" aria-selected="false" data-auth-mode="signup">Create account</button>
+              </div>
+              <form class="auth-form" data-auth-form>
+                <label>Email<input type="email" name="email" autocomplete="email" required /></label>
+                <label>Password<input type="password" name="password" autocomplete="current-password" minlength="12" required /></label>
+                <label class="auth-signup-only" hidden>Phone number<input type="tel" name="phone" placeholder="+1 555 123 4567" autocomplete="tel" /></label>
+                 <label class="auth-signup-only auth-consent" hidden><input type="checkbox" name="consent" /> <span>I agree to use this email and phone only for account verification and early-access updates.</span></label>
+                <button class="button button-primary" type="submit" data-auth-submit>Sign in</button>
+              </form>
+              <form class="auth-form auth-otp-form" data-signup-otp-form hidden>
+                <div class="auth-otp-label"><span class="auth-otp-icon">02</span><span><strong>Verify phone once</strong><small>Enter the code sent during account creation.</small></span></div>
+                <label>6-digit code<input type="text" name="code" inputmode="numeric" autocomplete="one-time-code" pattern="[0-9]{6}" maxlength="6" required /></label>
+                <button class="button button-primary" type="submit">Verify and continue</button>
+              </form>
+            </section>
+          </div>
+          <button class="button button-quiet auth-signout" type="button" data-auth-signout hidden>Sign out</button>
+          <p class="auth-status" data-auth-status role="status" aria-live="polite"></p>
+          <p class="auth-privacy">No analytics. No service key in the browser. Only the configured authentication provider receives the account data needed for verification.</p>
+        </div>
+      </dialog>
+    </div>
+    <script src="./script.js"></script>
+    <script src="./auth-config.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+    <script src="./thankyou.js"></script>
+  </body>
+</html>
