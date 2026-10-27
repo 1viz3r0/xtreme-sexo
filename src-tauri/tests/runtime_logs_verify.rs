@@ -1,10 +1,10 @@
 //! Isolated process integration: tracing -> private ring -> native IPC response.
 use netoze_desktop::{commands::runtime_logs, services::logging};
+mod support;
 
 #[test]
 fn operational_events_can_be_read_back_without_private_input() {
-    // Caller supplies an isolated XDG_DATA_HOME, never the user's application data.
-    assert!(std::env::var("XDG_DATA_HOME").unwrap_or_default().contains("improvement-test-data"));
+    let _data = support::isolated_data("runtime-logs");
     logging::init_logging();
     {
         let mut operation = logging::OperationAudit::new("import");

@@ -68,6 +68,7 @@ export function Watchtower({ flows, events, graph, inventorySources, kernelSnaps
   const kernelBusyRef = useRef(false);
   const [kernelError, setKernelError] = useState<string | null>(null);
   const [activeDiscovery, setActiveDiscovery] = useState<ActiveLocalDiscovery | null>(null);
+  const [activeDiscoveryStarted, setActiveDiscoveryStarted] = useState(false);
   const [activeDiscoveryBusy, setActiveDiscoveryBusy] = useState(false);
   const [activeDiscoveryPaused, setActiveDiscoveryPaused] = useState(false);
   const activeDiscoveryRef = useRef(false);
@@ -85,6 +86,7 @@ export function Watchtower({ flows, events, graph, inventorySources, kernelSnaps
 
   const runActiveDiscovery = useCallback(async () => {
     if (activeDiscoveryPaused || activeDiscoveryRef.current || !inventoryAvailable) return;
+    setActiveDiscoveryStarted(true);
     activeDiscoveryRef.current = true;
     setActiveDiscoveryBusy(true);
     try { setActiveDiscovery(await discoverLocalNetwork()); }
@@ -153,9 +155,7 @@ export function Watchtower({ flows, events, graph, inventorySources, kernelSnaps
       void loadInterfaces();
       void loadNeighbors(true);
       void loadKernelSnapshot();
-      void runActiveDiscovery();
     }
-    const activeTimer = window.setInterval(() => { void runActiveDiscovery(); }, 30_000);
     const onVisible = () => {
       if (!document.hidden) {
         void loadInterfaces();
@@ -164,15 +164,21 @@ export function Watchtower({ flows, events, graph, inventorySources, kernelSnaps
       }
     };
     document.addEventListener('visibilitychange', onVisible);
-    return () => { mountedRef.current = false; window.clearInterval(activeTimer); document.removeEventListener('visibilitychange', onVisible); };
-  }, [inventoryAvailable, loadInterfaces, loadNeighbors, loadKernelSnapshot, runActiveDiscovery]);
+    return () => { mountedRef.current = false; document.removeEventListener('visibilitychange', onVisible); };
+  }, [inventoryAvailable, loadInterfaces, loadNeighbors, loadKernelSnapshot]);
+
+  useEffect(() => {
+    if (!inventoryAvailable || !activeDiscoveryStarted || activeDiscoveryPaused) return;
+    const activeTimer = window.setInterval(() => { void runActiveDiscovery(); }, 30_000);
+    return () => window.clearInterval(activeTimer);
+  }, [activeDiscoveryPaused, activeDiscoveryStarted, inventoryAvailable, runActiveDiscovery]);
 
   const formatSeen = (value: number) => Number.isFinite(value) && value >= 0 && value <= 8640000000000000 ? new Date(value).toISOString() : 'Unavailable';
 
   return (
-    <main aria-labelledby="watchtower-title" className="min-h-full bg-[#090a0b] p-3 text-zinc-300 sm:p-5">
+    <main aria-labelledby="watchtower-title" className="enterprise-page enterprise-watchtower-page min-h-full bg-[#090a0b] p-3 text-zinc-300 sm:p-5">
       <div className="mx-auto max-w-6xl space-y-4">
-        <header className="relative overflow-hidden rounded-xl border border-zinc-800 bg-[#0d0f10] px-4 py-4 sm:px-5">
+           <header className="enterprise-tool-header relative overflow-hidden rounded-xl border border-zinc-800 bg-[#0d0f10] px-4 py-4 sm:px-5">
           <div className="pointer-events-none absolute -right-10 -top-16 h-40 w-40 rounded-full border border-zinc-800/70" />
           <div className="pointer-events-none absolute -right-2 -top-8 h-24 w-24 rounded-full border border-zinc-800/50" />
           <div className="relative flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
@@ -181,8 +187,8 @@ export function Watchtower({ flows, events, graph, inventorySources, kernelSnaps
               <Eye aria-hidden="true" size={16} />
               <span className="text-[10px] font-semibold uppercase tracking-[0.22em]">Local observation</span>
             </div>
-            <h1 id="watchtower-title" className="text-2xl font-semibold tracking-tight text-zinc-100">Watchtower</h1>
-            <p className="mt-1 text-xs text-zinc-500">A local snapshot of loaded signals and explicit inventory.</p>
+             <h1 id="watchtower-title" className="text-2xl font-semibold tracking-tight text-zinc-100">Watchtower</h1>
+             <p className="mt-1 text-xs text-zinc-500">A deliberate local evidence board: loaded signals, explicit inventory, and bounded discovery.</p>
           </div>
           <span className="inline-flex w-fit items-center gap-2 rounded-full border border-zinc-700 bg-[#111315] px-3 py-1.5 text-[11px] font-medium text-zinc-400">
              <Radio aria-hidden="true" size={13} /> Live + snapshot
@@ -193,7 +199,7 @@ export function Watchtower({ flows, events, graph, inventorySources, kernelSnaps
 
           <section aria-labelledby="watchtower-live-discovery" className="rounded-xl border border-zinc-700 bg-[#0d0f10] p-3.5 sm:p-4">
             <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
-              <div><h2 id="watchtower-live-discovery" className="text-sm font-semibold text-zinc-200">Live local discovery</h2><p className="mt-1 text-[11px] text-zinc-500">Bounded ICMP discovery of the detected local subnet, refreshed every 30 seconds while Watchtower is open.</p></div>
+             <div><h2 id="watchtower-live-discovery" className="text-sm font-semibold text-zinc-200">Live local discovery</h2><p className="mt-1 text-[11px] text-zinc-500">Run bounded ICMP discovery of the detected local subnet on demand. After the first refresh, it repeats every 30 seconds until paused.</p></div>
               <div className="flex flex-wrap gap-2"><button type="button" onClick={() => void runActiveDiscovery()} disabled={!inventoryAvailable || activeDiscoveryBusy || activeDiscoveryPaused} className="rounded-lg border border-zinc-600 px-3 py-2 text-xs text-zinc-200 hover:border-zinc-400 disabled:cursor-not-allowed disabled:opacity-50">{activeDiscoveryBusy ? 'Discovering…' : 'Refresh now'}</button><button type="button" onClick={() => setActiveDiscoveryPaused(value => !value)} className="rounded-lg border border-zinc-700 px-3 py-2 text-xs text-zinc-300 hover:border-zinc-500">{activeDiscoveryPaused ? 'Resume discovery' : 'Pause discovery'}</button></div>
             </div>
              {activeDiscovery ? <><div className="mt-3 grid gap-2 sm:grid-cols-5"><Metric label="Subnet" value={activeDiscovery.cidr || 'Unavailable'} detail={activeDiscovery.interface || 'No interface'} /><Metric label="Gateway" value={activeDiscovery.gateway || 'Unknown'} detail="Default route evidence" /><Metric label="Known devices" value={activeDiscovery.devices.length} detail="Retained across refreshes" /><Metric label="Present now" value={activeDiscovery.devices.filter(device => device.present).length} detail="Seen in latest sweep" /><Metric label="State" value={activeDiscoveryBusy ? 'RUNNING' : activeDiscoveryPaused ? 'PAUSED' : 'READY'} detail={activeDiscovery.devices[0]?.last_seen ? `Last result ${new Date(activeDiscovery.devices[0].last_seen).toLocaleTimeString()}` : 'No replies recorded'} /></div><div className="mt-3 overflow-x-auto"><table className="w-full min-w-[820px] text-left text-xs"><caption className="sr-only">Actively discovered local devices</caption><thead className="text-zinc-500"><tr>{['IP', 'MAC', 'Role', 'Presence', 'State', 'Evidence', 'Last seen', 'Action'].map(heading => <th key={heading} className="px-2 pb-2 font-medium">{heading}</th>)}</tr></thead><tbody className="divide-y divide-zinc-800">{activeDiscovery.devices.map(device => <tr key={device.ip} className={`text-zinc-300 ${device.present ? '' : 'opacity-60'}`}><td className="px-2 py-2 font-mono">{device.ip}</td><td className="px-2 py-2 font-mono">{device.mac || 'Unavailable'}</td><td className="px-2 py-2">{device.gateway ? 'Gateway' : device.ip === activeDiscovery.local_ip ? 'This host' : 'Local device'}</td><td className="px-2 py-2">{device.present ? 'Present' : 'Historical'}</td><td className="px-2 py-2">{device.state}</td><td className="px-2 py-2">{device.method}</td><td className="px-2 py-2">{new Date(device.last_seen).toLocaleTimeString()} · {device.seen_count} sweep{device.seen_count === 1 ? '' : 's'}</td><td className="px-2 py-2"><button type="button" disabled={!onOpenScan} onClick={() => onOpenScan?.(device.ip)} className="rounded border border-zinc-700 px-2 py-1 text-zinc-200 hover:border-zinc-500 disabled:opacity-50">Scan Buddy</button></td></tr>)}</tbody></table>{activeDiscovery.devices.length === 0 && <p role="status" className="mt-3 rounded-lg border border-dashed border-zinc-800 px-3 py-5 text-center text-xs text-zinc-500">No devices were observed yet. Hosts that block ICMP and do not answer ARP may still be connected.</p>}</div>{activeDiscovery.warnings.map(warning => <p key={warning} className="mt-3 text-[11px] text-amber-300">{warning}</p>)}</> : <p role="status" className="mt-3 rounded-lg border border-dashed border-zinc-800 px-3 py-5 text-center text-xs text-zinc-500">Waiting for the first local discovery sweep.</p>}
@@ -216,7 +222,7 @@ export function Watchtower({ flows, events, graph, inventorySources, kernelSnaps
            </div>
          </section>
 
-         <section aria-labelledby="watchtower-graph" className="rounded-xl border border-zinc-800 bg-[#0d0f10] p-3.5 sm:p-4">
+          <section aria-labelledby="watchtower-graph" className="rounded-xl border border-zinc-800 bg-[#0d0f10] p-3.5 sm:p-4">
            <div className="flex items-center justify-between gap-2">
              <div>
                <h2 id="watchtower-graph" className="text-sm font-semibold text-zinc-200">Observed relationship graph</h2>
@@ -225,8 +231,8 @@ export function Watchtower({ flows, events, graph, inventorySources, kernelSnaps
              <span className="text-xs text-zinc-500">{graph.nodes.length} nodes · {graph.edges.length} edges</span>
            </div>
            <div className="mt-3 flex flex-wrap gap-2">
-             <button type="button" disabled={!onOpenScan} onClick={() => onOpenScan?.(devices[0]?.ip ?? '')} className="rounded-lg border border-zinc-700 px-3 py-2 text-xs text-zinc-200 hover:border-zinc-500 disabled:cursor-not-allowed disabled:opacity-50">Scan first neighbor</button>
-             <button type="button" disabled={!onOpenCapture} onClick={() => onOpenCapture?.({ interface_name: adapters[0]?.name ?? '', provenance: 'observed-on-interface' })} className="rounded-lg border border-zinc-700 px-3 py-2 text-xs text-zinc-200 hover:border-zinc-500 disabled:cursor-not-allowed disabled:opacity-50">Capture interface</button>
+              <button type="button" disabled={!onOpenScan || !devices[0]?.ip} onClick={() => onOpenScan?.(devices[0]?.ip ?? '')} className="rounded-lg border border-zinc-700 px-3 py-2 text-xs text-zinc-200 hover:border-zinc-500 disabled:cursor-not-allowed disabled:opacity-50">Scan first neighbor</button>
+              <button type="button" disabled={!onOpenCapture || !adapters[0]?.name} onClick={() => onOpenCapture?.({ interface_name: adapters[0]?.name ?? '', provenance: 'observed-on-interface' })} className="rounded-lg border border-zinc-700 px-3 py-2 text-xs text-zinc-200 hover:border-zinc-500 disabled:cursor-not-allowed disabled:opacity-50">Capture interface</button>
            </div>
            {adapters[0]?.ipv4_addresses[0] && devices[0]?.ip && (
              <p className="mt-3 rounded-lg border border-zinc-800 bg-[#111315] px-3 py-2 text-xs text-zinc-400">

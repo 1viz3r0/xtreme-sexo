@@ -22,9 +22,6 @@ export type GeoSearchResult =
   | { kind: 'region'; name: string; code: string | null; country: string; type: string | null; lat: number; lng: number }
   | { kind: 'city'; name: string; country: string; lat: number; lng: number };
 
-let countries: CountryPolyLite[] | null = null;
-let cities: CityEntry[] | null = null;
-
 function normalize(s: string): string {
   return s.toLowerCase().trim().replace(/\s+/g, ' ');
 }
@@ -43,8 +40,8 @@ function score(name: string, code: string | null, q: string): number {
 export async function searchGeo(query: string, limit = 12): Promise<GeoSearchResult[]> {
   const q = normalize(query);
   if (q.length < 2) return [];
-  countriesPromise ??= loadJson<CountryPolyLite[]>(COUNTRIES_URL);
-  citiesPromise ??= loadJson<CityEntry[]>(CITIES_URL);
+  countriesPromise ??= loadJson<CountryPolyLite[]>(COUNTRIES_URL).catch(error => { countriesPromise = null; throw error; });
+  citiesPromise ??= loadJson<CityEntry[]>(CITIES_URL).catch(error => { citiesPromise = null; throw error; });
   const [countries, cities, regions] = await Promise.all([countriesPromise, citiesPromise, loadRegionsIndex()]);
 
   const out: { s: number; r: GeoSearchResult }[] = [];
@@ -75,12 +72,4 @@ export async function searchGeoCached(query: string, limit = 12): Promise<GeoSea
   const res = await searchGeo(query, limit);
   resultCache.set(key, res);
   return res;
-}
-
-export function debounce<A extends unknown[]>(fn: (...args: A) => void, ms: number): (...args: A) => void {
-  let t: ReturnType<typeof setTimeout> | null = null;
-  return (...args: A) => {
-    if (t) clearTimeout(t);
-    t = setTimeout(() => fn(...args), ms);
-  };
 }

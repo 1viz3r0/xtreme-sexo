@@ -2,8 +2,6 @@ use crate::models::{
     CapabilityStatus, DetailedAdapterInfo, DetailedSystemInfo, NetworkAdapterInfo, NpcapStatus,
     PacketCaptureCapability, SystemInfo,
 };
-use pcap::Device;
-use std::path::Path;
 use sysinfo::{Networks, System};
 
 /// Checks if current process runs with elevated Administrator privileges on Windows
@@ -23,27 +21,12 @@ pub fn check_is_admin() -> bool {
     false
 }
 
-/// Inspects Windows system for Npcap driver DLLs across all standard Windows installation paths
+/// Check a loadable system capture runtime, not guessed drive letters or DLL presence.
 pub fn inspect_npcap() -> NpcapStatus {
     if !cfg!(windows) {
         return NpcapStatus { installed: false, service_available: false, version: None };
     }
-    let paths = [
-        "C:\\Windows\\System32\\Npcap\\wpcap.dll",
-        "C:\\Windows\\System32\\Npcap\\Packet.dll",
-        "C:\\Windows\\System32\\wpcap.dll",
-        "C:\\Windows\\System32\\Packet.dll",
-        "C:\\Windows\\SysWOW64\\Npcap\\wpcap.dll",
-        "C:\\Windows\\SysWOW64\\Npcap\\Packet.dll",
-        "C:\\Windows\\SysWOW64\\wpcap.dll",
-        "C:\\Windows\\SysWOW64\\Packet.dll",
-        "C:\\Program Files\\Npcap\\wpcap.dll",
-        "C:\\Windows\\System32\\drivers\\npcap.sys",
-    ];
-
-    let library_paths_ok = paths.iter().any(|p| Path::new(p).exists());
-    let device_list_ok = Device::list().is_ok();
-    let installed = library_paths_ok && device_list_ok;
+    let installed = super::capture::devices().is_ok();
 
     NpcapStatus {
         installed,

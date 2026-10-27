@@ -9,19 +9,22 @@ export function LabRuntimeWorkspace({ adapter, pollIntervalMs = 5000 }: { adapte
   const [stage, setStage] = useState('All stages')
   const [runtime, setRuntime] = useState<LabRuntimeStatus | null>(null)
   const [busy, setBusy] = useState(false)
+  const [provisioning, setProvisioning] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [notice, setNotice] = useState('')
   const [flag, setFlag] = useState('')
   const [evidenceNotes, setEvidenceNotes] = useState('')
   const [checkedSteps, setCheckedSteps] = useState<boolean[]>([])
   const [selectedLab, setSelectedLab] = useState('web-exposure')
-  const gate = useRef(false)
-  const mounted = useRef(false)
+  const gate = useRef<string | null>(null)
+  const mounted = useRef({ active: false })
   const revision = useRef(0)
   const working = !!(runtime?.running && runtime.phase === 'running' && runtime.targetUrl)
 
   useEffect(() => {
-    mounted.current = true
+    const lifetime = { active: true }
+    mounted.current = lifetime
+    gate.current = null; setBusy(false); setProvisioning(false)
     let disposed = false
     let timer: ReturnType<typeof setTimeout>
     const poll = async () => {
@@ -33,30 +36,34 @@ export function LabRuntimeWorkspace({ adapter, pollIntervalMs = 5000 }: { adapte
       if (!disposed) timer = setTimeout(() => void poll(), pollIntervalMs)
     }
      void poll()
-    return () => { disposed = true; mounted.current = false; clearTimeout(timer) }
+    return () => { disposed = true; lifetime.active = false; clearTimeout(timer) }
   }, [adapter, pollIntervalMs])
 
   const action = async (kind: 'start' | 'stop' | 'reset' | 'open' | 'submitFlag' | 'status') => {
-    if (gate.current) return
-    gate.current = true; revision.current++; setBusy(true); setError(null); setNotice('')
+    const lifetime = mounted.current
+    if (gate.current && !(kind === 'stop' && ['start', 'reset'].includes(gate.current))) return
+    gate.current = kind; const version = ++revision.current; setBusy(true); setProvisioning(kind === 'start' || kind === 'reset'); setError(null); setNotice('')
     try {
        const next = kind === 'start' ? await adapter.start(selectedLab) : kind === 'submitFlag' ? await adapter.submitFlag(flag.trim()) : await adapter[kind]()
-      if (mounted.current) {
+      if (lifetime.active && version === revision.current) {
         setRuntime(next)
         if (kind === 'submitFlag') setFlag('')
         if (kind === 'start' || kind === 'reset' || kind === 'stop') setCheckedSteps([])
       }
-    } catch (failure) { if (mounted.current) { setRuntime(null); setError(failure instanceof Error ? failure.message : String(failure)) } }
-    finally { gate.current = false; if (mounted.current) setBusy(false) }
+    } catch (failure) { if (lifetime.active && version === revision.current) setError(failure instanceof Error ? failure.message : String(failure)) }
+    finally { if (lifetime.active && version === revision.current) { gate.current = null; setBusy(false); setProvisioning(false) } }
   }
   const copy = async () => {
     if (!working || !runtime?.targetUrl) return
-    try { await navigator.clipboard.writeText(runtime.targetUrl); setNotice('Target URL copied.') } catch { setError('Could not copy the target URL.') }
+    const lifetime = mounted.current; const version = revision.current
+    try { await navigator.clipboard.writeText(runtime.targetUrl); if (lifetime.active && version === revision.current) setNotice('Target URL copied.') } catch { if (lifetime.active && version === revision.current) setError('Could not copy the target URL.') }
   }
   const topics = LAB_TOPIC_CATALOG.filter(topic => (category === 'All categories' || topic.category === category) && (stage === 'All stages' || topic.stage === stage))
 
       const groupedTopics = ['Easy', 'Medium', 'Hard'].map(groupStage => ({ stage: groupStage, topics: topics.filter(topic => topic.stage === groupStage) })).filter(group => group.topics.length > 0)
-      const selectedTopic = LAB_TOPIC_CATALOG.find(topic => topic.id === selectedLab)
+       const selectedTopic = LAB_TOPIC_CATALOG.find(topic => topic.id === selectedLab)
+       const activeTopic = LAB_TOPIC_CATALOG.find(topic => topic.id === runtime?.labId)
+       const runtimeTopic = runtime?.labId ? activeTopic : selectedTopic
       const stageTone: Record<string, { accent: string; wash: string; mark: string; description: string }> = {
         Easy: { accent: 'border-slate-500/80 text-slate-200', wash: 'bg-slate-500/[.04]', mark: 'E1', description: 'Start with clear clues and a short, explainable trail.' },
         Medium: { accent: 'border-slate-400/80 text-slate-100', wash: 'bg-slate-400/[.05]', mark: 'M2', description: 'Connect evidence, then explain why it supports your answer.' },
@@ -74,12 +81,14 @@ export function LabRuntimeWorkspace({ adapter, pollIntervalMs = 5000 }: { adapte
        <div aria-label="CTF rooms" className="space-y-8">{groupedTopics.map(group => { const tone = stageTone[group.stage]; return <section key={group.stage} aria-label={`${group.stage} CTFs`}><div className={`mb-3 flex flex-wrap items-center gap-3 border-b ${tone.accent.split(' ')[0]} pb-3 ${tone.wash}`}><span className={`border px-2 py-1 font-mono text-xs font-bold ${tone.accent}`}>{tone.mark}</span><h2 className="text-sm font-semibold uppercase tracking-[.2em] text-white">{group.stage} CTFs</h2><span className="text-xs text-slate-500">{tone.description}</span></div><div className="grid gap-4 md:grid-cols-2">{group.topics.map(topic => { const selected = selectedLab === topic.id; return <article key={topic.id} data-topic-id={topic.id} className={`relative flex h-full flex-col overflow-hidden border bg-[#0c121d] p-5 transition-colors ${selected ? 'border-slate-300 shadow-[0_0_24px_rgba(255,255,255,.06)]' : 'border-slate-800 hover:border-slate-600'} ${topic.status === 'planned' ? 'opacity-80' : ''}`}><div className="flex items-start justify-between gap-3"><div><p className="font-mono text-[10px] uppercase tracking-[.2em] text-slate-500">ROOM // {topic.id}</p><p className="mt-2 text-xs font-semibold uppercase tracking-widest text-slate-300">{topic.category} · {topic.stage} · {topic.level}</p></div><span className={`shrink-0 border px-2 py-1 text-[10px] font-semibold uppercase tracking-wider ${topic.status === 'planned' ? 'border-slate-700 text-slate-500' : runtime?.labId === topic.id && working ? 'border-slate-400 text-slate-200' : 'border-slate-600 text-slate-300'}`}>{availabilityLabel(topic)}</span></div><h3 className="mt-4 text-xl font-semibold text-white">{topic.title}</h3><p className="mt-2 min-h-[4.5rem] text-sm leading-6 text-slate-400">{topic.description}</p>{topic.stage === 'Easy' && <p className="mt-4 border border-slate-700 bg-slate-800/30 px-3 py-2 text-xs leading-5 text-slate-300"><strong>BEGINNER SIGNAL:</strong> {topic.id === 'web-exposure' ? 'Start with the target page and follow its own clues. No guessing required.' : 'Use the named routes in order; keep one note for each clue you confirm.'}</p>}<div className="mt-4 grid gap-3 border-t border-slate-800 pt-4"><div><h4 className="text-xs font-semibold uppercase tracking-widest text-slate-300">Runbook</h4><ol className="mt-2 list-decimal space-y-1 pl-4 text-sm leading-6 text-slate-400">{topic.steps.map(step => <li key={step}>{step}</li>)}</ol></div>{topic.objective && <div><h4 className="text-xs font-semibold uppercase tracking-widest text-slate-300">Objective</h4><p className="mt-1 text-sm leading-6 text-slate-400">{topic.objective}</p></div>}</div><div className="mt-auto pt-5"><button className={`${button} w-full ${topic.status === 'available' ? 'border-slate-500 text-slate-200' : 'border-slate-700 text-slate-400'}`} disabled={busy || (working && runtime?.labId !== topic.id)} onClick={() => setSelectedLab(topic.id)}>{selected ? 'Selected CTF' : topic.status === 'available' ? 'Select CTF' : 'View planned CTF'}</button></div></article> })}</div></section> })}</div>
      {topics.length === 0 && <p role="status">No CTFs match these filters.</p>}
       <section aria-label="Selected CTF runtime" className={panel}>
-        <h2 className="text-lg font-semibold text-white">{LAB_TOPIC_CATALOG.find(topic => topic.id === selectedLab)?.title ?? 'Selected CTF'} runtime</h2>
-      <p className="mt-2 text-sm text-slate-400">{busy ? 'Request in progress…' : working ? 'Working — target confirmed by the runtime.' : runtime?.phase === 'setup-required' ? 'Setup required' : runtime?.phase === 'error' ? 'Runtime error' : runtime ? 'Stopped' : 'Checking runtime readiness…'}</p>
-      {runtime?.phase === 'setup-required' && <div className="mt-3 rounded border border-slate-600 bg-slate-800/20 p-3 text-sm text-slate-300"><h3 className="font-semibold text-slate-100">Docker setup</h3><p>Install Docker Engine or Docker Desktop with Engine version 28 or newer. Start the engine and ensure your user can access it, then check readiness.</p><p className="mt-2">Verify with <code>docker version</code> and <code>docker info</code>. Provisioning requires the installed NET0ZE desktop app.</p></div>}
+        <h2 className="text-lg font-semibold text-white">{runtimeTopic?.title ?? 'Selected CTF'} runtime</h2>
+      <p className="mt-2 text-sm text-slate-400">{busy ? 'Request in progress…' : working ? 'Working — target confirmed by the runtime.' : runtime?.phase === 'starting' ? 'Provisioning — Stop cancels startup.' : runtime?.phase === 'stopping' ? 'Stopping and reconciling owned resources…' : runtime?.phase === 'setup-required' ? 'Setup required' : runtime?.phase === 'error' ? 'Runtime error' : runtime ? 'Stopped' : 'Checking runtime readiness…'}</p>
+      <p className="mt-2 text-xs text-slate-500">Targets continue when you leave this view until Stop or app exit. After a process crash, earlier Docker resources are not automatically adopted or removed.</p>
+      {runtime?.phase === 'setup-required' && <div className="mt-3 rounded border border-slate-600 bg-slate-800/20 p-3 text-sm text-slate-300"><h3 className="font-semibold text-slate-100">Docker setup</h3><p>Use native Linux Docker Engine version 28 or newer with host-reachable bridge networking. Start the engine and ensure your user can access it, then check readiness. Docker Desktop and rootless engines are not supported.</p><p className="mt-2">Verify with <code>docker version</code> and <code>docker info</code>. Provisioning requires the installed NET0ZE desktop app.</p></div>}
       <p role="status" className="mt-3 text-sm text-slate-400">{runtime?.message}</p>
-        <div className="mt-4 flex flex-wrap gap-2"><button className={button} disabled={busy || !runtime || working || runtime.phase === 'error' || LAB_TOPIC_CATALOG.find(topic => topic.id === selectedLab)?.status !== 'available'} onClick={() => void action('start')}>Start selected CTF</button><button className={button} disabled={busy} onClick={() => void action('status')}>Check readiness</button><button className={button} disabled={busy || !working} onClick={() => void action('open')}>Open target</button><button className={button} disabled={busy || !working} onClick={() => void copy()}>Copy target</button><button className={button} disabled={busy || (!working && runtime?.phase !== 'error')} onClick={() => void action('stop')}>Stop CTF</button><button className={button} disabled={busy || !working} onClick={() => void action('reset')}>Reset CTF</button></div>
-        <CtfBriefing topic={LAB_TOPIC_CATALOG.find(topic => topic.id === selectedLab)} evidenceNotes={evidenceNotes} setEvidenceNotes={setEvidenceNotes} checkedSteps={checkedSteps} setCheckedSteps={setCheckedSteps} />
+        <div className="mt-4 flex flex-wrap gap-2"><button className={button} disabled={busy || !runtime || working || ['starting', 'stopping', 'error'].includes(runtime.phase) || selectedTopic?.status !== 'available'} onClick={() => void action('start')}>Start selected CTF</button><button className={button} disabled={busy} onClick={() => void action('status')}>Check readiness</button><button className={button} disabled={busy || !working} onClick={() => void action('open')}>Open target</button><button className={button} disabled={busy || !working} onClick={() => void copy()}>Copy target</button><button className={button} disabled={(busy && !provisioning) || (!provisioning && !working && !['starting', 'error'].includes(runtime?.phase ?? ''))} onClick={() => void action('stop')}>Stop CTF</button><button className={button} disabled={busy || !working} onClick={() => void action('reset')}>Reset CTF</button></div>
+        {working && runtime?.consoleAddr && <div className="mt-4"><label className="block text-sm">TCP console<input aria-label="TCP console" readOnly value={runtime.consoleAddr} className="mt-1 block w-full rounded border border-slate-700 bg-black p-2" /></label><code className="mt-2 block text-xs">nc {runtime.consoleAddr.replace(':', ' ')}</code><p className="mt-1 text-xs text-slate-400">This loopback endpoint forwards only to the owned target's fixed TCP port 9000.</p></div>}
+        <CtfBriefing topic={runtimeTopic} evidenceNotes={evidenceNotes} setEvidenceNotes={setEvidenceNotes} checkedSteps={checkedSteps} setCheckedSteps={setCheckedSteps} />
         {working && runtime?.targetUrl && <div className="mt-5 space-y-3 border-t border-slate-800 pt-5"><h3 className="font-semibold text-white">Live target</h3><label className="block text-sm">Target URL<input aria-label="Target URL" readOnly value={runtime.targetUrl} className="mt-1 block w-full rounded border border-slate-700 bg-black p-2 text-slate-200" /></label><p className="text-sm text-slate-400">Use the target URL as the base for your requests. The answer is intentionally not shown here.</p><code className="block break-all text-xs text-slate-300">curl -i {runtime.targetUrl}</code><form onSubmit={event => { event.preventDefault(); if (!busy && flag.trim()) void action('submitFlag') }} className="flex flex-wrap gap-2"><label className="flex-1 text-sm">Discovered flag<input aria-label="Discovered flag" type="password" autoComplete="off" value={flag} onChange={event => setFlag(event.target.value)} disabled={busy} className="mt-1 block w-full rounded border border-slate-700 bg-black p-2" /></label><button className={button} disabled={busy || !flag.trim()}>Submit flag</button></form><p className="text-sm text-slate-300">{runtime.completed ? 'Completed — flag accepted by the runtime.' : 'Awaiting a correct flag.'}</p></div>}
       {notice && <p role="status" className="mt-3 text-sm">{notice}</p>}{error && <p role="alert" className="mt-3 text-sm text-rose-300">{error}</p>}
     </section>

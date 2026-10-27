@@ -18,6 +18,23 @@ globalThis.fetch = ((input: RequestInfo | URL, init?: RequestInit) => {
   return origFetch(input as RequestInfo, init);
 }) as typeof fetch;
 
+test('failed metadata and region loads reject honestly and permit a later retry', async () => {
+  const bundledFetch = globalThis.fetch;
+  globalThis.fetch = (async input => {
+    const url = String(input);
+    if (url.includes('/world-countries/') || url.endsWith('/regions-index.json')) return new Response('', { status: 503 });
+    return bundledFetch(input);
+  }) as typeof fetch;
+  try {
+    await assert.rejects(loadCountryVector('IN'), /country metadata 503/);
+    await assert.rejects(loadRegionsIndex(), /regions index 503/);
+  } finally {
+    globalThis.fetch = bundledFetch;
+  }
+  assert.equal((await loadCountryVector('IN'))?.name, 'India');
+  assert.ok((await loadRegionsIndex()).some(region => region.code === 'IN-UT'));
+});
+
 test('loadCountryVector resolves IN to India with real geometry', async () => {
   const v = await loadCountryVector('IN');
   assert.ok(v, 'India vector should load');
@@ -112,7 +129,6 @@ test('searchGeoCached caches results', async () => {
 test('regions-index is complete and well-formed', async () => {
   const index = await loadRegionsIndex();
   assert.equal(index.length, 1119);
-  const names = new Set<string>();
   for (const e of index) {
     assert.ok(e.name && e.country && e.type !== undefined);
     assert.ok(Number.isFinite(e.la) && Number.isFinite(e.lo));

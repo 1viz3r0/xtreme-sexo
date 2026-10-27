@@ -1,6 +1,67 @@
 import * as THREE from 'three';
 import type { CountryPolyData } from '../lib/countryIndex';
 
+export const MIN_CAMERA_DISTANCE = 1.85;
+export const MAX_CAMERA_DISTANCE = 5.5;
+export const MAX_ENDPOINT_MARKERS = 500;
+export const MAX_FLOW_ARCS = 150;
+export const DEFAULT_CAMERA_POSITION = { lat: 20, lng: 10, distance: 3.2 };
+
+export function disposeGroup(group: THREE.Group) {
+  const geometries = new Set<THREE.BufferGeometry>();
+  const textures = new Set<THREE.Texture>();
+  const ownedMaterials = new Set<THREE.Material>();
+  group.traverse(object => {
+    const mesh = object as THREE.Mesh;
+    if (mesh.geometry) geometries.add(mesh.geometry);
+    const materials = Array.isArray(mesh.material) ? mesh.material : mesh.material ? [mesh.material] : [];
+    materials.forEach(material => {
+      // Dispose any owned map texture before releasing the material.
+      const map = (material as THREE.MeshBasicMaterial).map;
+      if (map) textures.add(map);
+      ownedMaterials.add(material);
+    });
+  });
+  geometries.forEach(geometry => geometry.dispose());
+  textures.forEach(texture => texture.dispose());
+  ownedMaterials.forEach(material => material.dispose());
+  group.clear();
+}
+
+export function geoMarker(lat: number, lng: number, color: string, label: string, kind: 'region' | 'city'): THREE.Group {
+  const group = new THREE.Group();
+  group.position.copy(globePoint(lat, lng, 1.014));
+  // Scale the small visible dot with camera distance, independently of its hit target.
+  const marker = new THREE.Mesh(new THREE.SphereGeometry(0.006, 8, 6), new THREE.MeshBasicMaterial({ color }));
+  marker.name = 'geography-marker';
+  const hitProxy = new THREE.Mesh(
+    new THREE.SphereGeometry(0.025, 8, 6),
+    new THREE.MeshBasicMaterial({ transparent: true, opacity: 0, depthWrite: false }),
+  );
+  hitProxy.name = 'geography-hit-proxy';
+  hitProxy.userData.hoverLabel = label;
+  hitProxy.userData.kind = kind;
+  group.add(marker);
+  group.add(hitProxy);
+  return group;
+}
+
+// Prefer geography nearest the current view over the dataset's alphabetical order.
+export function nearestGeography<T>(items: T[], coordinate: (item: T) => { lat: number; lng: number }, camera: THREE.Vector3, limit: number): T[] {
+  const direction = camera.clone().normalize();
+  return items.filter(item => validCoordinate(coordinate(item)))
+    .map(item => ({ item, score: globePoint(coordinate(item).lat, coordinate(item).lng).dot(direction) }))
+    .sort((a, b) => b.score - a.score).slice(0, limit).map(entry => entry.item);
+}
+
+export function visibleHit(hits: THREE.Intersection[], surfaceHit: THREE.Intersection | undefined, camera: THREE.Vector3): THREE.Intersection | undefined {
+  return hits.find(hit => {
+    const center = hit.object.getWorldPosition(new THREE.Vector3());
+    return (!surfaceHit || hit.distance < surfaceHit.distance)
+      && center.dot(camera.clone().sub(center)) > 0;
+  });
+}
+
 export function validCoordinate(point: { lat: number; lng: number } | null | undefined): point is { lat: number; lng: number } {
   return !!point && Number.isFinite(point.lat) && Number.isFinite(point.lng)
     && Math.abs(point.lat) <= 90 && Math.abs(point.lng) <= 180;

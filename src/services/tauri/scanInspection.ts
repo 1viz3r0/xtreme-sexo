@@ -1,3 +1,4 @@
+import { invoke } from '@tauri-apps/api/core';
 import { isTauriEnvironment } from './isTauri';
 
 export type InspectionCheck = 'connect' | 'http-head' | 'http-preview' | 'ssh-banner';
@@ -46,6 +47,5 @@ export const createScanInspectionAdapter = (invoke: (command: string, args: unkn
 };
 
 export const inspectScanResult = createScanInspectionAdapter(async (command, args) => {
-  const { invoke } = await import('@tauri-apps/api/core');
   return invoke<unknown>(command, args as Record<string, unknown>);
 });

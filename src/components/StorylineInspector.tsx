@@ -3,12 +3,10 @@ import { FileText, CheckCircle, Sparkles, Zap, ExternalLink, BookOpen } from 'lu
 
 interface StorylineInspectorProps {
   event: any | null;
-  onInspectField: (field: string) => void;
 }
 
 export const StorylineInspector: React.FC<StorylineInspectorProps> = ({
   event,
-  onInspectField,
 }) => {
   const [showAiDraft, setShowAiDraft] = useState<boolean>(false);
 

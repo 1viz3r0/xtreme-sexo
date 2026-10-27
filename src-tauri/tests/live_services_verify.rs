@@ -2,8 +2,8 @@
 //!
 //! Exercises every Phase 11 service against the real machine and the real
 //! internet. All assertions must be backed by REAL data - no mocks, no fakes.
-//! Tests that depend on network reachability degrade gracefully with a
-//! printed UNAVAILABLE marker instead of fabricating results.
+//! External-service acceptance is explicit opt-in and fails if its prerequisite
+//! provider is unavailable; local regression checks never need Internet access.
 
 use netoze_desktop::services::{
     connectivity_monitor::{decide_state, probe, ConnectivityState},
@@ -12,12 +12,16 @@ use netoze_desktop::services::{
     port_scanner::PortScannerState,
     threat_intel::{evaluate_ips_for_threats, fetch_feeds, ThreatIntelState},
 };
-use std::time::Duration;
+mod support;
+#[path = "support/capture_fixture.rs"]
+mod capture_fixture;
 
 #[test]
+#[ignore = "external connectivity acceptance; run explicitly with network access"]
 fn live_connectivity_probe_and_state_machine() {
     let rt = tokio::runtime::Runtime::new().unwrap();
     let (ok, source, latency, detail) = rt.block_on(probe());
+    assert!(ok, "Connectivity provider unavailable during opt-in acceptance: {detail}");
     if ok {
         println!(
             "[live] connectivity probe OK via {} latency={}ms detail={}",
@@ -47,7 +51,9 @@ fn live_connectivity_probe_and_state_machine() {
 }
 
 #[test]
+#[ignore = "external ipify/ipwho.is acceptance; requires provider reachability and coverage"]
 fn live_geoip_public_ip_and_lookup() {
+    let _data = support::isolated_data("live-geoip");
     let svc = GeoIpService::new();
     let rt = tokio::runtime::Runtime::new().unwrap();
     let public_ip = rt.block_on(svc.resolve_public_ip());
@@ -56,8 +62,8 @@ fn live_geoip_public_ip_and_lookup() {
             assert!(!ip.is_empty());
             assert!(!svc.is_private(ip), "public IP must not be classified private");
             println!("[live] public IP = {}", ip);
-            let entry = rt.block_on(svc.lookup(ip));
-            let entry = entry.expect("GeoIP lookup for own public IP must return an entry");
+            let entry = rt.block_on(svc.lookup_checked(ip))
+                .expect("GeoIP provider must return an entry during opt-in acceptance");
             println!(
                 "[live] geoip {} -> country={} code={} city={} asn={:?} source={}",
                 ip,
@@ -70,7 +76,7 @@ fn live_geoip_public_ip_and_lookup() {
             assert_eq!(entry.country_code.len(), 2, "real ISO country code expected");
             assert!(!entry.country.is_empty());
         }
-        None => println!("[live] public IP UNAVAILABLE (no internet or ipify blocked)"),
+        None => panic!("Public IP provider unavailable during opt-in acceptance"),
     }
 
     // Private IPs must never leave the machine: synthetic LOCAL entry, no external call.
@@ -87,6 +93,21 @@ fn live_geoip_public_ip_and_lookup() {
 }
 
 #[test]
+fn reserved_geoip_classification_never_requires_a_provider() {
+    let _data = support::isolated_data("local-geoip");
+    let service = GeoIpService::new();
+    let rt = tokio::runtime::Runtime::new().unwrap();
+    for ip in ["127.0.0.1", "192.168.1.99", "10.0.0.1", "172.16.5.5", "169.254.10.10", "192.0.2.1", "::1", "fc00::1"] {
+        let entry = rt.block_on(service.lookup_checked(ip)).unwrap();
+        assert_eq!(entry.source, "local-classification");
+        assert_eq!(entry.latitude, None);
+        assert_eq!(entry.longitude, None);
+    }
+    assert_eq!(service.cache_stats(), (0, 0));
+}
+
+#[test]
+#[ignore = "external sslbl/feodo feed acceptance; requires provider reachability"]
 fn live_threat_feed_fetch_and_lookup() {
     let rt = tokio::runtime::Runtime::new().unwrap();
     let entries = rt.block_on(fetch_feeds());
@@ -110,16 +131,14 @@ fn live_threat_feed_fetch_and_lookup() {
             assert_eq!(matches.len(), 1, "lookup of a known IOC must match");
             println!("[live] indicator match confirmed for {}", some_ip);
         }
-        Err(e) => {
-            println!("[live] threat feeds UNAVAILABLE: {}", e);
-            assert!(!e.is_empty());
-        }
+        Err(error) => panic!("Threat provider unavailable during opt-in acceptance: {error}"),
     }
     println!("[live] threat intel PASS");
 }
 
 #[test]
 fn live_arp_device_discovery() {
+    let _data = support::isolated_data("arp");
     let table = read_arp_table();
     println!("[live] ARP table entries: {}", table.len());
     for (ip, mac) in table.iter().take(5) {
@@ -151,11 +170,15 @@ fn live_arp_device_discovery() {
 
 #[test]
 fn live_localhost_port_scan() {
+    let _data = support::isolated_data("localhost-scan");
+    netoze_desktop::database::sqlite::init_sqlite().unwrap();
+    let listener = std::net::TcpListener::bind(("127.0.0.1", 0)).unwrap();
+    let port = listener.local_addr().unwrap().port();
     let scanner = PortScannerState::new();
     assert!(scanner.is_private("127.0.0.1"));
     assert!(scanner.is_private("192.168.1.7"));
     assert!(scanner.is_private("fe80::1"));
-    let results = scanner.scan("127.0.0.1", &[]);
+    let results = scanner.scan("127.0.0.1", &[port]);
     let open: Vec<_> = results.iter().filter(|r| r.state == "OPEN").collect();
     println!(
         "[live] localhost scan: {} results, {} open",
@@ -167,14 +190,15 @@ fn live_localhost_port_scan() {
     }
     let persisted = scanner.persisted(50);
     println!("[live] port scan persisted rows: {}", persisted.len());
-    assert!(
-        !persisted.is_empty(),
-        "scan results must be persisted (open ports at minimum)"
-    );
+    assert_eq!(open.len(), 1);
+    assert_eq!(open[0].port, port);
+    assert!(persisted.iter().any(|entry| entry.ip == "127.0.0.1" && entry.port == port && entry.state == "OPEN"),
+        "the known local listener must be observed and read back from isolated storage");
     println!("[live] port scan PASS");
 }
 
 #[test]
+#[cfg(windows)]
 fn live_windows_event_log_read() {
     let events = netoze_desktop::platform::event_log::get_windows_event_logs(20);
     if events.is_empty() {
@@ -198,6 +222,7 @@ fn live_windows_event_log_read() {
 
 #[test]
 fn live_audit_chain_and_sqlite_crud() {
+    let _data = support::isolated_data("audit-chain");
     use netoze_desktop::database::sqlite::{
         append_audit_entry, load_threat_matches, verify_audit_chain,
     };
@@ -217,6 +242,7 @@ fn live_audit_chain_and_sqlite_crud() {
 
 #[test]
 fn live_dns_records_persistence() {
+    let _data = support::isolated_data("dns-storage");
     use netoze_desktop::database::sqlite::{insert_dns_records_batch, load_dns_records};
     use netoze_desktop::models::DnsQueryEntry;
 
@@ -291,68 +317,9 @@ fn live_process_socket_correlation() {
 }
 
 #[test]
+#[ignore = "live capture requires the explicit isolated interface/peer fixture in support/capture_fixture.rs"]
 fn live_packet_parse_real_payload() {
-    #[cfg(target_os = "linux")]
-    {
-        let has_cap_net_raw = std::fs::read_to_string("/proc/self/status")
-            .ok()
-            .and_then(|status| status.lines().find_map(|line| line.strip_prefix("CapEff:\t").map(str::to_owned)))
-            .and_then(|cap_eff| u64::from_str_radix(cap_eff.trim(), 16).ok())
-            .is_some_and(|cap_eff| cap_eff & (1 << 13) != 0);
-        if !has_cap_net_raw {
-            println!("[live] packet parse SKIP: CAP_NET_RAW unavailable");
-            return;
-        }
-    }
-    // Reuse the real packet bytes captured by the capture_verify test path is not
-    // possible here; instead re-verify the parser on a real, freshly captured packet
-    // if a capture interface is available. If capture is unavailable, mark UNAVAILABLE.
-    let devices = pcap::Device::list().unwrap_or_default();
-    if devices.is_empty() {
-        println!("[live] packet capture UNAVAILABLE (no Npcap interfaces)");
-        return;
-    }
-    let dev = devices
-        .iter()
-        .find(|d| !d.desc.clone().unwrap_or_default().to_lowercase().contains("loopback"))
-        .unwrap_or(&devices[0]);
-    let mut cap = pcap::Capture::from_device(dev.name.as_str())
-        .expect("open device")
-        .promisc(false)
-        .snaplen(65535)
-        .timeout(2000)
-        .open()
-        .expect("open capture");
-    let mut parsed = 0;
-    let deadline = std::time::Instant::now() + Duration::from_secs(4);
-    while std::time::Instant::now() < deadline {
-        match cap.next_packet() {
-            Ok(pkt) => {
-                let meta = netoze_desktop::services::packet_parser::parse_raw_packet(
-                    &pkt.data,
-                    &chrono::Utc::now().to_rfc3339(),
-                );
-                if meta.eth_type == "IPv4" && meta.src_ip != "0.0.0.0" {
-                    parsed += 1;
-                    if parsed == 1 {
-                        println!(
-                            "[live] real packet: {} -> {} proto={} ports={}:{} len={} tcp_flags=0x{:02x}",
-                            meta.src_ip, meta.dst_ip, meta.protocol, meta.src_port, meta.dst_port,
-                            meta.orig_len, meta.tcp_flags
-                        );
-                    }
-                }
-            }
-            Err(pcap::Error::TimeoutExpired) => {}
-            Err(e) => {
-                println!("[live] capture error: {}", e);
-                break;
-            }
-        }
-    }
-    if parsed == 0 {
-        println!("[live] no packets seen in 4s window (quiet interface) - UNAVAILABLE");
-    } else {
-        println!("[live] real packet parse PASS ({} packets)", parsed);
-    }
+    let _data = support::isolated_data("live-packet-parser");
+    let packets = capture_fixture::capture_packets(false, 5);
+    assert!(packets.iter().all(|packet| packet.eth_type == "IPv4" && packet.protocol == "UDP" && packet.dst_port == 49000));
 }

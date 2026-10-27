@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { validateCaptureOptions } from './CaptureBuddy';
+import { validateCaptureOptions } from '../lib/captureBuddyPresentation';
 
 test('capture frontend validation matches native bounds', () => {
   assert.equal(validateCaptureOptions('64', '24', '1'), null);

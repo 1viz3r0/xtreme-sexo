@@ -91,7 +91,7 @@ export function exportScan(job: ScanJob, format: ScanExport): string {
 
 /** Small dependency-free text PDF for local export; it intentionally contains no remote assets. */
 function textPdf(text: string): string {
-  const lines = text.replaceAll(/[^\x09\x0A\x0D\x20-\x7E]/g, '').split('\n').flatMap(line => line.match(/.{1,105}/g) ?? ['']).slice(0, 900);
+  const lines = text.replaceAll(/[^\t\n\r\x20-\x7E]/g, '').split('\n').flatMap(line => line.match(/.{1,105}/g) ?? ['']).slice(0, 900);
   const content = ['BT', '/F1 8 Tf', '40 770 Td', ...lines.map((line, index) => `${index ? '0 -11 Td ' : ''}(${line.replaceAll(/[()\\]/g, char => `\\${char}`)}) Tj`), 'ET'].join('\n');
   const objects = [`<< /Type /Catalog /Pages 2 0 R >>`, `<< /Type /Pages /Kids [3 0 R] /Count 1 >>`, `<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << /Font << /F1 5 0 R >> >> /Contents 4 0 R >>`, `<< /Length ${content.length} >>\nstream\n${content}\nendstream`, `<< /Type /Font /Subtype /Type1 /BaseFont /Courier >>`];
   let output = '%PDF-1.4\n'; const offsets = [0];

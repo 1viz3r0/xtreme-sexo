@@ -58,7 +58,7 @@ guidance. Use loopback only fills the target field and sends no traffic by itsel
 
 | Limit | Value |
 | --- | --- |
-| Unique target hosts | 32 |
+| Unique target hosts | 256 expanded targets maximum |
 | Unique TCP ports | 256 |
 | Target × port attempts | 4,096 |
 | Concurrent workers | 1–16 |
@@ -68,7 +68,7 @@ guidance. Use loopback only fills the target field and sends no traffic by itsel
 | Retained jobs | Eight, memory only |
 | Input lengths | 8,192 target and 4,096 port characters |
 
-IPv4 CIDRs must be /27–/32. /30 and wider exclude network/broadcast endpoints;
+IPv4 CIDRs must be /24–/32. /30 and wider exclude network/broadcast endpoints;
 /31 and /32 preserve all addresses. The address is normalized to its subnet
 before expansion, so inspect the preview. No expansion is silently truncated.
 Unspecified, multicast and limited broadcast addresses are rejected. IPv6
@@ -97,8 +97,7 @@ ScanBuddy React workspace
 - `src/lib/scanBuddyPresentation.ts`: preliminary UI validation, presets, result
   projection and exports. Native validation is authoritative and reruns at start.
 - App bootstrap registers its own managed state; app exit/drop cancels pending work.
-- The old `HybridIntel.tsx` is no longer routed or bundled into this view. It is
-  retained as legacy source to avoid destructive removal of unrelated work.
+- The unreferenced legacy `HybridIntel.tsx` has been removed.
   The old `network_engine` routing key remains internal compatibility plumbing;
   its visible name and rendered component are Scan Buddy.
 

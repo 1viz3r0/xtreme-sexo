@@ -26,7 +26,7 @@ export const TopNavbar: React.FC<TopNavbarProps> = ({
           {isFullyHidden ? <PanelLeft size={18} /> : <PanelLeftClose size={18} />}
         </button>
         <BrandLogo />
-        <span className="studio-design-marker">Studio UI</span>
+        <span className="studio-design-marker">Enterprise · Studio UI</span>
       </div>
       <div className="studio-header-actions">
         <span className="studio-runtime" title={isDesktop ? 'Native desktop runtime' : 'Browser preview; native capabilities unavailable'}>

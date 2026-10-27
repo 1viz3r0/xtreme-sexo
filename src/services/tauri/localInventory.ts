@@ -1,3 +1,4 @@
+import { invoke } from '@tauri-apps/api/core';
 import { isTauriEnvironment } from './isTauri';
 import type { DetailedAdapterInfo } from './network';
 import type { DeviceEntry } from './intel';
@@ -10,7 +11,6 @@ function requireTauri(command: string): void {
 async function invokeInventory<T>(command: string): Promise<T> {
   requireTauri(command);
   try {
-    const { invoke } = await import('@tauri-apps/api/core');
     return await invoke<T>(command);
   } catch {
     // Do not expose IPC payloads (which may contain local paths or device data).

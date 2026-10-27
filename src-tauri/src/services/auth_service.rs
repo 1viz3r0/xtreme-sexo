@@ -4,7 +4,7 @@
 // - Real backend auth, NOT frontend-only. Every command validates the session
 //   token and the user role inside the Rust backend.
 // - Passwords are hashed with PBKDF2-HMAC-SHA256 (built on the existing `sha2`
-//   dependency; no new crates). Each user gets a unique 16-byte random salt.
+//   dependency). OS cryptographic entropy supplies each unique 16-byte salt.
 // - Credentials/sessions/activity are persisted in `netoze_auth.json` inside the
 //   app data directory (no SQLite schema changes).
 // - The first registered account becomes ADMIN; all later accounts are NORMAL
@@ -16,14 +16,17 @@
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::collections::HashMap;
-use std::path::PathBuf;
-use std::sync::Mutex;
+use std::fs::{File, OpenOptions};
+use std::io::{Read, Write};
+use std::path::{Path, PathBuf};
+use std::sync::{Mutex, MutexGuard};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 const AUTH_FILE: &str = "netoze_auth.json";
 const SALT_BYTES: usize = 16;
 const TOKEN_BYTES: usize = 32;
-const PBKDF2_ITERATIONS: u32 = 120_000;
+const PBKDF2_ITERATIONS: u32 = 600_000;
+const MAX_AUTH_BYTES: u64 = 8 * 1024 * 1024;
 const MAX_FAILED_ATTEMPTS: i64 = 5;
 const LOCKOUT_SECS: i64 = 900;
 const SESSION_TTL_SECS: i64 = 8 * 60 * 60;
@@ -96,23 +99,10 @@ fn now_secs() -> i64 {
         .unwrap_or(0)
 }
 
-// OS-seeded entropy via std RandomState hasher keys (no new crates).
-fn entropy_bytes(n: usize) -> Vec<u8> {
-    use std::collections::hash_map::RandomState;
-    use std::hash::{BuildHasher, Hash, Hasher};
-    let rs = RandomState::new();
-    let mut out: Vec<u8> = Vec::with_capacity(n);
-    let mut counter = 0u64;
-    while out.len() < n {
-        let mut h = rs.build_hasher();
-        counter.hash(&mut h);
-        now_secs().hash(&mut h);
-        std::process::id().hash(&mut h);
-        out.extend_from_slice(&h.finish().to_be_bytes());
-        counter = counter.wrapping_add(1);
-    }
-    out.truncate(n);
-    out
+fn entropy_bytes(n: usize) -> Result<Vec<u8>, String> {
+    let mut out = vec![0u8; n];
+    getrandom::fill(&mut out).map_err(|_| "Secure OS entropy is unavailable".to_string())?;
+    Ok(out)
 }
 
 fn to_hex(bytes: &[u8]) -> String {
@@ -121,6 +111,14 @@ fn to_hex(bytes: &[u8]) -> String {
 
 fn sha256_hex(data: &[u8]) -> String {
     to_hex(&Sha256::digest(data))
+}
+
+fn equal_secret(expected: &[u8], candidate: &[u8]) -> bool {
+    let mut difference = expected.len() ^ candidate.len();
+    for (index, byte) in expected.iter().enumerate() {
+        difference |= (byte ^ candidate.get(index).copied().unwrap_or(0)) as usize;
+    }
+    difference == 0
 }
 
 fn hmac_sha256(key: &[u8], data: &[u8]) -> [u8; 32] {
@@ -173,24 +171,98 @@ fn auth_path() -> PathBuf {
 }
 
 fn load_store() -> Result<AuthStore, String> {
-    let path = auth_path();
-    if !path.exists() {
-        return Ok(AuthStore {
-            version: 1,
-            users: HashMap::new(),
-            sessions: HashMap::new(),
-            activity: Vec::new(),
-            next_activity_id: 1,
-        });
-    }
-    let data = std::fs::read_to_string(&path).map_err(|e| format!("auth store read: {e}"))?;
-    serde_json::from_str(&data).map_err(|e| format!("auth store parse: {e}"))
+    load_store_at(&auth_path())
 }
 
 fn save_store(store: &AuthStore) -> Result<(), String> {
-    let path = auth_path();
-    let data = serde_json::to_string_pretty(store).map_err(|e| e.to_string())?;
-    std::fs::write(&path, data).map_err(|e| format!("auth store write: {e}"))
+    save_store_at(&auth_path(), store)
+}
+
+fn private_options(write: bool) -> OpenOptions {
+    let mut options = OpenOptions::new();
+    options.read(true).write(write);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        options.mode(0o600).custom_flags(libc::O_NOFOLLOW | libc::O_NONBLOCK | libc::O_CLOEXEC);
+    }
+    #[cfg(windows)]
+    {
+        use std::os::windows::fs::OpenOptionsExt;
+        options.custom_flags(windows_sys::Win32::Storage::FileSystem::FILE_FLAG_OPEN_REPARSE_POINT);
+    }
+    options
+}
+
+fn check_auth_file(file: &File) -> std::io::Result<()> {
+    let metadata = file.metadata()?;
+    if !metadata.is_file() || metadata.file_type().is_symlink() || metadata.len() > MAX_AUTH_BYTES {
+        return Err(std::io::Error::new(std::io::ErrorKind::InvalidData, "Unsafe auth store"));
+    }
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::{MetadataExt, PermissionsExt};
+        if metadata.nlink() != 1 || metadata.uid() != unsafe { libc::geteuid() } {
+            return Err(std::io::Error::new(std::io::ErrorKind::PermissionDenied, "Unsafe auth owner or links"));
+        }
+        file.set_permissions(std::fs::Permissions::from_mode(0o600))?;
+    }
+    Ok(())
+}
+
+fn lock_store() -> Result<(File, MutexGuard<'static, ()>), String> {
+    let process = AUTH_LOCK.lock().map_err(|_| "AUTH_LOCK_POISONED".to_string())?;
+    let directory = crate::database::sqlite::get_app_dir();
+    super::capture_io::private_capture_folder(&directory).map_err(|_| "Private auth storage unavailable")?;
+    let file = private_options(true).create(true).truncate(false)
+        .open(directory.join("netoze_auth.lock")).map_err(|_| "Auth store lock unavailable")?;
+    check_auth_file(&file).map_err(|_| "Auth store lock is unsafe")?;
+    file.try_lock().map_err(|_| "Auth store is busy in another NET0ZE process")?;
+    // Release the OS file lock before allowing the next thread through the mutex.
+    Ok((file, process))
+}
+
+fn load_store_at(path: &Path) -> Result<AuthStore, String> {
+    let file = match private_options(false).open(path) {
+        Ok(file) => file,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(AuthStore {
+            version: 1, next_activity_id: 1, ..AuthStore::default()
+        }),
+        Err(_) => return Err("Auth store cannot be opened safely".into()),
+    };
+    check_auth_file(&file).map_err(|_| "Auth store permissions, links, or size are unsafe")?;
+    let mut data = Vec::new();
+    file.take(MAX_AUTH_BYTES + 1).read_to_end(&mut data).map_err(|_| "Auth store read failed")?;
+    if data.len() as u64 > MAX_AUTH_BYTES { return Err("Auth store exceeds its size limit".into()); }
+    let store: AuthStore = serde_json::from_slice(&data).map_err(|_| "Auth store is invalid; preserve it and restore a trusted backup")?;
+    if store.version != 1 || store.users.values().any(|user| {
+        !(1..=2_000_000).contains(&user.iterations) || user.salt.len() != SALT_BYTES * 2
+            || user.hash.len() != 64 || !user.salt.bytes().chain(user.hash.bytes()).all(|byte| byte.is_ascii_hexdigit())
+    }) {
+        return Err("Auth store has an unsupported version or invalid credentials".into());
+    }
+    Ok(store)
+}
+
+fn save_store_at(path: &Path, store: &AuthStore) -> Result<(), String> {
+    // Reject links/nonregular existing stores; never truncate the only credential copy.
+    match std::fs::symlink_metadata(path) {
+        Ok(_) => { check_auth_file(&private_options(false).open(path).map_err(|_| "Auth store cannot be replaced safely")?)
+            .map_err(|_| "Auth store cannot be replaced safely")?; }
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => (),
+        Err(_) => return Err("Auth store metadata unavailable".into()),
+    }
+    let data = serde_json::to_vec_pretty(store).map_err(|_| "Auth store serialization failed")?;
+    if data.len() as u64 > MAX_AUTH_BYTES { return Err("Auth store exceeds its size limit".into()); }
+    let temporary = path.with_file_name(format!(".netoze-auth-{}.tmp", to_hex(&entropy_bytes(16)?)));
+    let mut file = private_options(true).create_new(true).open(&temporary).map_err(|_| "Private auth staging failed")?;
+    let result = file.write_all(&data).and_then(|_| file.sync_all());
+    drop(file);
+    if result.is_err() || std::fs::rename(&temporary, path).is_err() {
+        let _ = std::fs::remove_file(temporary);
+        return Err("Auth store update failed; previous credentials were preserved".into());
+    }
+    Ok(())
 }
 
 fn prune_expired_sessions(store: &mut AuthStore) {
@@ -290,7 +362,7 @@ pub fn register(name: &str, email: &str, password: &str) -> Result<AuthSession, 
         return Err("PASSWORD_INVALID_MIN_8_MAX_128".to_string());
     }
 
-    let _lock = AUTH_LOCK.lock().map_err(|_| "AUTH_LOCK_POISONED".to_string())?;
+    let _lock = lock_store()?;
     let mut store = load_store()?;
     prune_expired_sessions(&mut store);
 
@@ -304,7 +376,7 @@ pub fn register(name: &str, email: &str, password: &str) -> Result<AuthSession, 
         "user".to_string()
     };
 
-    let salt = to_hex(&entropy_bytes(SALT_BYTES));
+    let salt = to_hex(&entropy_bytes(SALT_BYTES)?);
     let salt_bytes: Vec<u8> = salt
         .as_bytes()
         .chunks(2)
@@ -313,7 +385,7 @@ pub fn register(name: &str, email: &str, password: &str) -> Result<AuthSession, 
     let hash = to_hex(&pbkdf2_sha256(password.as_bytes(), &salt_bytes, PBKDF2_ITERATIONS));
 
     let user = StoredUser {
-        id: to_hex(&entropy_bytes(16)),
+        id: to_hex(&entropy_bytes(16)?),
         name: name.to_string(),
         email: email.clone(),
         role: role.clone(),
@@ -329,9 +401,8 @@ pub fn register(name: &str, email: &str, password: &str) -> Result<AuthSession, 
 
     store.users.insert(email.clone(), user.clone());
     push_activity(&mut store, &email, "REGISTER", &format!("role={}", user.role));
-    mirror_user_profile(&user);
 
-    let token = to_hex(&entropy_bytes(TOKEN_BYTES));
+    let token = to_hex(&entropy_bytes(TOKEN_BYTES)?);
     let key = sha256_hex(token.as_bytes());
     let now = now_secs();
     store.sessions.insert(
@@ -344,6 +415,7 @@ pub fn register(name: &str, email: &str, password: &str) -> Result<AuthSession, 
     );
     push_activity(&mut store, &email, "LOGIN", "registered_user_auto_login");
     save_store(&store)?;
+    mirror_user_profile(&user);
 
     Ok(AuthSession {
         user: to_public(&user),
@@ -357,13 +429,14 @@ pub fn login(email: &str, password: &str) -> Result<AuthSession, String> {
         return Err("EMPTY_CREDENTIALS".to_string());
     }
 
-    let _lock = AUTH_LOCK.lock().map_err(|_| "AUTH_LOCK_POISONED".to_string())?;
+    if email.len() > 254 || password.len() > 128 { return Err("INVALID_CREDENTIALS".into()); }
+    let _lock = lock_store()?;
     let mut store = load_store()?;
     prune_expired_sessions(&mut store);
 
     let Some(user) = store.users.get_mut(&email).cloned() else {
         push_activity(&mut store, &email, "LOGIN_FAILED", "unknown_email");
-        let _ = save_store(&store);
+        save_store(&store)?;
         return Err("INVALID_CREDENTIALS".to_string());
     };
 
@@ -383,7 +456,7 @@ pub fn login(email: &str, password: &str) -> Result<AuthSession, String> {
         user.iterations,
     ));
 
-    if candidate != user.hash {
+    if !equal_secret(user.hash.as_bytes(), candidate.as_bytes()) {
         let mut locked = false;
         if let Some(u) = store.users.get_mut(&email) {
             u.failed_attempts += 1;
@@ -399,7 +472,7 @@ pub fn login(email: &str, password: &str) -> Result<AuthSession, String> {
             "LOGIN_FAILED",
             if locked { "account_locked" } else { "wrong_password" },
         );
-        let _ = save_store(&store);
+        save_store(&store)?;
         if locked {
             return Err("ACCOUNT_LOCKED_TRY_LATER".to_string());
         }
@@ -411,9 +484,15 @@ pub fn login(email: &str, password: &str) -> Result<AuthSession, String> {
         u.status = "active".to_string();
         u.locked_until = 0;
         u.last_login_at = Some(now_secs());
+        if u.iterations < PBKDF2_ITERATIONS {
+            let salt = entropy_bytes(SALT_BYTES)?;
+            u.hash = to_hex(&pbkdf2_sha256(password.as_bytes(), &salt, PBKDF2_ITERATIONS));
+            u.salt = to_hex(&salt);
+            u.iterations = PBKDF2_ITERATIONS;
+        }
     }
 
-    let token = to_hex(&entropy_bytes(TOKEN_BYTES));
+    let token = to_hex(&entropy_bytes(TOKEN_BYTES)?);
     let key = sha256_hex(token.as_bytes());
     let now = now_secs();
     store.sessions.insert(
@@ -437,7 +516,8 @@ pub fn login(email: &str, password: &str) -> Result<AuthSession, String> {
 }
 
 pub fn logout(token: &str) -> Result<(), String> {
-    let _lock = AUTH_LOCK.lock().map_err(|_| "AUTH_LOCK_POISONED".to_string())?;
+    if token.len() != TOKEN_BYTES * 2 { return Ok(()); }
+    let _lock = lock_store()?;
     let mut store = load_store()?;
     let key = sha256_hex(token.as_bytes());
     if let Some(sess) = store.sessions.remove(&key) {
@@ -445,13 +525,14 @@ pub fn logout(token: &str) -> Result<(), String> {
             let email = user.email.clone();
             push_activity(&mut store, &email, "LOGOUT", "session_closed");
         }
-        let _ = save_store(&store);
+        save_store(&store)?;
     }
     Ok(())
 }
 
 pub fn session_user(token: &str) -> Result<Option<PublicUser>, String> {
-    let _lock = AUTH_LOCK.lock().map_err(|_| "AUTH_LOCK_POISONED".to_string())?;
+    if token.len() != TOKEN_BYTES * 2 { return Ok(None); }
+    let _lock = lock_store()?;
     let mut store = load_store()?;
     prune_expired_sessions(&mut store);
     let key = sha256_hex(token.as_bytes());
@@ -460,7 +541,7 @@ pub fn session_user(token: &str) -> Result<Option<PublicUser>, String> {
     };
     if sess.expires_at <= now_secs() {
         store.sessions.remove(&key);
-        let _ = save_store(&store);
+        save_store(&store)?;
         return Ok(None);
     }
     let user = store.users.values().find(|u| u.id == sess.user_id).cloned();
@@ -470,7 +551,7 @@ pub fn session_user(token: &str) -> Result<Option<PublicUser>, String> {
     let status = current_status(&user);
     if status == "locked" {
         store.sessions.remove(&key);
-        let _ = save_store(&store);
+        save_store(&store)?;
         return Ok(None);
     }
     let mut pub_user = to_public(&user);
@@ -492,7 +573,7 @@ pub fn require_admin(token: &str) -> Result<PublicUser, String> {
 
 pub fn my_activity(token: &str, limit: usize) -> Result<Vec<ActivityEntry>, String> {
     let user = require_user(token)?;
-    let _lock = AUTH_LOCK.lock().map_err(|_| "AUTH_LOCK_POISONED".to_string())?;
+    let _lock = lock_store()?;
     let store = load_store()?;
     let mut mine: Vec<ActivityEntry> = store
         .activity
@@ -507,7 +588,7 @@ pub fn my_activity(token: &str, limit: usize) -> Result<Vec<ActivityEntry>, Stri
 
 pub fn admin_list_users(token: &str) -> Result<Vec<PublicUser>, String> {
     require_admin(token)?;
-    let _lock = AUTH_LOCK.lock().map_err(|_| "AUTH_LOCK_POISONED".to_string())?;
+    let _lock = lock_store()?;
     let store = load_store()?;
     let mut users: Vec<PublicUser> = store
         .users
@@ -524,10 +605,100 @@ pub fn admin_list_users(token: &str) -> Result<Vec<PublicUser>, String> {
 
 pub fn admin_list_activity(token: &str, limit: usize) -> Result<Vec<ActivityEntry>, String> {
     require_admin(token)?;
-    let _lock = AUTH_LOCK.lock().map_err(|_| "AUTH_LOCK_POISONED".to_string())?;
+    let _lock = lock_store()?;
     let store = load_store()?;
     let mut items = store.activity.clone();
     items.sort_by(|a, b| b.timestamp.cmp(&a.timestamp).then(b.id.cmp(&a.id)));
     items.truncate(limit.min(500));
     Ok(items)
+}
+
+#[cfg(test)]
+mod storage_tests {
+    use super::*;
+
+    fn directory() -> PathBuf {
+        let path = std::env::temp_dir().join(format!("netoze-auth-test-{}", to_hex(&entropy_bytes(16).unwrap())));
+        super::super::capture_io::private_capture_folder(&path).unwrap();
+        path
+    }
+
+    #[test]
+    fn password_primitives_match_independent_sha256_vectors() {
+        assert_eq!(to_hex(&pbkdf2_sha256(b"password", b"salt", 1)),
+            "120fb6cffcf8b32c43e7225256c4f837a86548c92ccc35480805987cb70be17b");
+        assert_eq!(to_hex(&pbkdf2_sha256(b"password", b"salt", 2)),
+            "ae4d0c95af6b46d32d0adff928f06dd02a303f8ef3c251dfd6e2d85a95474c43");
+        assert!(equal_secret(b"secret", b"secret"));
+        for candidate in [b"secreu".as_slice(), b"secre", b"secret-more", b""] {
+            assert!(!equal_secret(b"secret", candidate));
+        }
+        assert_eq!(entropy_bytes(TOKEN_BYTES).unwrap().len(), TOKEN_BYTES);
+    }
+
+    #[test]
+    fn atomic_private_store_preserves_previous_credentials_on_rejected_update() {
+        let root = directory();
+        let path = root.join(AUTH_FILE);
+        let mut store = load_store_at(&path).unwrap();
+        save_store_at(&path, &store).unwrap();
+        store.next_activity_id = 42;
+        save_store_at(&path, &store).unwrap();
+        assert_eq!(load_store_at(&path).unwrap().next_activity_id, 42);
+        let previous = std::fs::read(&path).unwrap();
+        store.activity.push(ActivityEntry { id: 1, timestamp: 0, actor_email: String::new(),
+            action: "fixture".into(), detail: "x".repeat(MAX_AUTH_BYTES as usize) });
+        assert!(save_store_at(&path, &store).is_err());
+        assert_eq!(std::fs::read(&path).unwrap(), previous);
+        assert_eq!(std::fs::read_dir(&root).unwrap().count(), 1, "staging files must be cleaned up");
+        #[cfg(unix)] {
+            use std::os::unix::fs::PermissionsExt;
+            assert_eq!(std::fs::metadata(&path).unwrap().permissions().mode() & 0o777, 0o600);
+        }
+        std::fs::write(&path, b"not valid JSON").unwrap();
+        assert!(load_store_at(&path).is_err(), "corrupt credentials must not become a new empty admin store");
+        assert_eq!(std::fs::read(&path).unwrap(), b"not valid JSON");
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn independent_handles_cannot_own_the_same_auth_lock() {
+        let root = directory();
+        let path = root.join("auth.lock");
+        let first = private_options(true).create_new(true).open(&path).unwrap();
+        first.try_lock().unwrap();
+        let second = private_options(true).open(&path).unwrap();
+        assert!(second.try_lock().is_err());
+        drop(first);
+        second.try_lock().unwrap();
+        drop(second);
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn symlinks_hardlinks_and_fifos_cannot_replace_or_block_auth_storage() {
+        use std::os::unix::fs::symlink;
+        let root = directory();
+        let target = root.join("untouched");
+        std::fs::write(&target, b"preserve existing bytes").unwrap();
+        let path = root.join(AUTH_FILE);
+        symlink(&target, &path).unwrap();
+        let store = AuthStore { version: 1, ..AuthStore::default() };
+        assert!(load_store_at(&path).is_err());
+        assert!(save_store_at(&path, &store).is_err());
+        assert_eq!(std::fs::read(&target).unwrap(), b"preserve existing bytes");
+        std::fs::remove_file(&path).unwrap();
+        std::fs::hard_link(&target, &path).unwrap();
+        assert!(load_store_at(&path).is_err());
+        assert!(save_store_at(&path, &store).is_err());
+        std::fs::remove_file(&path).unwrap();
+        let name = std::ffi::CString::new(path.as_os_str().as_encoded_bytes()).unwrap();
+        assert_eq!(unsafe { libc::mkfifo(name.as_ptr(), 0o600) }, 0);
+        let start = std::time::Instant::now();
+        assert!(load_store_at(&path).is_err());
+        assert!(save_store_at(&path, &store).is_err());
+        assert!(start.elapsed() < std::time::Duration::from_secs(1));
+        std::fs::remove_dir_all(root).unwrap();
+    }
 }

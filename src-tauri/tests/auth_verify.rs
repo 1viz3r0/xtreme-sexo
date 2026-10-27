@@ -1,12 +1,27 @@
 //! Verification of NET0ZE auth flows A–J at the backend enforcement layer.
-//! The UI (WebView2) cannot be driven without CDP (prohibited), so the
-//! backend commands/logic — which is where sessions and roles are actually
-//! enforced — is what flows A–J exercise here.
+//! These backend regressions exercise sessions/roles, not installed WebView2
+//! acceptance. Every write and cleanup stays inside disposable test storage.
 //!
 //! The test is self-cleaning: it removes netoze_auth.json after the run and
 //! deletes the two test rows mirrored into user_profiles.
 
 use netoze_desktop::services::auth_service as auth;
+mod support;
+
+#[test]
+fn isolated_storage_rejects_unsafe_or_missing_override_before_any_cleanup() {
+    let _data = support::isolated_data("storage-boundary");
+    let original = std::env::var_os("NETOZE_TEST_DATA_HOME").unwrap();
+    let missing = std::path::PathBuf::from(&original).join("netoze-improvement-test-data-missing");
+    for invalid in [std::path::PathBuf::from("relative-storage"), std::env::temp_dir(), missing.clone()] {
+        std::env::set_var("NETOZE_TEST_DATA_HOME", invalid);
+        let result = std::panic::catch_unwind(netoze_desktop::database::sqlite::get_app_dir);
+        std::env::set_var("NETOZE_TEST_DATA_HOME", &original);
+        assert!(result.is_err(), "unsafe test configuration must not fall back to installed user data");
+        assert!(netoze_desktop::database::sqlite::get_app_dir().starts_with(&original));
+    }
+    assert!(!missing.exists(), "rejected test paths must not be created");
+}
 
 const P1: &str = "S3cretP@ssw0rd1";
 const P2: &str = "S3cretP@ssw0rd2";
@@ -25,6 +40,7 @@ fn cleanup_store_artifacts() {
 
 #[test]
 fn verify_auth_flows_a_through_j() {
+    let _data = support::isolated_data("auth");
     cleanup_store_artifacts();
 
     // A + B: registering the FIRST account makes it ADMIN

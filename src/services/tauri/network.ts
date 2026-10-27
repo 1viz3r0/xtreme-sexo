@@ -1,3 +1,4 @@
+import { invoke } from '@tauri-apps/api/core';
 import { isTauriEnvironment } from './isTauri';
 
 export interface NetworkAdapterInfo {
@@ -29,7 +30,6 @@ export interface NetworkScopeInterface { interface_name: string; address: string
 export interface NetworkScopeDiscovery { interfaces: NetworkScopeInterface[]; warnings: string[] }
 export async function getNetworkScope(): Promise<NetworkScopeDiscovery> {
   if (!isTauriEnvironment()) throw new Error('Network scope is unavailable outside the desktop app.');
-  const { invoke } = await import('@tauri-apps/api/core');
   return invoke<NetworkScopeDiscovery>('scan_buddy_discover_network_scope');
 }
 
@@ -49,7 +49,6 @@ export interface TcpConnectionEntry {
 export async function getNetworkInterfaces(): Promise<NetworkAdapterInfo[]> {
   if (isTauriEnvironment()) {
     try {
-      const { invoke } = await import('@tauri-apps/api/core');
       return await invoke<NetworkAdapterInfo[]>('get_network_interfaces');
     } catch (err) {
       console.warn('Failed to invoke native get_network_interfaces:', err);
@@ -65,7 +64,6 @@ export async function getNetworkInterfaces(): Promise<NetworkAdapterInfo[]> {
 export async function getDetailedNetworkInterfaces(): Promise<DetailedAdapterInfo[]> {
   if (isTauriEnvironment()) {
     try {
-      const { invoke } = await import('@tauri-apps/api/core');
       return await invoke<DetailedAdapterInfo[]>('get_detailed_network_interfaces');
     } catch (err) {
       console.warn('Failed to invoke native get_detailed_network_interfaces:', err);
@@ -82,7 +80,6 @@ export async function getDetailedNetworkInterfaces(): Promise<DetailedAdapterInf
 export async function getActiveTcpConnections(): Promise<TcpConnectionEntry[]> {
   if (isTauriEnvironment()) {
     try {
-      const { invoke } = await import('@tauri-apps/api/core');
       return await invoke<TcpConnectionEntry[]>('get_active_tcp_connections');
     } catch (err) {
       console.warn('Failed to invoke native get_active_tcp_connections:', err);

@@ -1,40 +1,14 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { invoke } from '@tauri-apps/api/core';
 import { isTauriEnvironment } from '../services/tauri/isTauri';
-import { captureIssue, packetMeaning, summarizePage } from '../lib/captureBuddyPresentation';
+import { CAPTURE_LIMITS, captureIssue, newestPacketsFirst, packetMeaning, summarizePage, validateCaptureOptions, type CapturePage as Page } from '../lib/captureBuddyPresentation';
 import { CaptureWorkflow, type CaptureToken } from './captureWorkflow';
 import { CaptureInvestigation } from './CaptureInvestigation';
 import { downloadTextFile } from '../lib/localDownload';
 
 type Session = { session_id: string; path: string; running: boolean; bytes: number };
-type Packet = { number: number; time: string; source: string; destination: string; protocol: string; length: string; info: string };
-type Page = { packets: Packet[]; has_more: boolean; translated_filter?: string };
 type BriefEntry = { label: string; count: number; bytes: number };
 type InvestigationBrief = { packet_count: number; captured_bytes: number; wire_bytes: number; time_start: number | null; time_end: number | null; protocols: BriefEntry[]; talkers: BriefEntry[]; conversations: BriefEntry[]; dns_questions: string[]; observations: string[] };
-
-/** Keep the native packet-number cursor semantics while presenting newest packets first. */
-export function newestPacketsFirst(page: Page): Page {
-  return { ...page, packets: page.packets.slice().sort((a, b) => b.number - a.number) };
-}
-
-export const CAPTURE_LIMITS = {
-  snapshotMin: 64,
-  snapshotMax: 262144,
-  bytesMin: 24,
-  bytesMax: 32 * 1024 * 1024,
-  packetsMin: 1,
-  packetsMax: 100000,
-} as const;
-
-export function validateCaptureOptions(snapshotLength: string, maxBytes: string, maxPackets: string): string | null {
-  const values = [snapshotLength, maxBytes, maxPackets].map(Number);
-  if (values.some((value) => !Number.isInteger(value))) return 'Snapshot length, max bytes, and max packets must be whole numbers.';
-  const [snapshot, bytes, packets] = values;
-  if (snapshot < CAPTURE_LIMITS.snapshotMin || snapshot > CAPTURE_LIMITS.snapshotMax) return `Snapshot length must be ${CAPTURE_LIMITS.snapshotMin.toLocaleString()}–${CAPTURE_LIMITS.snapshotMax.toLocaleString()} bytes.`;
-  if (bytes < CAPTURE_LIMITS.bytesMin || bytes > CAPTURE_LIMITS.bytesMax) return `Max bytes must be ${CAPTURE_LIMITS.bytesMin.toLocaleString()}–${CAPTURE_LIMITS.bytesMax.toLocaleString()}.`;
-  if (packets < CAPTURE_LIMITS.packetsMin || packets > CAPTURE_LIMITS.packetsMax) return `Max packets must be ${CAPTURE_LIMITS.packetsMin.toLocaleString()}–${CAPTURE_LIMITS.packetsMax.toLocaleString()}.`;
-  return null;
-}
 
 export function CaptureBuddy() {
   const [engine, setEngine] = useState('Checking Capture Buddy native engine…');
@@ -248,9 +222,9 @@ export function CaptureBuddy() {
       </div><p className="text-xs text-slate-400">Visibility scope: {visibilityScope}. {visibilityNote}</p><details className="text-xs text-slate-400"><summary className="cursor-pointer">Advanced recording options</summary><div className="mt-2 grid gap-2 sm:grid-cols-3"><label>Snapshot length<input type="number" min={CAPTURE_LIMITS.snapshotMin} max={CAPTURE_LIMITS.snapshotMax} className={`${input} mt-1 w-full`} value={snapshotLength} onChange={(e) => setSnapshotLength(e.target.value)} disabled={session?.running} /></label><label>Max bytes<input type="number" min={CAPTURE_LIMITS.bytesMin} max={CAPTURE_LIMITS.bytesMax} className={`${input} mt-1 w-full`} value={maxBytes} onChange={(e) => setMaxBytes(e.target.value)} disabled={session?.running} /></label><label>Max packets<input type="number" min={CAPTURE_LIMITS.packetsMin} max={CAPTURE_LIMITS.packetsMax} className={`${input} mt-1 w-full`} value={maxPackets} onChange={(e) => setMaxPackets(e.target.value)} disabled={session?.running} /></label></div>{captureOptionsError && <p role="alert" className="mt-2 text-amber-200">{captureOptionsError}</p>}<input className={`${input} mt-2 w-full`} value={captureFilter} onChange={(e) => setCaptureFilter(e.target.value)} disabled={session?.running} placeholder="Optional BPF recording filter, e.g. tcp port 443" aria-label="Capture filter" /></details></div>}
     {session && <details className="text-xs text-slate-400"><summary className="cursor-pointer">Recording file · {(session.bytes / 1024).toFixed(1)} KiB</summary><p className="break-all select-text">{session.path}</p></details>}
     </section>;
-  return <div className="flex flex-col gap-3 p-4 h-full min-h-0 overflow-y-auto text-sm text-slate-200 [&_.text-xs]:text-sm">
-    <header className="flex flex-wrap justify-between items-center gap-3 rounded-xl border border-slate-700 bg-neutral-950 p-4">
-      <div><p className="text-sm font-medium text-slate-300">Capture Buddy</p><h1 className="text-2xl font-semibold tracking-tight text-white">Capture workspace</h1></div>
+  return <div className="enterprise-tool-shell capture-buddy-shell flex flex-col gap-3 p-4 h-full min-h-0 overflow-y-auto text-sm text-slate-200 [&_.text-xs]:text-sm">
+     <header className="enterprise-tool-header flex flex-wrap justify-between items-center gap-3 rounded-xl border border-slate-700 bg-neutral-950 p-4">
+       <div><p className="enterprise-kicker">NET0ZE / TRAFFIC EVIDENCE</p><h1 className="text-2xl font-semibold tracking-tight text-white">Capture Buddy</h1><p className="mt-1 text-slate-400">Record a bounded source with NET0ZE's own native capture and decoding pipeline, investigate what was observed, and export evidence without overclaiming.</p></div>
       <nav aria-label="Capture stages" className="flex flex-wrap gap-2 text-sm"><a className="rounded-lg border border-slate-700 bg-slate-900 px-3 py-2 hover:border-slate-300" href="#capture-source">Capture</a><a className="rounded-lg border border-slate-500 bg-white/10 px-3 py-2 text-white" href="#capture-investigate">Investigate</a><a className="rounded-lg border border-slate-700 bg-slate-900 px-3 py-2 hover:border-slate-300" href="#capture-evidence">Evidence</a></nav>
       <span className="rounded-full border border-slate-700 px-3 py-1 text-sm">{session?.running ? 'Recording' : session ? 'Reviewing a recording' : liveBlocked ? 'File review available' : available ? 'Choose a source' : 'Engine unavailable'}</span>
     </header>
@@ -269,7 +243,7 @@ export function CaptureBuddy() {
           const result = await invoke<string>('buddy_statistics', { sessionId });
            if (workflow.current(token)) { setSelected(null); setStatistics(result); setDetail(result); }
          }, 'detail')}>Summarize recording</button>
-         {statistics && <><button className={button} onClick={() => downloadTextFile(statistics, 'text/plain', `capture-statistics-${sessionId ?? 'session'}.txt`)}>Download TXT</button><button className={button} onClick={() => downloadTextFile(statistics, 'application/pdf', `capture-statistics-${sessionId ?? 'session'}.pdf`)}>Download PDF</button></>}
+          {statistics && <button className={button} onClick={() => downloadTextFile(statistics, 'text/plain', `capture-statistics-${sessionId ?? 'session'}.txt`)}>Download TXT</button>}
       </div></div>
       {!showInspector && <p className="text-sm text-slate-400">Select a packet from the investigation or timeline.</p>}
       {showInspector && <div className="grid grid-cols-1 lg:grid-cols-2 gap-3">

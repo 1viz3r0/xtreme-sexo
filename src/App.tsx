@@ -13,11 +13,14 @@ import { subscribeToFlowStream } from './services/tauri/flows';
 import type { FlowRecord } from './services/tauri/flows';
 import type { DetectionFinding } from './services/tauri/detections';
 import type { AttackGraph } from './services/tauri/graph';
+import type { LocationNode } from './components/Globe3D';
 
 const StorylineInspector = lazy(() => import('./components/StorylineInspector').then((module) => ({ default: module.StorylineInspector })));
 const EvidencePanel = lazy(() => import('./components/EvidencePanel').then((module) => ({ default: module.EvidencePanel })));
 const AttackGraphPanel = lazy(() => import('./components/AttackGraph').then((module) => ({ default: module.AttackGraph })));
 const EduInspectorModal = lazy(() => import('./components/EduInspectorModal').then((module) => ({ default: module.EduInspectorModal })));
+const FieldGuideView = lazy(() => import('./components/FieldGuideView').then((module) => ({ default: module.FieldGuideView })));
+const LearningLabsView = lazy(() => import('./components/LearningLabsView').then((module) => ({ default: module.LearningLabsView })));
 const ScenarioLabs = lazy(() => import('./components/ScenarioLabs').then((module) => ({ default: module.ScenarioLabs })));
 const DetectionBuilder = lazy(() => import('./components/DetectionBuilder').then((module) => ({ default: module.DetectionBuilder })));
 const AuditAndIOCs = lazy(() => import('./components/AuditAndIOCs').then((module) => ({ default: module.AuditAndIOCs })));
@@ -26,9 +29,10 @@ const UserProfileView = lazy(() => import('./components/UserProfileView').then((
 const AdminPanelView = lazy(() => import('./components/AdminPanelView').then((module) => ({ default: module.AdminPanelView })));
 const AuthModal = lazy(() => import('./components/AuthModal').then((module) => ({ default: module.AuthModal })));
 const Watchtower = lazy(() => import('./components/Watchtower').then((module) => ({ default: module.Watchtower })));
+const GlobalIntelView = lazy(() => import('./components/GlobalIntelView').then((module) => ({ default: module.GlobalIntelView })));
 
 export const App: React.FC = () => {
-  const [activeTab, setActiveTab] = useState<TabType>('conversations');
+  const [activeTab, setActiveTab] = useState<TabType>('global_intel');
   const [isAuthOpen, setIsAuthOpen] = useState<boolean>(false);
   const [hasOpenedAuth, setHasOpenedAuth] = useState(false);
   const openAuth = () => { setHasOpenedAuth(true); setIsAuthOpen(true); };
@@ -67,6 +71,7 @@ export const App: React.FC = () => {
   const [selectedFlowId] = useState<string | null>(null);
   const [selectedField, setSelectedField] = useState<string | null>(null);
   const [graphData, setGraphData] = useState<AttackGraph>({ nodes: [], edges: [] });
+  const [selectedNode, setSelectedNode] = useState<LocationNode | null>(null);
 
   const pollGate = useRef({ busy: false });
   const [pageVisible, setPageVisible] = useState(() => !document.hidden);
@@ -232,6 +237,16 @@ export const App: React.FC = () => {
             </div>
            )}
 
+           {activeTab === 'global_intel' && (
+             <div className="studio-page">
+               <GlobalIntelView
+                 selectedNode={selectedNode}
+                 setSelectedNode={setSelectedNode}
+                 setActiveTab={setActiveTab}
+               />
+             </div>
+           )}
+
            {activeTab === 'watchtower' && (
              <div className="studio-page">
                <Watchtower flows={flows} events={events} graph={graphData}
@@ -244,11 +259,9 @@ export const App: React.FC = () => {
             <div className="flex-1 p-4 overflow-y-auto grid grid-cols-1 lg:grid-cols-2 gap-4">
               <StorylineInspector
                 event={selectedEvent}
-                onInspectField={(f) => setSelectedField(f)}
               />
               <EvidencePanel
                 flow={selectedFlow}
-                onInspectField={(f) => setSelectedField(f)}
               />
             </div>
           )}
@@ -271,19 +284,17 @@ export const App: React.FC = () => {
             </div>
           )}
 
-          {activeTab === 'edu_inspector' && (
-            <div className="min-h-0 flex-1 p-4 overflow-y-auto">
-              <EduInspectorModal
-                selectedField={selectedField}
-                onClose={() => setSelectedField(null)}
-                preferenceScope={user?.id || 'guest'}
-              />
-            </div>
-          )}
+           {activeTab === 'edu_inspector' && (
+             <FieldGuideView preferenceScope={user?.id || 'guest'} />
+           )}
 
-          {(activeTab === 'labs' || activeTab === 'scenario_labs') && (
-            <ScenarioLabs profileScope={user?.id || 'guest'} />
-          )}
+           {activeTab === 'labs' && (
+             <LearningLabsView profileScope={user?.id || 'guest'} setActiveTab={setActiveTab} />
+           )}
+
+           {(activeTab === 'ctfs' || activeTab === 'scenario_labs') && (
+             <ScenarioLabs profileScope={user?.id || 'guest'} />
+           )}
 
           {activeTab === 'detection_builder' && (
             <DetectionBuilder />

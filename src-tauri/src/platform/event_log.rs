@@ -7,13 +7,16 @@ use windows_sys::Win32::System::EventLog::{
     EvtRenderEventXml,
 };
 
+#[cfg(windows)]
 const EVT_HANDLE_NULL: isize = 0;
 
+#[cfg(windows)]
 fn wide(s: &str) -> Vec<u16> {
     s.encode_utf16().chain(std::iter::once(0)).collect()
 }
 
 /// Reads a substring between `<tag>` and `</tag>` (no nesting) from an XML fragment.
+#[cfg(windows)]
 fn extract_tag(xml: &str, tag: &str) -> Option<String> {
     let open = format!("<{}>", tag);
     let close = format!("</{}>", tag);
@@ -24,6 +27,7 @@ fn extract_tag(xml: &str, tag: &str) -> Option<String> {
 }
 
 /// Reads the `name="..."` attribute of `<tag ...>`.
+#[cfg(windows)]
 fn extract_attr(xml: &str, tag: &str, attr: &str) -> Option<String> {
     let open = format!("<{}", tag);
     let idx = xml.find(&open)?;
@@ -37,6 +41,7 @@ fn extract_attr(xml: &str, tag: &str, attr: &str) -> Option<String> {
     if val.is_empty() { None } else { Some(val.to_string()) }
 }
 
+#[cfg(windows)]
 fn level_name(level: u32) -> String {
     match level {
         1 => "CRITICAL".to_string(),
@@ -48,12 +53,14 @@ fn level_name(level: u32) -> String {
     }
 }
 
+#[cfg(windows)]
 fn level_from_xml(xml: &str) -> u32 {
     extract_tag(xml, "Level")
         .and_then(|v| v.parse::<u32>().ok())
         .unwrap_or(4)
 }
 
+#[cfg(windows)]
 fn message_from_xml(xml: &str) -> String {
     let mut parts = Vec::new();
     let mut rest = xml;
@@ -111,7 +118,6 @@ pub fn get_windows_event_logs(limit: usize) -> Vec<WindowsEventEntry> {
 
         let batch = 8u32;
         let mut buffer: Vec<u16> = Vec::with_capacity(16 * 1024);
-        let mut num_returned: u32 = 0;
         let mut rounds = 0;
         let max_rounds = (limit as u32 / batch + 3).max(3);
 
@@ -122,7 +128,7 @@ pub fn get_windows_event_logs(limit: usize) -> Vec<WindowsEventEntry> {
             rounds += 1;
 
             let mut handles = [EVT_HANDLE_NULL; 8];
-            num_returned = 0;
+            let mut num_returned: u32 = 0;
             let ok = EvtNext(
                 query_handle,
                 batch,

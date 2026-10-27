@@ -20,7 +20,7 @@ def make_handler(root):
     files = [
         {"path": "/etc/ledger-sync/ledger-sync.conf", "owner": "root", "group": "ledger", "mode": "0640", "purpose": "service connection settings", "finding": "review"},
         {"path": "/var/lib/ledger-sync/export/ledger.sqlite3", "owner": "ledger", "group": "ledger", "mode": "0600", "purpose": "local reconciliation data", "finding": "ok"},
-        {"path": "/var/backups/ledger-sync/latest.sql.gz", "owner": "root", "group": "ledger", "mode": "0644", "purpose": "nightly database export", "finding": "high"},
+        {"path": "/var/backups/ledger-sync/latest.sql.gz", "owner": "root", "group": "ledger", "mode": "0644", "purpose": "nightly database export", "finding": "high", "evidence": "/evidence/backup-review.json"},
         {"path": "/usr/local/bin/ledger-sync", "owner": "root", "group": "root", "mode": "0755", "purpose": "installed service binary", "finding": "ok"},
         {"path": "/etc/systemd/system/ledger-sync.service", "owner": "root", "group": "root", "mode": "0644", "purpose": "service unit and identity", "finding": "review"},
     ]
@@ -89,6 +89,7 @@ def make_handler(root):
                 "/api/config": config_view,
                 "/api/files": {"files": files},
                 "/api/findings": findings,
+                "/evidence/backup-review.json": {"source": "/var/backups/ledger-sync/latest.sql.gz", "mode": "0644", "review_value": flag, "note": "Fixed training export: world-readable backup evidence, not a host file."},
             }
             if path in routes:
                 return self.send_body(200, "application/json", payload(routes[path]))
@@ -97,8 +98,11 @@ def make_handler(root):
         def do_POST(self):
             if urlsplit(self.path).path != "/api/submit":
                 return self.send_body(404, "text/plain; charset=utf-8", b"Not found\n")
-            length = int(self.headers.get("Content-Length", "0"))
-            if length > 512:
+            try:
+                length = int(self.headers.get("Content-Length", "0"))
+            except ValueError:
+                return self.send_body(400, "application/json", payload({"accepted": False, "message": "Invalid length"}))
+            if not 0 <= length <= 512:
                 return self.send_body(413, "application/json", payload({"accepted": False, "message": "Request too large"}))
             try:
                 body = json.loads(self.rfile.read(length))

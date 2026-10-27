@@ -2,8 +2,8 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import test from 'node:test';
 import * as THREE from 'three';
-import { captureDisplayState, disposeGroup, geoMarker, nearestGeography, telemetryMetric, telemetryStateHasValues, visibleHit, MIN_CAMERA_DISTANCE, MAX_CAMERA_DISTANCE, MAX_ENDPOINT_MARKERS, MAX_FLOW_ARCS, DEFAULT_CAMERA_POSITION } from './Globe3D.tsx';
-import { globePoint } from './globeGeometry.ts';
+import { captureDisplayState, telemetryMetric, telemetryStateHasValues } from '../lib/captureBuddyPresentation';
+import { disposeGroup, geoMarker, globePoint, nearestGeography, visibleHit, MIN_CAMERA_DISTANCE, MAX_CAMERA_DISTANCE, MAX_ENDPOINT_MARKERS, MAX_FLOW_ARCS, DEFAULT_CAMERA_POSITION } from './globeGeometry.ts';
 
 const source = readFileSync(new URL('./Globe3D.tsx', import.meta.url), 'utf8');
 

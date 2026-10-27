@@ -3,10 +3,9 @@ import { Shield, Calculator, CheckCircle2 } from 'lucide-react';
 
 interface EvidencePanelProps {
   flow: any | null;
-  onInspectField: (field: string) => void;
 }
 
-export const EvidencePanel: React.FC<EvidencePanelProps> = ({ flow, onInspectField }) => {
+export const EvidencePanel: React.FC<EvidencePanelProps> = ({ flow }) => {
   if (!flow) {
     return (
       <div className="cyber-card p-6 text-center text-slate-400 font-mono text-xs">

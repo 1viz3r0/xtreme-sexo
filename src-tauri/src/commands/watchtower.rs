@@ -1,6 +1,7 @@
 use tauri::command;
 use serde::Serialize;
 use std::net::Ipv4Addr;
+#[cfg(target_os = "linux")]
 use std::process::Command;
 use std::thread;
 use std::collections::HashMap;

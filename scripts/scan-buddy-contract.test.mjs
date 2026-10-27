@@ -22,4 +22,5 @@ test('Independent native scanner does not spawn or embed an external scanner', (
   assert.match(engine, /TcpStream::connect\(address\)/);
   assert.doesNotMatch(engine + commands, /(?:tokio::process|Command::new|include_bytes!|include_str!)/);
   assert.doesNotMatch(source('src-tauri/Cargo.toml'), /^\s*nmap\s*=/m);
+  assert.doesNotMatch(`${engine}\n${commands}\n${source('src-tauri/src/services/scan_inspection.rs')}`, /nmap|tshark|dumpcap|wireshark/i);
 });

@@ -112,7 +112,9 @@ fn check_directory(directory: &Path) -> io::Result<()> {
 
 fn prepare_directory(directory: &Path) -> io::Result<()> {
     check_directory(directory.parent().ok_or_else(rejected)?)?;
-    let mut builder = fs::DirBuilder::new();
+    let builder = fs::DirBuilder::new();
+    #[cfg(unix)]
+    let mut builder = builder;
     #[cfg(unix)]
     {
         use std::os::unix::fs::DirBuilderExt;

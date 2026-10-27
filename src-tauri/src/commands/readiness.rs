@@ -146,7 +146,7 @@ pub async fn get_backend_readiness(state: tauri::State<'_, crate::state::Backend
     tauri::async_runtime::spawn_blocking(move || {
         let supported = cfg!(any(windows, target_os = "linux"));
         let (storage, mut last_errors) = storage_readiness(path.as_deref(), storage_error);
-        let enumeration = if supported { pcap::Device::list().map(|list| list.len()).map_err(|e| e.to_string()) } else { Ok(0) };
+        let enumeration = if supported { crate::platform::capture::devices().map(|list| list.len()).map_err(|e| e.to_string()) } else { Ok(0) };
         let (capture, capture_error) = capture_result(enumeration, supported);
         if let Some(error) = capture_error { last_errors.push(error); }
          let neighbor_tool = if cfg!(target_os = "linux") { "ip" } else { "arp" };

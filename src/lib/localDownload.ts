@@ -1,8 +1,8 @@
+import { invoke } from '@tauri-apps/api/core';
 import { isTauriEnvironment } from '../services/tauri/isTauri';
 
 export async function downloadTextFile(content: string, mime: string, filename: string): Promise<void> {
   if (isTauriEnvironment()) {
-    const { invoke } = await import('@tauri-apps/api/core');
     await invoke('save_download', { filename, content });
     return;
   }

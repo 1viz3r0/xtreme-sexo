@@ -1,3 +1,4 @@
+import { invoke } from '@tauri-apps/api/core';
 import { isTauriEnvironment } from './isTauri';
 
 export interface AuthUserView {
@@ -27,7 +28,6 @@ async function invokeAuth<T>(cmd: string, args?: Record<string, unknown>): Promi
   if (!isTauriEnvironment()) {
     throw new Error('AUTH_UNAVAILABLE_WEB_MODE');
   }
-  const { invoke } = await import('@tauri-apps/api/core');
   return invoke<T>(cmd, args);
 }
 

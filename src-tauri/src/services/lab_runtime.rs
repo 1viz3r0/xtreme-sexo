@@ -7,7 +7,7 @@ use std::io::{Read, Write};
 use std::net::{Ipv4Addr, Shutdown, SocketAddr, TcpListener, TcpStream};
 use std::path::PathBuf;
 use std::process::{Command, Stdio};
-use std::sync::{Mutex, Arc, atomic::{AtomicBool, Ordering}};
+use std::sync::{Mutex, Arc, atomic::{AtomicBool, AtomicUsize, Ordering}};
 use std::thread;
 use std::time::{Duration, Instant};
 
@@ -33,14 +33,16 @@ const MAX_PROXY_CONNECTIONS: usize = 8;
 const MAX_PROXY_REQUEST: usize = 64 * 1024;
 const MAX_PROXY_RESPONSE: usize = 1024 * 1024;
 const PROXY_BUFFER: usize = 16 * 1024;
+const LAB_IDS: &[&str] = &["web-exposure", "network-enumeration", "linux-permissions", "header-trail", "protocol-archive", "first-contact", "service-signals"];
+fn has_console(lab: &str) -> bool { matches!(lab, "network-enumeration" | "header-trail" | "protocol-archive") }
 
 /// Owns its listener and all connection workers. The upstream is fixed at
 /// creation from ownership-checked Docker inspection, never HTTP/IPC input.
 struct Forwarder { addr: SocketAddr, stop: Arc<AtomicBool>, worker: Option<thread::JoinHandle<()>> }
 impl Forwarder {
     fn start(upstream: SocketAddr) -> Result<Self, String> {
-        if !matches!(upstream, SocketAddr::V4(addr) if addr.ip().is_private() && !addr.ip().is_loopback() && addr.port() == 8000) {
-            return Err("Only the inspected private container HTTP endpoint may be forwarded".into());
+        if !matches!(upstream, SocketAddr::V4(addr) if addr.ip().is_private() && !addr.ip().is_loopback() && matches!(addr.port(), 8000 | 9000)) {
+            return Err("Only inspected private container endpoints on fixed ports 8000/9000 may be forwarded".into());
         }
         let listener = TcpListener::bind(("127.0.0.1", 0)).map_err(|_| "Cannot bind the lab loopback forwarder")?;
         listener.set_nonblocking(true).map_err(|_| "Cannot configure the lab loopback listener")?;
@@ -140,16 +142,16 @@ pub struct LabRuntimeStatus {
     pub lab_id: Option<String>,
     pub phase: &'static str,
     pub target_url: Option<String>,
+    pub console_addr: Option<String>,
     pub message: String,
     pub runtime: &'static str,
     pub completed: bool,
 }
 impl Default for LabRuntimeStatus {
-    fn default() -> Self { Self { running: false, lab_id: None, phase: "stopped", target_url: None, message: "No practical lab is running.".into(), runtime: "docker", completed: false } }
+    fn default() -> Self { Self { running: false, lab_id: None, phase: "stopped", target_url: None, console_addr: None, message: "No practical lab is running.".into(), runtime: "docker", completed: false } }
 }
 
 struct Run {
-    lab_id: String,
     owner: String,
     host: String,
     container: String,
@@ -162,70 +164,162 @@ struct Run {
     network_created: bool,
     image_created: bool,
     forwarder: Option<Forwarder>,
+    console: Option<Forwarder>,
+    executor: Arc<dyn Executor>,
 }
 #[derive(Default)]
 struct Inner { run: Option<Run>, status: LabRuntimeStatus }
-#[derive(Default)]
-pub struct LabRuntimeState { inner: Mutex<Inner> }
+pub struct LabRuntimeState {
+    inner: Mutex<Inner>,
+    operation: Mutex<()>,
+    startup: Mutex<Option<Arc<AtomicBool>>>,
+    stopping: AtomicUsize,
+    generation: AtomicUsize,
+    closed: AtomicBool,
+    executor: Arc<dyn Executor>,
+}
+impl Default for LabRuntimeState {
+    fn default() -> Self { Self::with_executor(Arc::new(SystemExecutor)) }
+}
+
+trait Executor: Send + Sync {
+    fn docker(&self, host: Option<&str>, args: &[&str], timeout: Duration, cancel: &AtomicBool) -> Result<String, String>;
+    fn open(&self, url: &str) -> Result<(), String>;
+    fn ready(&self, http: SocketAddr, console: Option<SocketAddr>, cancel: &AtomicBool) -> Result<(), String> {
+        wait_ready(http, console, cancel)
+    }
+}
+struct SystemExecutor;
+impl Executor for SystemExecutor {
+    fn docker(&self, host: Option<&str>, args: &[&str], timeout: Duration, cancel: &AtomicBool) -> Result<String, String> {
+        run_command(docker_command(host, args), timeout, cancel)
+    }
+    fn open(&self, url: &str) -> Result<(), String> {
+        #[cfg(target_os = "linux")]
+        let mut command = Command::new("xdg-open");
+        #[cfg(target_os = "macos")]
+        let mut command = Command::new("/usr/bin/open");
+        #[cfg(windows)]
+        let mut command = { let mut command = Command::new("rundll32.exe"); command.arg("url.dll,FileProtocolHandler"); command };
+        #[cfg(not(any(target_os = "linux", target_os = "macos", windows)))]
+        return Err("Platform URL opener unavailable".into());
+        #[cfg(any(target_os = "linux", target_os = "macos", windows))]
+        { command.arg(url); run_command_output(command, Duration::from_secs(5), &AtomicBool::new(false), false).map(|_| ()) }
+    }
+}
+
+fn docker_command(host: Option<&str>, args: &[&str]) -> Command {
+    let mut command = Command::new("docker");
+    // A local daemon does not imply a local Buildx builder. Ignore inherited
+    // builder/context overrides and explicitly select the daemon-bound builder.
+    command.env_remove("BUILDKIT_HOST").env("BUILDX_BUILDER", "default");
+    if let Some(host) = host { command.env_remove("DOCKER_CONTEXT").args(["--host", host]); }
+    command.args(args);
+    command
+}
 
 // No configurable executable or shell, including on the action path. Bound
 // output and wall time also apply when the daemon is stuck or unavailable.
-fn docker(host: Option<&str>, args: &[&str], timeout: Duration) -> Result<String, String> {
-    let mut command = Command::new("docker");
-    if let Some(host) = host { command.args(["--host", host]); }
-    let mut child = command.args(args).stdin(Stdio::null()).stdout(Stdio::piped()).stderr(Stdio::null())
-        .spawn().map_err(|_| "Docker CLI is unavailable. Install Docker 28 or newer and start its local daemon.".to_string())?;
-    let stdout = child.stdout.take().ok_or("Docker output unavailable")?;
-    let (send_output, receive_output) = std::sync::mpsc::channel();
-    thread::spawn(move || { let mut bytes = Vec::new(); let _ = stdout.take(OUTPUT_LIMIT).read_to_end(&mut bytes); let _ = send_output.send(bytes); });
+fn run_command(command: Command, timeout: Duration, cancel: &AtomicBool) -> Result<String, String> {
+    run_command_output(command, timeout, cancel, true)
+}
+fn run_command_output(mut command: Command, timeout: Duration, cancel: &AtomicBool, capture: bool) -> Result<String, String> {
+    if cancel.load(Ordering::Acquire) { return Err("Lab startup cancelled.".into()); }
+    #[cfg(unix)]
+    { use std::os::unix::process::CommandExt; command.process_group(0); }
+    let mut child = command.stdin(Stdio::null()).stdout(if capture { Stdio::piped() } else { Stdio::null() }).stderr(Stdio::null())
+        .spawn().map_err(|_| "Required local executable is unavailable. Check Docker 28+ and the system URL opener.".to_string())?;
+    let receive_output = child.stdout.take().map(|mut stdout| {
+        let (send_output, receive_output) = std::sync::mpsc::channel();
+        thread::spawn(move || {
+            let mut bytes = Vec::new();
+            let _ = stdout.by_ref().take(OUTPUT_LIMIT).read_to_end(&mut bytes);
+            // Drain the remainder instead of breaking a verbose build's pipe.
+            let _ = std::io::copy(&mut stdout, &mut std::io::sink());
+            let _ = send_output.send(bytes);
+        });
+        receive_output
+    });
     let deadline = Instant::now() + timeout;
+    let mut terminated = false;
     let result = loop {
+        if cancel.load(Ordering::Acquire) {
+            terminate_child(&mut child);
+            terminated = true;
+            break Err("Lab startup cancelled.".to_string());
+        }
         match child.try_wait() {
-            Ok(Some(exit)) => break if exit.success() { Ok(()) } else { Err("Docker operation failed. Check the local daemon, image availability, and runtime permissions.".to_string()) },
+            Ok(Some(exit)) => break if exit.success() { Ok(()) } else {
+                terminate_child(&mut child); terminated = true;
+                Err("Local executable failed. Check Docker access, image availability, or the system URL opener.".to_string())
+            },
             Ok(None) if Instant::now() < deadline => thread::sleep(Duration::from_millis(25)),
-            _ => { let _ = child.kill(); let _ = child.wait(); break Err("Docker operation timed out or could not be monitored.".to_string()); }
+            _ => { terminate_child(&mut child); terminated = true; break Err("Local operation timed out or could not be monitored.".to_string()); }
         }
     };
     // CLI plugins can inherit stdout. Never block indefinitely joining a
     // reader after the direct child was killed or exited.
-    let bytes = receive_output.recv_timeout(Duration::from_secs(1)).map_err(|_| "Docker output did not finish within its deadline".to_string())?;
+    // URL openers intentionally use null output: a successfully launched
+    // browser may outlive its launcher and must not keep a capture pipe open.
+    let bytes = if let Some(receive_output) = receive_output {
+        match receive_output.recv_timeout(Duration::from_secs(1)) {
+            Ok(bytes) => bytes,
+            Err(_) => {
+                if !terminated { terminate_child(&mut child); }
+                return Err("Local executable output did not finish within its deadline".into());
+            }
+        }
+    } else { Vec::new() };
     result?;
-    String::from_utf8(bytes).map_err(|_| "Docker returned invalid output".into())
+    String::from_utf8(bytes).map_err(|_| "Local executable returned invalid output".into())
+}
+fn terminate_child(child: &mut std::process::Child) {
+    // Only our spawned process group: include inherited-output CLI plugins,
+    // never enumerate or signal unrelated processes.
+    #[cfg(unix)]
+    if let Ok(pid) = i32::try_from(child.id()) {
+        unsafe extern "C" { fn kill(pid: i32, signal: i32) -> i32; }
+        unsafe { kill(-pid, 9); }
+    }
+    let _ = child.kill(); let _ = child.wait();
 }
 fn supported_version(version: &str) -> bool { version.trim().split('.').next().and_then(|v| v.parse::<u32>().ok()).is_some_and(|v| v >= 28) }
 fn local_engine_host(host: &str) -> bool {
     (host.starts_with("unix:///") && !host.contains(['\n', '\r'])) || host == "npipe:////./pipe/docker_engine"
 }
-fn check_engine(mut execute: impl FnMut(Option<&str>, &[&str]) -> Result<String, String>) -> Result<String, String> {
-    let client = execute(None, &["version", "--format", "{{.Client.Version}}"])?;
-    if !supported_version(&client) { return Err("Docker 28 or newer is required.".into()); }
-    let host = if let Ok(host) = std::env::var("DOCKER_HOST") { host } else {
+fn check_engine(execute: impl FnMut(Option<&str>, &[&str]) -> Result<String, String>) -> Result<String, String> {
+    // Respect context selection while reading local metadata, then use only
+    // the validated host for every daemon operation (including cleanup).
+    let context_selected = std::env::var("DOCKER_CONTEXT").is_ok_and(|context| !context.is_empty());
+    check_engine_host(if context_selected { None } else { std::env::var("DOCKER_HOST").ok() }, execute)
+}
+fn check_engine_host(host: Option<String>, mut execute: impl FnMut(Option<&str>, &[&str]) -> Result<String, String>) -> Result<String, String> {
+    let host = if let Some(host) = host { host } else {
         execute(None, &["context", "inspect", "--format", "{{.Endpoints.docker.Host}}"] )?.trim().to_owned()
     };
     if !local_engine_host(&host) { return Err("Select a local Docker engine; remote Docker endpoints are not supported for loopback labs.".into()); }
+    let client = execute(Some(&host), &["version", "--format", "{{.Client.Version}}"])?;
+    if !supported_version(&client) { return Err("Docker 28 or newer is required.".into()); }
     let server = execute(Some(&host), &["version", "--format", "{{.Server.Version}}"])?;
     if !supported_version(&server) { return Err("A running local Docker daemon version 28 or newer is required.".into()); }
+    let platform = execute(Some(&host), &["info", "--format", "{{.OSType}}|{{.OperatingSystem}}|{{json .SecurityOptions}}"])?;
+    if !cfg!(target_os = "linux") || !platform.starts_with("linux|") || platform.to_ascii_lowercase().contains("docker desktop") || platform.contains("rootless") {
+        return Err("Labs require native Linux Docker Engine with host-reachable bridge networking. Docker Desktop and rootless engines are not supported.".into());
+    }
     Ok(host)
 }
 fn entropy() -> Result<String, String> {
     let mut bytes = [0u8; 24];
-    #[cfg(unix)]
-    fs::File::open("/dev/urandom").and_then(|mut f| f.read_exact(&mut bytes)).map_err(|_| "Secure run entropy unavailable")?;
-    #[cfg(windows)]
-    {
-        #[link(name = "bcrypt")]
-        extern "system" { fn BCryptGenRandom(algorithm: *mut std::ffi::c_void, buffer: *mut u8, length: u32, flags: u32) -> i32; }
-        if unsafe { BCryptGenRandom(std::ptr::null_mut(), bytes.as_mut_ptr(), bytes.len() as u32, 2) } != 0 { return Err("Secure run entropy unavailable".into()); }
-    }
-    #[cfg(not(any(unix, windows)))]
-    return Err("Secure run entropy unavailable on this platform".into());
+    getrandom::fill(&mut bytes).map_err(|_| "Secure run entropy unavailable")?;
     Ok(bytes.iter().map(|b| format!("{b:02x}")).collect())
 }
 fn create_run(host: String, lab_id: &str) -> Result<Run, String> {
     let owner = entropy()?;
     let flag = format!("NET0ZE{{{}-{}}}", lab_id, entropy()?);
     let context = std::env::temp_dir().join(format!("netoze-lab-{owner}"));
-    let mut builder = fs::DirBuilder::new();
+    let builder = fs::DirBuilder::new();
+    #[cfg(unix)]
+    let mut builder = builder;
     #[cfg(unix)] { use std::os::unix::fs::DirBuilderExt; builder.mode(0o700); }
     builder.create(&context).map_err(|_| "Unable to create the private lab build context")?;
     let result = (|| {
@@ -249,7 +343,7 @@ fn create_run(host: String, lab_id: &str) -> Result<Run, String> {
         Ok::<_, String>(())
     })();
     if let Err(error) = result { let _ = fs::remove_dir_all(&context); return Err(error); }
-    Ok(Run { lab_id: lab_id.to_owned(), container: format!("netoze-target-{owner}"), network: format!("netoze-network-{owner}"), image: format!("netoze-lab-{owner}:local"), owner, host, context, flag, url: None, container_created: false, network_created: false, image_created: false, forwarder: None })
+    Ok(Run { container: format!("netoze-target-{owner}"), network: format!("netoze-network-{owner}"), image: format!("netoze-lab-{owner}:local"), owner, host, context, flag, url: None, container_created: false, network_created: false, image_created: false, forwarder: None, console: None, executor: Arc::new(SystemExecutor) })
 }
 fn run_args(run: &Run) -> Vec<String> {
     ["create", "--name", &run.container, "--label", &format!("{OWNER_LABEL}={}", run.owner), "--network", &run.network,
@@ -257,12 +351,15 @@ fn run_args(run: &Run) -> Vec<String> {
         "--memory", "96m", "--memory-swap", "96m", "--pids-limit", "32", "--cpus", "0.5", "--user", "10001:10001", &run.image]
         .into_iter().map(str::to_owned).collect()
 }
-fn execute_run(run: &Run, args: &[&str]) -> Result<String, String> { docker(Some(&run.host), args, Duration::from_secs(15)) }
+fn execute_run(run: &Run, args: &[&str]) -> Result<String, String> { run.executor.docker(Some(&run.host), args, Duration::from_secs(15), &AtomicBool::new(false)) }
 fn owned_id(run: &Run, resource: &str, name: &str) -> Option<String> {
+    owned_id_with_cancel(run, resource, name, &AtomicBool::new(false))
+}
+fn owned_id_with_cancel(run: &Run, resource: &str, name: &str, cancel: &AtomicBool) -> Option<String> {
     let format = format!("{{{{.Id}}}} {{{{index .Config.Labels \"{OWNER_LABEL}\"}}}}");
     let network_format = format!("{{{{.Id}}}} {{{{index .Labels \"{OWNER_LABEL}\"}}}}");
     let format = if resource == "network" { &network_format } else { &format };
-    let output = execute_run(run, &[resource, "inspect", "--format", format, name]).ok()?;
+    let output = run.executor.docker(Some(&run.host), &[resource, "inspect", "--format", format, name], Duration::from_secs(3), cancel).ok()?;
     let (id, owner) = output.trim().split_once(' ')?;
     let digest = id.strip_prefix("sha256:").unwrap_or(id);
     if owner == run.owner && digest.len() == 64 && digest.bytes().all(|b| b.is_ascii_hexdigit()) { Some(id.into()) } else { None }
@@ -285,6 +382,7 @@ fn remove_owned(run: &Run, resource: &str, name: &str, force: bool) -> bool {
 fn cleanup(run: &mut Run) -> bool {
     // Join every local connection before removing its upstream container.
     run.forwarder.take();
+    run.console.take();
     run.url = None;
     // Never prune, enumerate/remove other resources, or forcibly remove images.
     let mut healthy = true;
@@ -300,6 +398,7 @@ fn cleanup(run: &mut Run) -> bool {
     if run.context.exists() && fs::remove_dir_all(&run.context).is_err() { healthy = false; }
     healthy
 }
+impl Drop for Run { fn drop(&mut self) { let _ = cleanup(self); } }
 fn inspected_upstream(container: &Value, network: &Value, owner: &str, network_name: &str) -> Result<SocketAddr, String> {
     let invalid = "Target must belong exclusively to the owned internal private network";
     if container["Config"]["Labels"][OWNER_LABEL] != owner || network["Labels"][OWNER_LABEL] != owner || network["Name"] != network_name || network["Internal"] != true { return Err(invalid.into()); }
@@ -322,48 +421,63 @@ fn inspected_upstream(container: &Value, network: &Value, owner: &str, network_n
     if !subnet_matches { return Err(invalid.into()); }
     Ok(SocketAddr::from((ip, 8000)))
 }
-fn launch(run: &mut Run) -> Result<(), String> {
+fn launch(run: &mut Run, lab_id: &str, cancel: &AtomicBool) -> Result<(), String> {
     let context = run.context.to_str().ok_or("Invalid private build context path")?;
     let label = format!("{OWNER_LABEL}={}", run.owner);
     // Mark attempted creations before dispatch: ambiguous CLI failures retain
     // ownership-checked cleanup rather than assuming no resource was created.
     run.image_created = true;
-    docker(Some(&run.host), &["build", "--network", "none", "--label", &label, "--tag", &run.image, context], Duration::from_secs(180))?;
+    run.executor.docker(Some(&run.host), &["build", "--network", "none", "--label", &label, "--tag", &run.image, context], Duration::from_secs(180), cancel)?;
     fs::remove_dir_all(&run.context).map_err(|_| "Unable to remove the private lab build context")?;
     run.network_created = true;
-    execute_run(run, &["network", "create", "--internal", "--label", &label, &run.network])?;
-    if owned_id(run, "network", &run.network).is_none() || execute_run(run, &["network", "inspect", "--format", "{{.Internal}}", &run.network])?.trim() != "true" {
+    let execute = |args: &[&str]| run.executor.docker(Some(&run.host), args, Duration::from_secs(15), cancel);
+    execute(&["network", "create", "--internal", "--label", &label, &run.network])?;
+    if owned_id_with_cancel(run, "network", &run.network, cancel).is_none() || execute(&["network", "inspect", "--format", "{{.Internal}}", &run.network])?.trim() != "true" {
         return Err("The managed network is not an owned internal Docker network".into());
     }
     let args = run_args(run);
     run.container_created = true;
-    execute_run(run, &args.iter().map(String::as_str).collect::<Vec<_>>())?;
-    execute_run(run, &["container", "start", &run.container])?;
-    let container_id = owned_id(run, "container", &run.container).ok_or("Target container ownership is unavailable")?;
-    let network_id = owned_id(run, "network", &run.network).ok_or("Target network ownership is unavailable")?;
-    let container: Value = serde_json::from_str(&execute_run(run, &["container", "inspect", "--format", "{{json .}}", &container_id])?).map_err(|_| "Invalid target inspection")?;
-    let network: Value = serde_json::from_str(&execute_run(run, &["network", "inspect", "--format", "{{json .}}", &network_id])?).map_err(|_| "Invalid network inspection")?;
+    execute(&args.iter().map(String::as_str).collect::<Vec<_>>())?;
+    execute(&["container", "start", &run.container])?;
+    let container_id = owned_id_with_cancel(run, "container", &run.container, cancel).ok_or("Target container ownership is unavailable")?;
+    let network_id = owned_id_with_cancel(run, "network", &run.network, cancel).ok_or("Target network ownership is unavailable")?;
+    let container: Value = serde_json::from_str(&execute(&["container", "inspect", "--format", "{{json .}}", &container_id])?).map_err(|_| "Invalid target inspection")?;
+    let network: Value = serde_json::from_str(&execute(&["network", "inspect", "--format", "{{json .}}", &network_id])?).map_err(|_| "Invalid network inspection")?;
     let upstream = inspected_upstream(&container, &network, &run.owner, &run.network)?;
     let forwarder = Forwarder::start(upstream)?;
-    let port = forwarder.addr.port();
+    let addr = forwarder.addr;
+    let port = addr.port();
     let url = format!("http://127.0.0.1:{port}/");
     run.forwarder = Some(forwarder);
+    if has_console(lab_id) { run.console = Some(Forwarder::start(SocketAddr::new(upstream.ip(), 9000))?); }
+    run.executor.ready(addr, run.console.as_ref().map(|console| console.addr), cancel)?;
+    run.url = Some(url);
+    Ok(())
+}
+fn wait_ready(http: SocketAddr, console: Option<SocketAddr>, cancel: &AtomicBool) -> Result<(), String> {
     let deadline = Instant::now() + Duration::from_secs(10);
     loop {
-        if let Ok(mut stream) = TcpStream::connect_timeout(&format!("127.0.0.1:{port}").parse().unwrap(), Duration::from_millis(300)) {
+        if cancel.load(Ordering::Acquire) { return Err("Lab startup cancelled.".into()); }
+        if let Ok(mut stream) = TcpStream::connect_timeout(&http, Duration::from_millis(300)) {
             use std::io::Write;
             let _ = stream.set_read_timeout(Some(Duration::from_millis(300)));
             let _ = stream.set_write_timeout(Some(Duration::from_millis(300)));
-            if stream.write_all(format!("GET /health HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\nConnection: close\r\n\r\n").as_bytes()).is_ok() {
+            if stream.write_all(format!("GET /health HTTP/1.1\r\nHost: {http}\r\nConnection: close\r\n\r\n").as_bytes()).is_ok() {
                 let mut bytes = [0; 256];
-                if stream.read(&mut bytes).is_ok_and(|n| n > 0 && bytes[..n].starts_with(b"HTTP/1.0 200")) { break; }
+                if stream.read(&mut bytes).is_ok_and(|n| n > 0 && bytes[..n].starts_with(b"HTTP/1.0 200")) {
+                    let console_ready = console.is_none_or(|addr| {
+                        TcpStream::connect_timeout(&addr, Duration::from_millis(300)).is_ok_and(|mut stream| {
+                            let _ = stream.set_read_timeout(Some(Duration::from_millis(300)));
+                            stream.read(&mut [0; 256]).is_ok_and(|n| n > 0)
+                        })
+                    });
+                    if console_ready { return Ok(()); }
+                }
             }
         }
-        if Instant::now() >= deadline { return Err("Container started but the loopback target did not become healthy.".into()); }
+        if Instant::now() >= deadline { return Err("Container started but its required loopback endpoints did not become healthy.".into()); }
         thread::sleep(Duration::from_millis(100));
     }
-    run.url = Some(url);
-    Ok(())
 }
 fn same_flag(expected: &str, supplied: &str) -> bool {
     let mut difference = expected.len() ^ supplied.len();
@@ -371,59 +485,141 @@ fn same_flag(expected: &str, supplied: &str) -> bool {
     difference == 0
 }
 impl LabRuntimeState {
-    // lib.rs uses this constructor. Flags and active containers are deliberately
-    // not persisted or resumed; each launch is a new isolated target.
+    fn with_executor(executor: Arc<dyn Executor>) -> Self {
+        Self { inner: Mutex::new(Inner::default()), operation: Mutex::new(()), startup: Mutex::new(None), stopping: AtomicUsize::new(0), generation: AtomicUsize::new(0), closed: AtomicBool::new(false), executor }
+    }
+    // shortcut: no durable owner journal exists. A process crash/SIGKILL or
+    // daemon work completing after an interrupted client can leave resources,
+    // build cache, or a private temporary context; CLI exit is not a daemon receipt.
+    // Never guess ownership or adopt/prune an earlier process's resources.
     pub fn persistent() -> Self { Self::default() }
     pub fn start(&self, lab_id: String) -> Result<LabRuntimeStatus, String> {
-        let mut inner = self.inner.lock().map_err(|_| "Lab runtime unavailable")?;
-        Self::start_locked(&mut inner, lab_id)
+        self.start_at(lab_id, self.generation.load(Ordering::Acquire))
     }
-    fn start_locked(inner: &mut Inner, lab_id: String) -> Result<LabRuntimeStatus, String> {
-        if !["web-exposure", "network-enumeration", "linux-permissions", "header-trail", "protocol-archive", "first-contact", "service-signals"].contains(&lab_id.as_str()) { return Err("Unknown practical lab".into()); }
-        if inner.run.is_some() { return Err("Stop the current lab or finish its cleanup before starting another".into()); }
-        let host = match check_engine(|host, args| docker(host, args, Duration::from_secs(10))) {
+    fn start_at(&self, lab_id: String, generation: usize) -> Result<LabRuntimeStatus, String> {
+        let _operation = self.operation.lock().map_err(|_| "Lab runtime unavailable")?;
+        if generation != self.generation.load(Ordering::Acquire) { return Err("Queued lab startup was cancelled by Stop".into()); }
+        self.start_locked(lab_id)
+    }
+    fn start_locked(&self, lab_id: String) -> Result<LabRuntimeStatus, String> {
+        if !LAB_IDS.contains(&lab_id.as_str()) { return Err("Unknown practical lab".into()); }
+        let cancel = Arc::new(AtomicBool::new(false));
+        {
+            let mut startup = self.startup.lock().map_err(|_| "Lab runtime unavailable")?;
+            let mut inner = self.inner.lock().map_err(|_| "Lab runtime unavailable")?;
+            if self.closed.load(Ordering::Acquire) { return Err("Lab runtime is shutting down".into()); }
+            if self.stopping.load(Ordering::Acquire) > 0 { return Ok(inner.status.clone()); }
+            if inner.run.is_some() { return Err("Stop the current lab or finish its cleanup before starting another".into()); }
+            *startup = Some(cancel.clone());
+            inner.status = LabRuntimeStatus { lab_id: Some(lab_id.clone()), phase: "starting", message: "Provisioning the owned local target… Use Stop to cancel.".into(), ..LabRuntimeStatus::default() };
+        }
+        let host = match check_engine(|host, args| self.executor.docker(host, args, Duration::from_secs(10), &cancel)) {
             Ok(host) => host,
-            Err(message) => { inner.status = LabRuntimeStatus { lab_id: Some(lab_id), phase: "setup-required", message, ..LabRuntimeStatus::default() }; return Ok(inner.status.clone()); }
+            Err(message) => return self.finish_start(lab_id, None, if cancel.load(Ordering::Acquire) { "stopped" } else { "setup-required" }, message),
         };
         let mut run = match create_run(host, &lab_id) {
             Ok(run) => run,
-            Err(message) => { inner.status = LabRuntimeStatus { lab_id: Some(lab_id), phase: "error", message, ..LabRuntimeStatus::default() }; return Ok(inner.status.clone()); }
+            Err(message) => return self.finish_start(lab_id, None, "error", message),
         };
-        match launch(&mut run) {
-            Ok(()) => { let message = match lab_id.as_str() { "network-enumeration" => "Northstar Yard is ready. Map the service registry, read the maintenance handoff, and recover the export value.", "linux-permissions" => "Ledger Sync is ready. Review the permission evidence, identify the least-privilege issue, and submit the recovered value.", "header-trail" => "Signal Kiosk is ready. Follow the release bulletin and recover the signed training value.", "protocol-archive" => "Copperline is ready. Follow the protocol sequence and decode the fixed archive record.", "first-contact" => "First Contact is ready. Follow the clue, open the welcome note, and submit the recovered value.", "service-signals" => "Service Signals is ready. Read the inventory, follow its maintenance note, and submit the recovered value.", _ => "Harborline Dispatch is ready. Discover its exposed backup, recover the deployment config, and submit the recovered value." }; inner.status = LabRuntimeStatus { running: true, lab_id: Some(lab_id), phase: "running", target_url: run.url.clone(), message: message.into(), runtime: "docker", completed: false }; inner.run = Some(run); }
-            Err(message) => { let clean = cleanup(&mut run); inner.status = LabRuntimeStatus { lab_id: Some(lab_id), phase: "error", message: if clean { message } else { format!("{message} Owned-resource cleanup remains pending; use Stop after repairing Docker access.") }, ..LabRuntimeStatus::default() }; if !clean { inner.run = Some(run); } }
+        run.executor = self.executor.clone();
+        let result = launch(&mut run, &lab_id, &cancel);
+        if result.is_ok() && !cancel.load(Ordering::Acquire) {
+            return self.finish_start(lab_id, Some(run), "running", "Target ready. Follow the room's clues and submit the recovered value.".into());
         }
+        let message = result.err().unwrap_or_else(|| "Lab startup cancelled.".into());
+        let clean = cleanup(&mut run);
+        self.finish_start(lab_id, if clean { None } else { Some(run) },
+            if clean && cancel.load(Ordering::Acquire) { "stopped" } else { "error" },
+            if clean { message } else { format!("{message} Owned-resource cleanup remains pending; use Stop after repairing Docker access.") })
+    }
+    fn finish_start(&self, lab_id: String, run: Option<Run>, phase: &'static str, message: String) -> Result<LabRuntimeStatus, String> {
+        self.startup.lock().map_err(|_| "Lab runtime unavailable")?.take();
+        let mut inner = self.inner.lock().map_err(|_| "Lab runtime unavailable")?;
+        inner.status = LabRuntimeStatus { running: phase == "running", lab_id: Some(lab_id), phase,
+            target_url: if phase == "running" { run.as_ref().and_then(|run| run.url.clone()) } else { None },
+            console_addr: if phase == "running" { run.as_ref().and_then(|run| run.console.as_ref().map(|console| console.addr.to_string())) } else { None },
+            message, ..LabRuntimeStatus::default() };
+        inner.run = run;
         Ok(inner.status.clone())
     }
     pub fn status(&self) -> Result<LabRuntimeStatus, String> {
-        // Status is polled by the Labs UI. Never run Docker inspection on this
-        // hot path: a daemon or socket stall would make the desktop appear
-        // frozen and can trigger the desktop environment's not-responding
-        // watchdog. Lifecycle operations still perform ownership-checked
-        // inspection and cleanup when the user explicitly stops or resets.
-        let inner = self.inner.lock().map_err(|_| "Lab runtime unavailable")?;
+        // IPC calls this on a blocking worker. During another lifecycle action
+        // return the short-lived cached snapshot without waiting for its lock.
+        let _operation = match self.operation.try_lock() {
+            Ok(operation) => operation,
+            Err(std::sync::TryLockError::WouldBlock) => return self.snapshot(),
+            Err(_) => return Err("Lab runtime unavailable".into()),
+        };
+        let mut run = {
+            let mut inner = self.inner.lock().map_err(|_| "Lab runtime unavailable")?;
+            if !inner.status.running { return Ok(inner.status.clone()); }
+            inner.run.take().ok_or("No running container lab")?
+        };
+        let inspection = self.executor.docker(Some(&run.host), &["container", "inspect", "--format", "{{json .}}", &run.container], Duration::from_secs(3), &AtomicBool::new(false));
+        let healthy = inspection.ok().and_then(|output| serde_json::from_str::<Value>(&output).ok())
+            .is_some_and(|container| container["Config"]["Labels"][OWNER_LABEL] == run.owner && container["State"]["Running"] == true && container["State"]["Health"]["Status"] != "unhealthy")
+            && run.forwarder.as_ref().is_some_and(|forwarder| !forwarder.stop.load(Ordering::Acquire))
+            && run.console.as_ref().is_none_or(|console| !console.stop.load(Ordering::Acquire));
+        if !healthy { run.forwarder.take(); run.console.take(); run.url = None; }
+        let mut inner = self.inner.lock().map_err(|_| "Lab runtime unavailable")?;
+        if !healthy {
+            inner.status.running = false; inner.status.phase = "error"; inner.status.target_url = None; inner.status.console_addr = None;
+            inner.status.message = "Target health or ownership could not be confirmed. The local endpoints are closed; use Stop to reconcile owned resources.".into();
+        }
+        inner.run = Some(run);
         Ok(inner.status.clone())
     }
-    pub fn stop(&self) -> Result<LabRuntimeStatus, String> {
-        let mut inner = self.inner.lock().map_err(|_| "Lab runtime unavailable")?;
-        Self::stop_locked(&mut inner)
+    fn snapshot(&self) -> Result<LabRuntimeStatus, String> { self.inner.lock().map(|inner| inner.status.clone()).map_err(|_| "Lab runtime unavailable".into()) }
+    pub fn request_stop(&self) {
+        if let Some(cancel) = self.startup.lock().unwrap_or_else(|p| p.into_inner()).as_ref() { cancel.store(true, Ordering::Release); }
     }
-    fn stop_locked(inner: &mut Inner) -> Result<LabRuntimeStatus, String> {
-        if let Some(run) = inner.run.as_mut() {
-            if !cleanup(run) { inner.status.running = false; inner.status.phase = "error"; inner.status.target_url = None; inner.status.message = "Owned-resource cleanup is pending. Restore Docker access and use Stop again.".into(); return Ok(inner.status.clone()); }
+    pub fn stop(&self) -> Result<LabRuntimeStatus, String> {
+        self.stopping.fetch_add(1, Ordering::AcqRel);
+        self.generation.fetch_add(1, Ordering::AcqRel);
+        self.request_stop();
+        let result = (|| {
+            let _operation = self.operation.lock().map_err(|_| "Lab runtime unavailable")?;
+            self.stop_locked()
+        })();
+        self.stopping.fetch_sub(1, Ordering::AcqRel);
+        result
+    }
+    fn stop_locked(&self) -> Result<LabRuntimeStatus, String> {
+        let mut run = {
+            let mut inner = self.inner.lock().map_err(|_| "Lab runtime unavailable")?;
+            inner.status.running = false; inner.status.phase = "stopping"; inner.status.target_url = None; inner.status.console_addr = None;
+            inner.status.completed = false; inner.status.message = "Stopping and reconciling owned target resources…".into();
+            inner.run.take()
+        };
+        if run.as_mut().is_some_and(|run| !cleanup(run)) {
+            let mut inner = self.inner.lock().map_err(|_| "Lab runtime unavailable")?;
+            inner.status.phase = "error"; inner.status.message = "Owned-resource cleanup is pending. Restore Docker access and use Stop again.".into();
+            inner.run = run;
+            return Ok(inner.status.clone());
         }
-        inner.run = None; inner.status = LabRuntimeStatus::default(); Ok(inner.status.clone())
+        let mut inner = self.inner.lock().map_err(|_| "Lab runtime unavailable")?;
+        inner.status = LabRuntimeStatus::default(); Ok(inner.status.clone())
+    }
+    pub fn shutdown(&self) {
+        self.request_shutdown();
+        let _ = self.stop();
+    }
+    pub fn request_shutdown(&self) {
+        self.closed.store(true, Ordering::Release);
+        self.request_stop();
     }
     pub fn reset(&self) -> Result<LabRuntimeStatus, String> {
-        let mut inner = self.inner.lock().map_err(|_| "Lab runtime unavailable")?;
-        if inner.status.lab_id.is_none() { return Err("No practical lab to reset".into()); }
-        let stopped = Self::stop_locked(&mut inner)?;
+        let generation = self.generation.load(Ordering::Acquire);
+        let _operation = self.operation.lock().map_err(|_| "Lab runtime unavailable")?;
+        if generation != self.generation.load(Ordering::Acquire) { return Err("Queued lab reset was cancelled by Stop".into()); }
+        let lab_id = self.snapshot()?.lab_id.ok_or("No practical lab to reset")?;
+        let stopped = self.stop_locked()?;
         if stopped.phase != "stopped" { return Ok(stopped); }
-        let lab_id = inner.status.lab_id.clone().unwrap_or_else(|| "web-exposure".into());
-        Self::start_locked(&mut inner, lab_id)
+        self.start_locked(lab_id)
     }
     pub fn action(&self, action: Value) -> Result<LabRuntimeStatus, String> {
         self.status()?;
+        let _operation = self.operation.lock().map_err(|_| "Lab runtime unavailable")?;
         let mut inner = self.inner.lock().map_err(|_| "Lab runtime unavailable")?;
         Self::submit_locked(&mut inner, action)
     }
@@ -433,39 +629,40 @@ impl LabRuntimeState {
         let supplied = action["flag"].as_str().filter(|v| v.len() <= 256).ok_or("Flag must be a bounded string")?;
         if !inner.status.running { return Err("No running container lab".into()); }
         let run = inner.run.as_ref().ok_or("No running container lab")?;
-        if same_flag(&run.flag, supplied) { inner.status.completed = true; inner.status.message = "Flag verified. The exposed deployment backup has been recovered.".into(); }
-        else { inner.status.message = "Flag rejected. Inspect the target's exposed backup and deployment config.".into(); }
+        if same_flag(&run.flag, supplied) { inner.status.completed = true; inner.status.message = "Flag verified for this run.".into(); }
+        else { inner.status.message = "Flag rejected. Follow the current room's evidence trail.".into(); }
         Ok(inner.status.clone())
     }
     pub fn open(&self) -> Result<LabRuntimeStatus, String> {
-        let status = self.status()?;
-        let inner = self.inner.lock().map_err(|_| "Lab runtime unavailable")?;
-        let run = inner.run.as_ref().ok_or("No running container lab")?;
-        let url = status.target_url.as_deref().ok_or("No running container lab")?;
-        if !status.running || run.url.as_deref() != Some(url) || !url.starts_with("http://127.0.0.1:") || !url.ends_with('/') { return Err("Only the owned loopback target may be opened".into()); }
-        #[cfg(target_os = "linux")]
-        let result = Command::new("xdg-open").arg(url).status();
-        #[cfg(target_os = "macos")]
-        let result = Command::new("/usr/bin/open").arg(url).status();
-        #[cfg(windows)]
-        let result = Command::new("rundll32.exe").args(["url.dll,FileProtocolHandler", url]).status();
-        #[cfg(not(any(target_os = "linux", target_os = "macos", windows)))]
-        return Err("Platform URL opener unavailable".into());
-        #[cfg(any(target_os = "linux", target_os = "macos", windows))]
-        if result.is_ok_and(|exit| exit.success()) { Ok(status) } else { Err("Could not open the owned target URL".into()) }
+        self.status()?;
+        let url = {
+            let inner = self.inner.lock().map_err(|_| "Lab runtime unavailable")?;
+            let run = inner.run.as_ref().ok_or("No running container lab")?;
+            let url = inner.status.target_url.as_deref().ok_or("No running container lab")?;
+            if !inner.status.running || run.url.as_deref() != Some(url) || !url.starts_with("http://127.0.0.1:") || !url.ends_with('/') { return Err("Only the owned loopback target may be opened".into()); }
+            url.to_owned()
+        };
+        self.executor.open(&url)?;
+        self.snapshot()
     }
 }
-impl Drop for LabRuntimeState { fn drop(&mut self) { let inner = self.inner.get_mut().unwrap_or_else(|poisoned| poisoned.into_inner()); if let Some(run) = inner.run.as_mut() { let _ = cleanup(run); } } }
+impl Drop for LabRuntimeState {
+    fn drop(&mut self) {
+        self.request_stop();
+        let inner = self.inner.get_mut().unwrap_or_else(|p| p.into_inner());
+        if let Some(run) = inner.run.as_mut() { let _ = cleanup(run); }
+    }
+}
 
 #[cfg(test)]
 mod tests {
     use super::*;
     #[test]
     fn missing_docker_and_old_versions_require_setup() {
-        assert!(check_engine(|_, _| Err("Docker CLI unavailable".into())).is_err());
-        assert!(check_engine(|_, _| Ok("27.5.0".into())).unwrap_err().contains("28"));
+        assert!(check_engine_host(None, |_, _| Err("Docker CLI unavailable".into())).is_err());
+        assert!(check_engine_host(None, |_, args| Ok(if args[0] == "context" { "unix:///var/run/docker.sock" } else { "27.5.0" }.into())).unwrap_err().contains("28"));
         assert!(supported_version("28.0.0")); assert!(supported_version("29.1.0")); assert!(!supported_version("unknown"));
-        assert!(check_engine(|host, args| {
+        assert!(check_engine_host(None, |host, args| {
             if host.is_some() { Err("Local daemon unavailable".into()) }
             else if args[0] == "context" { Ok("unix:///var/run/docker.sock".into()) }
             else { Ok("28.0.0".into()) }
@@ -493,6 +690,9 @@ mod tests {
         assert!(inspected_upstream(&extra, &network, "owner", "owned").is_err());
         assert!(Forwarder::start("127.0.0.1:8000".parse().unwrap()).is_err());
         assert!(Forwarder::start("1.1.1.1:8000".parse().unwrap()).is_err());
+        for port in [22, 8080, 9001] { assert!(Forwarder::start(SocketAddr::from(([172, 22, 0, 2], port))).is_err()); }
+        let console = Forwarder::start("172.22.0.2:9000".parse().unwrap()).unwrap();
+        assert_eq!(console.addr.ip(), std::net::IpAddr::V4(Ipv4Addr::LOCALHOST));
     }
     #[test]
     fn sandbox_args_and_flag_comparison() {
@@ -502,7 +702,7 @@ mod tests {
         for forbidden in ["--privileged", "--volume", "--mount", "--network=host", "--publish", "-p", "-P"] { assert!(!args.iter().any(|arg| arg == forbidden)); }
         assert!(same_flag(&run.flag, &run.flag)); assert!(!same_flag(&run.flag, "wrong")); assert!(!same_flag(&run.flag, &(run.flag.clone() + "x")));
         let next = create_run(run.host.clone(), "web-exposure").unwrap(); assert_ne!(next.flag, run.flag); assert_ne!(next.owner, run.owner);
-        fs::remove_dir_all(next.context).unwrap(); assert!(cleanup(&mut run));
+        fs::remove_dir_all(&next.context).unwrap(); assert!(cleanup(&mut run));
     }
     #[test]
     fn connection_relay_cancellation_joins_and_transfer_limit_is_enforced() {
@@ -603,13 +803,54 @@ mod tests {
     #[test]
     #[ignore = "Requires Docker >=28; verifies every provisioned room can start"]
     fn docker_all_available_rooms_start_and_stop() {
-        for lab_id in ["web-exposure", "network-enumeration", "linux-permissions", "header-trail", "protocol-archive", "first-contact", "service-signals"] {
+        for lab_id in LAB_IDS {
             let state = LabRuntimeState::default();
-            let status = state.start(lab_id.into()).unwrap();
+            let status = state.start((*lab_id).into()).unwrap();
             assert!(status.running, "{lab_id}: {}", status.message);
-            assert_eq!(status.lab_id.as_deref(), Some(lab_id));
+            assert_eq!(status.lab_id.as_deref(), Some(*lab_id));
             assert!(status.target_url.as_deref().is_some_and(|url| url.starts_with("http://127.0.0.1:")));
+            let old_flag = state.inner.lock().unwrap().run.as_ref().unwrap().flag.clone();
+            let old_console = status.console_addr.as_deref().map(|addr| {
+                let mut stream = TcpStream::connect(addr).unwrap();
+                stream.set_read_timeout(Some(Duration::from_secs(2))).unwrap();
+                assert!(stream.read(&mut [0; 256]).unwrap() > 0);
+                stream.write_all(b"HELP\n").unwrap();
+                assert!(stream.read(&mut [0; 256]).unwrap() > 0);
+                stream
+            });
+            assert_eq!(status.console_addr.is_some(), has_console(lab_id));
+            let reset = state.reset().unwrap();
+            assert!(reset.running, "{lab_id}: {}", reset.message);
+            assert_eq!(reset.lab_id.as_deref(), Some(*lab_id));
+            assert!(!state.action(serde_json::json!({"action":"submit_flag","flag":old_flag})).unwrap().completed);
+            let next_flag = state.inner.lock().unwrap().run.as_ref().unwrap().flag.clone();
+            assert_ne!(old_flag, next_flag);
+            assert!(state.action(serde_json::json!({"action":"submit_flag","flag":next_flag})).unwrap().completed);
+            if let Some(mut console) = old_console {
+                match console.read(&mut [0; 1]) {
+                    Ok(0) => {},
+                    Err(error) if matches!(error.kind(), std::io::ErrorKind::ConnectionReset | std::io::ErrorKind::ConnectionAborted) => {},
+                    other => panic!("Reset did not close the previous console: {other:?}"),
+                }
+            }
+            let mut next_console = reset.console_addr.as_ref().map(|addr| {
+                let mut stream = TcpStream::connect(addr).unwrap();
+                stream.set_read_timeout(Some(Duration::from_secs(1))).unwrap();
+                assert!(stream.read(&mut [0; 256]).unwrap() > 0);
+                stream
+            });
             assert_eq!(state.stop().unwrap().phase, "stopped");
+            if let Some(console) = next_console.as_mut() {
+                match console.read(&mut [0; 1]) {
+                    Ok(0) => {},
+                    Err(error) if matches!(error.kind(), std::io::ErrorKind::ConnectionReset | std::io::ErrorKind::ConnectionAborted) => {},
+                    other => panic!("Stop did not close the console: {other:?}"),
+                }
+            }
         }
     }
 }
+
+#[cfg(all(test, target_os = "linux"))]
+#[path = "lab_runtime_lifecycle_tests.rs"]
+mod lifecycle_tests;

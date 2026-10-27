@@ -5,6 +5,7 @@ import threading
 import unittest
 import urllib.error
 import urllib.request
+from http.client import HTTPConnection
 from http.server import HTTPServer
 from pathlib import Path
 from server import make_handler
@@ -43,8 +44,27 @@ class TargetTests(unittest.TestCase):
             self.request("/api/submit", json.dumps({"flag": "wrong"}).encode())
         self.assertEqual(error.exception.code, 403)
         error.exception.close()
-        status, _, body = self.request("/api/submit", json.dumps({"flag": self.flag}).encode())
+        evidence = json.loads(self.request(backup["evidence"])[2])
+        self.assertEqual(evidence["source"], backup["path"])
+        self.assertEqual(evidence["review_value"], self.flag)
+        for path in ("/", "/review", "/api/room", "/api/challenge", "/api/config", "/api/files", "/api/findings"):
+            self.assertNotIn(self.flag.encode(), self.request(path)[2])
+        status, _, body = self.request("/api/submit", json.dumps({"flag": evidence["review_value"]}).encode())
         self.assertEqual((status, json.loads(body)["accepted"]), (200, True))
+
+    def test_submit_rejects_invalid_lengths_before_reading_a_body(self):
+        for length, expected in (("-1", 413), ("513", 413), ("invalid", 400)):
+            with self.subTest(length=length):
+                connection = HTTPConnection("127.0.0.1", self.httpd.server_port, timeout=1)
+                try:
+                    connection.putrequest("POST", "/api/submit")
+                    connection.putheader("Content-Length", length)
+                    connection.endheaders()
+                    response = connection.getresponse()
+                    self.assertEqual(response.status, expected)
+                    self.assertFalse(json.loads(response.read())["accepted"])
+                finally:
+                    connection.close()
 
     def test_surface_is_bounded_read_only_and_has_no_arbitrary_file_access(self):
         for path in ("/config.json", "/etc/passwd", "/api/files?path=/etc/passwd", "/execute", "/upload", "/../config.json"):

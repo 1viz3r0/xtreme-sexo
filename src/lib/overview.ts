@@ -1,6 +1,48 @@
 import type { GlobalIntelSnapshot } from '../services/tauri/globalIntel';
 import type { TabType } from '../components/Sidebar';
 
+export type OverviewDataState = 'unavailable' | 'stale' | 'loaded' | 'awaiting';
+
+export const isValidNumber = (number: number | null | undefined): number is number => (
+  number !== null && number !== undefined && Number.isFinite(number) && number >= 0
+);
+
+export const count = (number: number | null | undefined) => isValidNumber(number) ? number.toLocaleString() : 'Unavailable';
+
+const bytes = (number: number | null | undefined) => {
+  if (!isValidNumber(number)) return 'Unavailable';
+  if (number >= 1024 ** 3) return `${(number / 1024 ** 3).toFixed(1)} GB`;
+  if (number >= 1024 ** 2) return `${(number / 1024 ** 2).toFixed(0)} MB`;
+  if (number >= 1024) return `${(number / 1024).toFixed(1)} KB`;
+  return `${number} B`;
+};
+
+export function getOverviewDataState(snapshot: GlobalIntelSnapshot | null, unavailable?: string | null): OverviewDataState {
+  if (unavailable && !snapshot) return 'unavailable';
+  if (unavailable && snapshot) return 'stale';
+  if (snapshot) return 'loaded';
+  return 'awaiting';
+}
+
+export function formatSnapshotAge(collectedAt: string | undefined, now = Date.now()): string {
+  if (!collectedAt) return 'timestamp unavailable';
+  const timestamp = Date.parse(collectedAt);
+  if (!Number.isFinite(timestamp)) return 'timestamp unavailable';
+  if (timestamp > now) return 'timestamp in future';
+  const seconds = Math.max(0, Math.floor((now - timestamp) / 1000));
+  if (seconds < 60) return `${seconds}s ago`;
+  const minutes = Math.floor(seconds / 60);
+  if (minutes < 60) return `${minutes}m ago`;
+  const hours = Math.floor(minutes / 60);
+  if (hours < 24) return `${hours}h ago`;
+  return `${Math.floor(hours / 24)}d ago`;
+}
+
+export function formatObservedThroughput(bytesPerSecond: number | null | undefined, packetsPerSecond: number | null | undefined, available: boolean): string {
+  if (!available || !isValidNumber(bytesPerSecond) || !isValidNumber(packetsPerSecond)) return 'Unavailable';
+  return `${bytes(bytesPerSecond)}/s · ${count(packetsPerSecond)} pkt/s`;
+}
+
 export type OverviewActionPriority = 'P1' | 'P2' | 'P3';
 
 export interface OverviewAction {

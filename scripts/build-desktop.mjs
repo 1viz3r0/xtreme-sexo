@@ -69,6 +69,11 @@ if (target === 'linux') run('cargo', ['build', '--manifest-path', 'src-tauri/Car
 // Tauri's beforeBuildCommand builds the shared UI before each native bundle.
 const bundleArgs = target === 'linux' ? ['--bundles', 'deb'] : [];
 run(process.execPath, [path.join(root, 'node_modules/@tauri-apps/cli/tauri.js'), 'build', ...(backendOnly ? ['--config', JSON.stringify({ build: { beforeBuildCommand: null } })] : []), ...bundleArgs, ...(cross ? ['--runner', 'cargo-xwin', '--target', windowsTriple, '--bundles', 'nsis'] : [])]);
+if (target === 'windows') {
+  const output = env.CARGO_TARGET_DIR ? path.resolve(root, env.CARGO_TARGET_DIR) : path.join(root, 'src-tauri/target');
+  const binary = path.join(output, ...(cross ? [windowsTriple] : []), 'release/netoze-desktop.exe');
+  run(process.execPath, ['--test', path.join(root, 'scripts/pcap-runtime.test.mjs')], { ...env, NETOZE_WINDOWS_BINARY: binary });
+}
 if (target === 'linux') {
   // linuxdeploy's GTK plugin must see host paths; the sysroot variables are
   // needed for compilation but make the plugin prepend the sysroot to AppDir.

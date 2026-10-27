@@ -1,3 +1,4 @@
+import { invoke } from '@tauri-apps/api/core';
 import { isTauriEnvironment } from './isTauri';
 export interface WatchtowerInterface { name: string; addresses: string[]; mac_address: string | null; oper_state: string | null; counters: { receive_bytes: number | null; transmit_bytes: number | null; receive_packets: number | null; transmit_packets: number | null }; wifi_ssid: string | null; wifi_bssid: string | null; wifi_association: string | null; warnings: string[] }
 export interface WatchtowerRoute { interface: string; destination: string; gateway: string | null; metric: number | null; active: boolean }
@@ -20,7 +21,6 @@ export function validateWatchtowerSnapshot(value: unknown): WatchtowerSnapshot {
 }
 export async function getWatchtowerSnapshot(refresh = false): Promise<WatchtowerSnapshot> {
   if (!isTauriEnvironment()) throw new Error('Watchtower native snapshot is unavailable outside the desktop app.');
-  const { invoke } = await import('@tauri-apps/api/core');
   const value: unknown = await invoke(refresh ? 'refresh_watchtower_snapshot' : 'get_watchtower_snapshot');
   return validateWatchtowerSnapshot(value);
 }

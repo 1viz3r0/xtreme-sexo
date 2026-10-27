@@ -1,5 +1,6 @@
 //! Small capture-only executable. No GUI, file paths, shell or protocol decoder.
 //! The parent opens output files as the ordinary user and supplies file descriptors.
+#[cfg(target_os = "linux")]
 use std::{
     io::{Read, Write},
     sync::{
@@ -9,6 +10,7 @@ use std::{
     time::{Duration, Instant},
 };
 
+#[cfg(target_os = "linux")]
 fn access() -> (bool, bool) {
     let status = std::fs::read_to_string("/proc/self/status").unwrap_or_default();
     let caps = status
@@ -21,8 +23,18 @@ fn access() -> (bool, bool) {
         .find_map(|s| s.strip_prefix("NoNewPrivs:"))
         .map(str::trim)
         == Some("1");
-    (caps & (1 << 13) != 0, restricted)
+    let usable = caps & (1 << 13) != 0;
+    #[cfg(target_os = "linux")]
+    let usable = if usable {
+        // Protocol zero cannot receive traffic. A namespace-scoped capability
+        // bit alone is not proof of access to this network namespace.
+        let fd = unsafe { libc::socket(libc::AF_PACKET, libc::SOCK_RAW | libc::SOCK_CLOEXEC, 0) };
+        if fd >= 0 { unsafe { libc::close(fd); } }
+        fd >= 0
+    } else { false };
+    (usable, restricted)
 }
+#[cfg(any(target_os = "linux", test))]
 fn arguments(args: &[String]) -> Result<(&str, u64, &str, bool, &str, u32, u64, u64), String> {
     // Keep the three-argument wire format used by helpers installed by older
     // NET0ZE packages. The GUI may outlive the system helper package, so a
@@ -83,6 +95,7 @@ fn arguments(args: &[String]) -> Result<(&str, u64, &str, bool, &str, u32, u64, 
         max_packets,
     ))
 }
+#[cfg(target_os = "linux")]
 fn capture(args: &[String]) -> Result<(), String> {
     let (
         interface,
@@ -99,20 +112,21 @@ fn capture(args: &[String]) -> Result<(), String> {
         .into_iter()
         .find(|d| d.name == interface)
         .ok_or("Unknown local interface")?;
-    let mut capture = pcap::Capture::from_device(device)
+    let capture = pcap::Capture::from_device(device)
         .map_err(|e| e.to_string())?
         .promisc(promiscuous)
         .snaplen(snapshot_length as i32)
         .timeout(100)
         .open()
         .map_err(|e| e.to_string())?;
-    capture
-        .direction(match direction {
+    if direction != "inout" {
+        capture.direction(match direction {
             "in" => pcap::Direction::In,
             "out" => pcap::Direction::Out,
             _ => pcap::Direction::InOut,
         })
         .map_err(|e| e.to_string())?;
+    }
     let mut capture = capture.setnonblock().map_err(|e| e.to_string())?;
     if !filter.is_empty() {
         capture.filter(filter, true).map_err(|e| e.to_string())?;
@@ -173,6 +187,7 @@ fn capture(args: &[String]) -> Result<(), String> {
     }
     out.flush().map_err(|e| e.to_string())
 }
+#[cfg(target_os = "linux")]
 fn main() {
     let args: Vec<String> = std::env::args().skip(1).collect();
     if args == ["--check"] {
@@ -188,6 +203,11 @@ fn main() {
         eprintln!("Native capture helper: {error}");
         std::process::exit(1);
     }
+}
+#[cfg(not(target_os = "linux"))]
+fn main() {
+    eprintln!("The privileged capture helper is Linux-only; Windows uses the desktop Npcap runtime.");
+    std::process::exit(1);
 }
 #[cfg(test)]
 mod tests {
@@ -211,6 +231,10 @@ mod tests {
             })
             .collect::<Vec<String>>();
         assert!(super::arguments(&valid).is_ok());
+        let custom = ["fixture", "7", "udp port 49000", "true", "out", "128", "1024", "3"].map(String::from);
+        let parsed = super::arguments(&custom).unwrap();
+        assert_eq!(parsed, ("fixture", 7, "udp port 49000", true, "out", 128, 1024, 3));
+        assert_eq!(super::arguments(&legacy).unwrap(), ("eth0", 60, "tcp", false, "inout", 65535, 32 * 1024 * 1024, 100000));
         let mut invalid = valid.clone();
         invalid[5] = "63".into();
         assert!(super::arguments(&invalid).is_err());

@@ -27,7 +27,7 @@ test('mounted native workflow previews and starts the same authorized request', 
     await act(async () => { root.render(React.createElement(ScanBuddy)); });
     assert.deepEqual([...host.querySelectorAll('[aria-label="Scan stages"] a')].map(link => link.textContent), ['Scope', 'Preview', 'Results']);
     for (const link of host.querySelectorAll('[aria-label="Scan stages"] a')) assert.ok(host.querySelector(link.getAttribute('href')!));
-    assert.equal(host.querySelector('h1')!.textContent, ' Scan Buddy');
+    assert.equal(host.querySelector('h1')!.textContent, 'Scan Buddy');
     assert.doesNotMatch(host.querySelector('header')!.textContent, /Active reconnaissance|32 TARGETS|pretending/);
     assert.ok([...host.querySelectorAll('h1,h2,h3')].every(heading => !/^\s*\d+[.)]/.test(heading.textContent)));
     const limits = [...host.querySelectorAll('details')].find(item => item.querySelector('summary')?.textContent === 'Scan limits, recovery & export privacy');

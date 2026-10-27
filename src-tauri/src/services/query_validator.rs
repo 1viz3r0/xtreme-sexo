@@ -1,6 +1,10 @@
 use crate::models::{ForensicColumnMeta, ForensicTableSchema, ForensicTemplate, QueryValidationResult};
 
 pub fn validate_sql_query(raw_sql: &str) -> QueryValidationResult {
+    if raw_sql.len() > 64 * 1024 {
+        return QueryValidationResult { is_valid: false, is_read_only: false,
+            statement_type: "TOO_LARGE".into(), error_message: Some("Query exceeds 64 KiB".into()) };
+    }
     let trimmed = raw_sql.trim();
 
     if trimmed.is_empty() {
@@ -176,6 +180,11 @@ pub fn get_schema_metadata() -> Vec<ForensicTableSchema> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn query_text_is_bounded_before_normalization() {
+        assert!(!validate_sql_query(&format!("SELECT '{}'", "x".repeat(64 * 1024))).is_valid);
+    }
 
     #[test]
     fn test_valid_select_query() {

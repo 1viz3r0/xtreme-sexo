@@ -16,24 +16,44 @@ pub mod scan_inspection;
 pub mod watchtower;
 
 #[command]
-pub fn save_download(filename: String, content: String) -> Result<String, String> {
-    if filename.is_empty() || filename.len() > 160 || filename.contains('/') || filename.contains('\\') || filename.contains("..") {
+pub async fn save_download(filename: String, content: String) -> Result<String, String> {
+    tokio::task::spawn_blocking(move || {
+        let folder = dirs::download_dir().ok_or_else(|| "Downloads folder is unavailable".to_string())?;
+        save_download_in(&folder, &filename, content.as_bytes())
+    }).await.map_err(|_| "Download worker failed".to_string())?
+}
+
+fn save_download_in(folder: &std::path::Path, filename: &str, content: &[u8]) -> Result<String, String> {
+    use std::io::Write;
+    let base = filename.split('.').next().unwrap_or_default().to_ascii_uppercase();
+    let numbered_device = base.strip_prefix("COM").or_else(|| base.strip_prefix("LPT"))
+        .is_some_and(|suffix| suffix.len() == 1 && matches!(suffix.as_bytes()[0], b'1'..=b'9'));
+    if filename.is_empty() || filename.len() > 160 || filename.contains("..")
+        || filename.ends_with(['.', ' ']) || filename.chars().any(|c| c.is_control() || "<>:\"/\\|?*".contains(c))
+        || matches!(base.as_str(), "CON" | "PRN" | "AUX" | "NUL") || numbered_device {
         return Err("Invalid download filename".into());
     }
     if content.len() > 32 * 1024 * 1024 { return Err("Download is too large".into()); }
-    let folder = dirs::download_dir().ok_or_else(|| "Downloads folder is unavailable".to_string())?;
-    std::fs::create_dir_all(&folder).map_err(|e| format!("Cannot access Downloads folder: {e}"))?;
-    let mut path = folder.join(&filename);
-    if path.exists() {
-        let stem = path.file_stem().and_then(|v| v.to_str()).unwrap_or("download");
-        let ext = path.extension().and_then(|v| v.to_str()).map(|v| format!(".{v}")).unwrap_or_default();
-        for index in 1..10_000u32 {
-            let candidate = folder.join(format!("{stem} ({index}){ext}"));
-            if !candidate.exists() { path = candidate; break; }
+    std::fs::create_dir_all(folder).map_err(|e| format!("Cannot access Downloads folder: {e}"))?;
+    let original = folder.join(filename);
+    let stem = original.file_stem().and_then(|v| v.to_str()).unwrap_or("download");
+    let ext = original.extension().and_then(|v| v.to_str()).map(|v| format!(".{v}")).unwrap_or_default();
+    for index in 0..10_000u32 {
+        let path = if index == 0 { original.clone() } else { folder.join(format!("{stem} ({index}){ext}")) };
+        match crate::services::capture_io::create_private_file(&path) {
+            Ok(mut file) => {
+                if let Err(error) = file.write_all(content).and_then(|_| file.sync_all()) {
+                    drop(file);
+                    let _ = std::fs::remove_file(&path);
+                    return Err(format!("Cannot save download: {error}"));
+                }
+                return Ok(path.display().to_string());
+            }
+            Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => continue,
+            Err(error) => return Err(format!("Cannot save download: {error}")),
         }
     }
-    std::fs::write(&path, content.as_bytes()).map_err(|e| format!("Cannot save download: {e}"))?;
-    Ok(path.display().to_string())
+    Err("Download filenames are exhausted; choose another name".into())
 }
 
 #[command]
@@ -280,8 +300,7 @@ pub fn get_pcap_interfaces() -> Result<Vec<crate::models::NpcapInterface>, Strin
     if !cfg!(any(windows, target_os = "linux")) {
         return Err("Native capture is supported on Windows and Linux".to_string());
     }
-    use pcap::Device;
-    match Device::list() {
+    match crate::platform::capture::devices() {
         Ok(devs) => Ok(devs
             .into_iter()
             .map(|d| {
@@ -368,6 +387,40 @@ pub fn get_audit_log(limit: Option<usize>) -> Result<Vec<AuditLogEntry>, String>
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn concurrent_downloads_never_overwrite_existing_files() {
+        let mut nonce = [0u8; 16];
+        getrandom::fill(&mut nonce).unwrap();
+        let folder = std::env::temp_dir().join(format!("netoze-download-{:x}", u128::from_ne_bytes(nonce)));
+        crate::services::capture_io::private_capture_folder(&folder).unwrap();
+        std::fs::write(folder.join("report.txt"), b"existing evidence").unwrap();
+        let workers: Vec<_> = (0..8).map(|index| {
+            let folder = folder.clone();
+            std::thread::spawn(move || {
+                let content = format!("new evidence {index}");
+                let saved = save_download_in(&folder, "report.txt", content.as_bytes()).unwrap();
+                assert_eq!(std::fs::read(&saved).unwrap(), content.as_bytes());
+                saved
+            })
+        }).collect();
+        let paths: std::collections::HashSet<_> = workers.into_iter().map(|worker| worker.join().unwrap()).collect();
+        assert_eq!(paths.len(), 8);
+        assert_eq!(std::fs::read(folder.join("report.txt")).unwrap(), b"existing evidence");
+        for invalid in ["../escape", "a/b", "a\\b", "report:stream", "CON.txt", "LPT1", "file.", "line\n.txt", ""] {
+            assert!(save_download_in(&folder, invalid, b"invalid").is_err(), "{invalid:?}");
+        }
+        #[cfg(unix)] {
+            use std::os::unix::fs::{symlink, PermissionsExt};
+            let link = folder.join("linked.txt");
+            symlink(folder.join("report.txt"), &link).unwrap();
+            let saved = save_download_in(&folder, "linked.txt", b"private report").unwrap();
+            assert_ne!(std::path::Path::new(&saved), link);
+            assert_eq!(std::fs::read(folder.join("report.txt")).unwrap(), b"existing evidence");
+            assert_eq!(std::fs::metadata(saved).unwrap().permissions().mode() & 0o777, 0o600);
+        }
+        std::fs::remove_dir_all(folder).unwrap();
+    }
 
     #[test]
     fn app_config_reports_distinct_storage_paths() {

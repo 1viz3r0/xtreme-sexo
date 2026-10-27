@@ -1577,3 +1577,63 @@ STARTED: linux desktop build; full packaged application.
 ### 2026-10-23 16:39:32 IST (+05:30)
 
 COMPLETED: linux desktop build and artifact staging. See releases/linux/ and its manifest for exact files and checksums. Runtime validation is a separate check.
+
+### 2026-10-24 01:50:57 IST (+05:30)
+
+STARTED: windows cross desktop build; backend-only, reusing packaged frontend.
+
+### 2026-10-24 01:54:07 IST (+05:30)
+
+STARTED: windows cross desktop build; backend-only, reusing packaged frontend.
+
+### 2026-10-24 01:56:18 IST (+05:30)
+
+COMPLETED: windows NSIS-only cross desktop build and artifact staging. See releases/windows/ and its manifest for exact files and checksums. Runtime validation is a separate check.
+
+### 2026-10-24 02:04:53 IST (+05:30)
+
+STARTED: windows cross desktop build; backend-only, reusing packaged frontend.
+
+### 2026-10-24 02:07:05 IST (+05:30)
+
+COMPLETED: windows NSIS-only cross desktop build and artifact staging. See releases/windows/ and its manifest for exact files and checksums. Runtime validation is a separate check.
+
+### 2026-10-24 04:08:48 IST (+05:30)
+
+STARTED: windows cross desktop build; backend-only, reusing packaged frontend.
+
+### 2026-10-24 04:13:12 IST (+05:30)
+
+STARTED: windows cross desktop build; backend-only, reusing packaged frontend.
+
+### 2026-10-24 04:15:37 IST (+05:30)
+
+COMPLETED: windows NSIS-only cross desktop build and artifact staging. See releases/windows/ and its manifest for exact files and checksums. Runtime validation is a separate check.
+
+### 2026-10-24 04:34:57 IST (+05:30)
+
+STARTED: windows cross desktop build; backend-only, reusing packaged frontend.
+
+### 2026-10-24 04:37:22 IST (+05:30)
+
+FAILED: windows desktop build step node (exit 1). Inspect the build output for details.
+
+### 2026-10-24 04:39:09 IST (+05:30)
+
+STARTED: windows cross desktop build; backend-only, reusing packaged frontend.
+
+### 2026-10-24 04:41:38 IST (+05:30)
+
+COMPLETED: windows NSIS-only cross desktop build and artifact staging. See releases/windows/ and its manifest for exact files and checksums. Runtime validation is a separate check.
+
+### 2026-10-26 02:19:11 IST (+05:30)
+
+STARTED: linux desktop build; full packaged application.
+
+### 2026-10-26 02:19:12 IST (+05:30)
+
+FAILED: linux desktop build step cargo (exit 101). Inspect the build output for details.
+
+### 2026-10-26 02:20:12 IST (+05:30)
+
+STARTED: linux desktop build; full packaged application.

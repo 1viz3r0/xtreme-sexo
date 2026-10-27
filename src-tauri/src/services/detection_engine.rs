@@ -3,17 +3,35 @@ use crate::models::{
     RuleCondition, RuleConditionGroup,
 };
 use crate::services::rule_evaluator::{evaluate_group, RuleEvaluationContext};
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
+
+const WINDOW: Duration = Duration::from_secs(30);
+const MAX_SOURCES: usize = 256;
+const MAX_WINDOW_ITEMS: usize = 256;
+
+struct SourceWindow {
+    last_seen: Instant,
+    ports: HashMap<u16, Instant>,
+    hosts: HashMap<String, Instant>,
+    flows: HashMap<String, Instant>,
+}
+
+fn observe<K: std::hash::Hash + Eq + Clone>(map: &mut HashMap<K, Instant>, key: K, now: Instant) {
+    map.retain(|_, time| now.saturating_duration_since(*time) < WINDOW);
+    if !map.contains_key(&key) && map.len() >= MAX_WINDOW_ITEMS {
+        let oldest = map.iter().min_by_key(|(_, time)| **time).map(|(key, _)| key.clone()).unwrap();
+        map.remove(&oldest);
+    }
+    map.insert(key, now);
+}
 
 pub struct DetectionEngine {
     rules: Arc<Mutex<Vec<DetectionRule>>>,
     findings: Arc<Mutex<HashMap<String, DetectionFinding>>>,
-    src_dst_ports: Arc<Mutex<HashMap<String, HashSet<u16>>>>,
-    src_dst_hosts: Arc<Mutex<HashMap<String, HashSet<String>>>>,
-    src_flow_counts: Arc<Mutex<HashMap<String, u64>>>,
+    windows: Mutex<HashMap<String, SourceWindow>>,
     total_findings: Arc<AtomicU64>,
     critical_cnt: Arc<AtomicU64>,
     high_cnt: Arc<AtomicU64>,
@@ -120,9 +138,7 @@ impl DetectionEngine {
         Self {
             rules: Arc::new(Mutex::new(initial_rules)),
             findings: Arc::new(Mutex::new(HashMap::with_capacity(500))),
-            src_dst_ports: Arc::new(Mutex::new(HashMap::new())),
-            src_dst_hosts: Arc::new(Mutex::new(HashMap::new())),
-            src_flow_counts: Arc::new(Mutex::new(HashMap::new())),
+            windows: Mutex::new(HashMap::new()),
             total_findings: Arc::new(AtomicU64::new(0)),
             critical_cnt: Arc::new(AtomicU64::new(0)),
             high_cnt: Arc::new(AtomicU64::new(0)),
@@ -134,28 +150,30 @@ impl DetectionEngine {
 
     /// Evaluates all active rules against a FlowRecord using sliding window tracking
     pub fn evaluate_flow(&self, flow: &FlowRecord) -> Vec<DetectionFinding> {
-        // Track unique destination ports for this source IP
-        let unique_dst_ports = {
-            let mut ports_map = self.src_dst_ports.lock().unwrap();
-            let entry = ports_map.entry(flow.src_ip.clone()).or_insert_with(HashSet::new);
-            entry.insert(flow.dst_port);
-            entry.len()
-        };
+        self.evaluate_flow_at(flow, Instant::now())
+    }
 
-        // Track unique destination hosts for this source IP
-        let unique_dst_hosts = {
-            let mut hosts_map = self.src_dst_hosts.lock().unwrap();
-            let entry = hosts_map.entry(flow.src_ip.clone()).or_insert_with(HashSet::new);
-            entry.insert(flow.dst_ip.clone());
-            entry.len()
-        };
+    pub fn reset_window(&self) {
+        self.windows.lock().unwrap().clear();
+    }
 
-        // Track total flow count for this source IP
-        let flow_count = {
-            let mut counts_map = self.src_flow_counts.lock().unwrap();
-            let entry = counts_map.entry(flow.src_ip.clone()).or_insert(0);
-            *entry += 1;
-            *entry
+    fn evaluate_flow_at(&self, flow: &FlowRecord, now: Instant) -> Vec<DetectionFinding> {
+        let (unique_dst_ports, unique_dst_hosts, flow_count) = {
+            let mut windows = self.windows.lock().unwrap();
+            windows.retain(|_, window| now.saturating_duration_since(window.last_seen) < WINDOW);
+            if !windows.contains_key(&flow.src_ip) && windows.len() >= MAX_SOURCES {
+                let oldest = windows.iter().min_by_key(|(_, window)| window.last_seen)
+                    .map(|(key, _)| key.clone()).unwrap();
+                windows.remove(&oldest);
+            }
+            let window = windows.entry(flow.src_ip.clone()).or_insert_with(|| SourceWindow {
+                last_seen: now, ports: HashMap::new(), hosts: HashMap::new(), flows: HashMap::new(),
+            });
+            window.last_seen = now;
+            observe(&mut window.ports, flow.dst_port, now);
+            observe(&mut window.hosts, flow.dst_ip.clone(), now);
+            observe(&mut window.flows, flow.flow_id.clone(), now);
+            (window.ports.len(), window.hosts.len(), window.flows.len() as u64)
         };
 
         let ctx = RuleEvaluationContext {
@@ -358,6 +376,43 @@ fn md5_hash(input: &str) -> u64 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn observation_window_expires_individual_destinations_and_bounds_memory() {
+        let engine = DetectionEngine::new();
+        let start = Instant::now();
+        for port in 1..=15 {
+            engine.evaluate_flow_at(&base_flow("192.0.2.1", "198.51.100.1", port, 1, 64), start);
+        }
+        let flow = base_flow("192.0.2.1", "198.51.100.2", 16, 1, 64);
+        assert!(engine.evaluate_flow_at(&flow, start + Duration::from_secs(29)).iter().any(|f| f.rule_id == "RULE-001"));
+        assert!(!engine.evaluate_flow_at(&flow, start + WINDOW).iter().any(|f| f.rule_id == "RULE-001"));
+        {
+            let windows = engine.windows.lock().unwrap();
+            let window = &windows["192.0.2.1"];
+            assert_eq!(window.ports.len(), 1);
+            assert_eq!(window.hosts.len(), 1);
+            assert_eq!(window.flows.len(), 1);
+        }
+        for n in 0..(MAX_WINDOW_ITEMS + 50) {
+            engine.evaluate_flow_at(&base_flow("192.0.2.1", &format!("198.51.100.{n}"), n as u16, 1, 64), start + WINDOW);
+        }
+        {
+            let windows = engine.windows.lock().unwrap();
+            let window = &windows["192.0.2.1"];
+            assert!(window.ports.len() <= MAX_WINDOW_ITEMS);
+            assert!(window.hosts.len() <= MAX_WINDOW_ITEMS);
+            assert!(window.flows.len() <= MAX_WINDOW_ITEMS);
+        }
+        for n in 0..(MAX_SOURCES + 50) {
+            engine.evaluate_flow_at(&base_flow(&format!("192.0.2.{n}"), "198.51.100.1", 80, 1, 64), start + WINDOW);
+        }
+        assert_eq!(engine.windows.lock().unwrap().len(), MAX_SOURCES);
+        engine.evaluate_flow_at(&flow, start + WINDOW * 2);
+        assert_eq!(engine.windows.lock().unwrap().len(), 1);
+        engine.reset_window();
+        assert!(engine.windows.lock().unwrap().is_empty());
+    }
 
     fn base_flow(src_ip: &str, dst_ip: &str, dst_port: u16, pkts: u64, bytes: u64) -> FlowRecord {
         FlowRecord {

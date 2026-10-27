@@ -1,3 +1,4 @@
+import { invoke } from '@tauri-apps/api/core';
 import { isTauriEnvironment } from './isTauri';
 
 export interface ActiveLocalDevice {
@@ -23,6 +24,5 @@ export interface ActiveLocalDiscovery {
 
 export async function discoverLocalNetwork(): Promise<ActiveLocalDiscovery> {
   if (!isTauriEnvironment()) throw new Error('Active local discovery requires the native desktop app.');
-  const { invoke } = await import('@tauri-apps/api/core');
   return invoke<ActiveLocalDiscovery>('watchtower_discover_local');
 }

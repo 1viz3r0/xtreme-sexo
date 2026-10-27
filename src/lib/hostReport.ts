@@ -1,3 +1,4 @@
+import { invoke } from '@tauri-apps/api/core';
 import { getDetailedSystemInfo, type DetailedSystemInfo } from '../services/tauri/system';
 import { getDetailedNetworkInterfaces, getActiveTcpConnections, type DetailedAdapterInfo, type TcpConnectionEntry } from '../services/tauri/network';
 import { getBackendReadiness, type BackendReadiness } from '../services/tauri/readiness';
@@ -80,7 +81,7 @@ function logData(v: RuntimeLogStatus): Json {
 }
 function nativeSources(): HostReportSources {
   return { desktop: isTauriEnvironment(), system: getDetailedSystemInfo, interfaces: getDetailedNetworkInterfaces, sockets: getActiveTcpConnections, readiness: getBackendReadiness,
-    logStatus: async () => { const { invoke } = await import('@tauri-apps/api/core'); return invoke<RuntimeLogStatus>('get_runtime_log_status'); },
+    logStatus: () => invoke<RuntimeLogStatus>('get_runtime_log_status'),
   };
 }
 

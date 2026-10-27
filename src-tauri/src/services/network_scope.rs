@@ -80,7 +80,7 @@ fn default_gateways() -> std::collections::HashMap<String, Ipv4Addr> {
 pub fn discover() -> NetworkScopeDiscovery {
     let gateways = default_gateways();
     let mut warnings = Vec::new();
-    let devices = match pcap::Device::list() {
+    let devices = match crate::platform::capture::devices() {
         Ok(devices) => devices,
         Err(error) => {
             warnings.push(format!("Local interface enumeration unavailable: {error}"));

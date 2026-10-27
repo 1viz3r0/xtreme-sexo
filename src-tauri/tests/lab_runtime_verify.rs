@@ -26,7 +26,7 @@ fn discover_flag(url: &str) -> String {
 fn stopped_contract_and_actions_have_no_legacy_engine_or_flag_leakage() {
     let state = LabRuntimeState::default();
     let status = serde_json::to_value(state.status().unwrap()).unwrap();
-    assert_eq!(status, json!({"running":false,"labId":null,"phase":"stopped","targetUrl":null,"message":"No practical lab is running.","runtime":"docker","completed":false}));
+    assert_eq!(status, json!({"running":false,"labId":null,"phase":"stopped","targetUrl":null,"consoleAddr":null,"message":"No practical lab is running.","runtime":"docker","completed":false}));
     assert!(state.start("red-network-discovery".into()).is_err());
     assert!(state.start("ctf-web-inventory".into()).is_err());
     assert!(state.action(json!({"action":"execute","command":"id"})).is_err());

@@ -6,7 +6,7 @@ const key = process.env.NETOZE_SUPABASE_PUBLISHABLE_KEY ?? process.env.SUPABASE_
 const destination = process.env.NETOZE_AUTH_CONFIG_PATH ?? resolve('landing-page/auth-config.js');
 
 if (!url || !key) {
-  console.warn('NET0ZE auth config is not set; optional account features remain unavailable, but the thank-you note stays available.');
+  console.warn('NET0ZE auth config is not set; optional account features remain unavailable, but release downloads stay available.');
   process.exit(0);
 }
 

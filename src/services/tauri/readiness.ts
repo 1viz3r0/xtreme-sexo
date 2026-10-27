@@ -1,3 +1,4 @@
+import { invoke } from '@tauri-apps/api/core';
 import { isTauriEnvironment } from './isTauri';
 
 export interface BackendReadiness {
@@ -31,6 +32,5 @@ export async function getBackendReadiness(): Promise<BackendReadiness> {
   if (!isTauriEnvironment()) {
     throw new Error('Native readiness unavailable in browser mode. Open the installed NET0ZE desktop app.');
   }
-  const { invoke } = await import('@tauri-apps/api/core');
   return invoke<BackendReadiness>('get_backend_readiness');
 }

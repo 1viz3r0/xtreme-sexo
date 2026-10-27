@@ -1,5 +1,4 @@
 import { feature as topoFeature } from 'topojson-client';
-import worldCountries from 'world-countries';
 
 // ---------- types ----------
 
@@ -37,53 +36,37 @@ export type CountryVector = {
 
 export type MapProjection = { k: number; cx: number; cy: number };
 
-// ---------- country lookup helpers ----------
-
-const CCN3_TO_ISO2 = new Map<string, string>();
-const COUNTRY_META = new Map<string, { name: string; flag: string | null; capital: string | null; region: string | null; subregion: string | null; latlng: [number, number] }>();
-for (const c of worldCountries as { cca2: string; ccn3: string; name: { common: string }; flag: string; capital?: string[]; region?: string; subregion?: string; latlng: number[] }[]) {
-  CCN3_TO_ISO2.set(c.ccn3, c.cca2);
-  COUNTRY_META.set(c.cca2, {
-    name: c.name.common,
-    flag: c.flag || null,
-    capital: c.capital?.[0] ?? null,
-    region: c.region ?? null,
-    subregion: c.subregion ?? null,
-    latlng: [c.latlng[0], c.latlng[1]],
-  });
-}
-
-export function countryMeta(iso2: string) {
-  return COUNTRY_META.get(iso2) ?? null;
-}
-
 // ---------- world-10m country geometry (Natural Earth 10m via world-atlas) ----------
 
 const WORLD_TOPO_URL = new URL('../assets/geodata/world-10m.topojson', import.meta.url).href;
+// Emit the full metadata as a local asset, not startup JavaScript.
+const COUNTRY_META_URL = new URL('../../node_modules/world-countries/countries.json', import.meta.url).href;
 
 let worldTopoPromise: Promise<{ byIso2: Map<string, CountryVector> }> | null = null;
 
 async function loadWorldTopo(): Promise<{ byIso2: Map<string, CountryVector> }> {
-  const res = await fetch(WORLD_TOPO_URL);
+  const [res, metadata] = await Promise.all([fetch(WORLD_TOPO_URL), fetch(COUNTRY_META_URL)]);
   if (!res.ok) throw new Error(`world topo ${res.status}`);
-  const topo = await res.json();
+  if (!metadata.ok) throw new Error(`country metadata ${metadata.status}`);
+  const [topo, worldCountries] = await Promise.all([res.json(), metadata.json()]);
+  const byNumeric = new Map<string, { cca2: string; ccn3: string; name: { common: string }; flag: string; capital?: string[]; region?: string; subregion?: string; latlng: number[] }>();
+  for (const country of worldCountries) byNumeric.set(country.ccn3, country);
   const geojson = topoFeature(topo, topo.objects.countries) as {
     type: 'FeatureCollection';
     features: { type: 'Feature'; id?: string | number; properties?: Record<string, unknown>; geometry: GeoGeometry }[];
   };
   const byIso2 = new Map<string, CountryVector>();
   for (const f of geojson.features) {
-    const iso2 = CCN3_TO_ISO2.get(String(f.id));
-    if (!iso2) continue;
-    const meta = COUNTRY_META.get(iso2);
+    const meta = byNumeric.get(String(f.id));
     if (!meta) continue;
+    const iso2 = meta.cca2;
     byIso2.set(iso2, {
       iso2,
-      name: meta.name,
-      flag: meta.flag,
-      capital: meta.capital,
-      region: meta.region,
-      subregion: meta.subregion,
+      name: meta.name.common,
+      flag: meta.flag || null,
+      capital: meta.capital?.[0] ?? null,
+      region: meta.region ?? null,
+      subregion: meta.subregion ?? null,
       lat: meta.latlng[0],
       lng: meta.latlng[1],
       geometry: f.geometry,
@@ -93,7 +76,7 @@ async function loadWorldTopo(): Promise<{ byIso2: Map<string, CountryVector> }> 
 }
 
 export function loadCountryVector(iso2: string): Promise<CountryVector | null> {
-  worldTopoPromise ??= loadWorldTopo();
+  worldTopoPromise ??= loadWorldTopo().catch(error => { worldTopoPromise = null; throw error; });
   return worldTopoPromise.then(({ byIso2 }) => byIso2.get(iso2) ?? null);
 }
 
@@ -133,7 +116,7 @@ export function loadAdmin1(iso2: string): Promise<GeoRegion[]> {
   return p;
 }
 
-// ---------- projection + svg path (equirectangular, always vector) ----------
+// ---------- geometry bounds + equirectangular projection ----------
 
 export function geometryBBox(geometry: GeoGeometry): { minLng: number; maxLng: number; minLat: number; maxLat: number } {
   let minLng = Infinity;
@@ -171,34 +154,6 @@ export function fitProjection(b: { minLng: number; maxLng: number; minLat: numbe
   return { k, cx: c.lng, cy: c.lat };
 }
 
-export function projectPoint(p: MapProjection, width: number, height: number, lng: number, lat: number): { x: number; y: number } {
-  return { x: width / 2 + (lng - p.cx) * p.k, y: height / 2 - (lat - p.cy) * p.k };
-}
-
-export function geometryToPathD(geometry: GeoGeometry, p: MapProjection, width: number, height: number): string {
-  const polys = geometry.type === 'Polygon' ? [geometry.coordinates as GeoPoly] : (geometry.coordinates as GeoPoly[]);
-  let d = '';
-  for (const poly of polys) {
-    for (const ring of poly) {
-      for (let i = 0; i < ring.length; i++) {
-        const pt = projectPoint(p, width, height, ring[i][0], ring[i][1]);
-        d += `${i === 0 ? 'M' : 'L'}${pt.x.toFixed(2)},${pt.y.toFixed(2)}`;
-      }
-      d += 'Z';
-    }
-  }
-  return d;
-}
-
-export function ringToPathD(ring: GeoRing, p: MapProjection, width: number, height: number): string {
-  let d = '';
-  for (let i = 0; i < ring.length; i++) {
-    const pt = projectPoint(p, width, height, ring[i][0], ring[i][1]);
-    d += `${i === 0 ? 'M' : 'L'}${pt.x.toFixed(2)},${pt.y.toFixed(2)}`;
-  }
-  return d + 'Z';
-}
-
 // ---------- region index (search) ----------
 
 let regionsIndexPromise: Promise<RegionIndexEntry[]> | null = null;
@@ -209,6 +164,6 @@ export function loadRegionsIndex(): Promise<RegionIndexEntry[]> {
     const res = await fetch(REGIONS_INDEX_URL);
     if (!res.ok) throw new Error(`regions index ${res.status}`);
     return (await res.json()) as RegionIndexEntry[];
-  })();
+  })().catch(error => { regionsIndexPromise = null; throw error; });
   return regionsIndexPromise;
 }

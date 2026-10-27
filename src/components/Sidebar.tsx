@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useRef } from 'react';
 import {
   MessageSquare,
   Terminal,
@@ -10,11 +10,13 @@ import {
   Sliders,
   Target,
   Activity,
+  Globe2,
   User,
   Users,
   ChevronLeft,
   ChevronRight,
-  PanelLeftClose
+  PanelLeftClose,
+  LockKeyhole
 } from 'lucide-react';
 
 export type TabType =
@@ -27,6 +29,7 @@ export type TabType =
   | 'attack_graph'
   | 'edu_inspector'
   | 'labs'
+  | 'ctfs'
   | 'scenario_labs'
   | 'detection_builder'
   | 'ioc_threat'
@@ -52,7 +55,10 @@ export const Sidebar: React.FC<SidebarProps> = ({
   isFullyHidden,
   setIsFullyHidden
 }) => {
+  const navRef = useRef<HTMLElement>(null);
+  const [additionalToolsOpen, setAdditionalToolsOpen] = React.useState(false);
   const menuItems: { id: TabType; label: string; icon: React.ReactNode; adminOnly?: boolean; experimental?: boolean }[] = [
+    { id: 'global_intel', label: 'Overview', icon: <Globe2 className="w-3.5 h-3.5" /> },
     { id: 'watchtower', label: 'Watchtower', icon: <Activity className="w-3.5 h-3.5" /> },
     { id: 'conversations', label: 'Capture Buddy', icon: <MessageSquare className="w-3.5 h-3.5" /> },
     { id: 'network_engine', label: 'Scan Buddy', icon: <Cpu className="w-3.5 h-3.5" /> },
@@ -61,6 +67,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
     { id: 'attack_graph', label: 'Graph', icon: <GitFork className="w-3.5 h-3.5" />, experimental: true },
     { id: 'edu_inspector', label: 'Field Guide', icon: <BookOpen className="w-3.5 h-3.5" /> },
     { id: 'labs', label: 'Labs', icon: <FlaskConical className="w-3.5 h-3.5" /> },
+    { id: 'ctfs', label: 'CTFs', icon: <Target className="w-3.5 h-3.5" /> },
     { id: 'detection_builder', label: 'Detections', icon: <Sliders className="w-3.5 h-3.5" />, experimental: true },
     { id: 'ioc_threat', label: 'Threat intel', icon: <Target className="w-3.5 h-3.5" />, experimental: true },
     { id: 'user_profile', label: 'Profile', icon: <User className="w-3.5 h-3.5" /> },
@@ -119,17 +126,38 @@ export const Sidebar: React.FC<SidebarProps> = ({
       </div>
 
       {/* Navigation List */}
-      <nav className="studio-nav" aria-label="Primary navigation">
-        {!isCollapsed && <h2 className="studio-nav-heading">Monitoring</h2>}
+      <nav ref={navRef} className="studio-nav" aria-label="Primary navigation">
+        {!isCollapsed && <h2 className="studio-nav-heading">Operations · Monitoring</h2>}
          <div className="studio-nav-group">
            {renderItems(filteredMenuItems.filter(item => !item.experimental && item.id !== 'user_profile' && item.id !== 'admin_panel'))}
          </div>
-         <details className="studio-experimental" open={filteredMenuItems.some((item) => item.experimental && item.id === activeTab)}>
-           <summary title="Additional tools" aria-label="Additional tools">
-             {isCollapsed ? <FlaskConical size={18} aria-hidden="true" /> : 'Additional tools'}
-           </summary>
-           <div className="studio-nav-group">{renderItems(filteredMenuItems.filter(item => item.experimental))}</div>
-         </details>
+         <div className="studio-experimental" aria-label="Additional tools">
+           <button
+             type="button"
+             className="studio-experimental-trigger"
+             title="Additional tools are locked in the Enterprise build"
+             aria-label="Additional tools"
+               aria-expanded={additionalToolsOpen}
+               aria-controls="additional-tools-locked"
+              onClick={() => {
+                const next = !additionalToolsOpen;
+                setAdditionalToolsOpen(next);
+                if (next) navRef.current?.scrollTo({ top: navRef.current.scrollHeight, behavior: 'smooth' });
+              }}
+           >
+             {isCollapsed ? <LockKeyhole size={18} aria-hidden="true" /> : <><LockKeyhole size={14} aria-hidden="true" /><span>Additional tools</span><span className="studio-locked-label">Locked</span></>}
+           </button>
+             {additionalToolsOpen && !isCollapsed && <div id="additional-tools-locked" className="studio-experimental-locked" aria-label="Locked additional tools">
+              {filteredMenuItems.filter(item => item.experimental).map((item) => (
+                <div key={item.id} className="studio-locked-tool" aria-disabled="true">
+                  <span className="studio-nav-icon" aria-hidden="true"><LockKeyhole className="w-3.5 h-3.5" /></span>
+                  <span>{item.label}</span>
+                  <span className="studio-locked-label">Locked</span>
+                </div>
+              ))}
+              <p className="studio-locked-help">These Enterprise tools are intentionally unavailable in this build.</p>
+            </div>}
+         </div>
         <div className="studio-account-nav">
           {renderItems(filteredMenuItems.filter(item => item.id === 'user_profile' || item.id === 'admin_panel'))}
         </div>

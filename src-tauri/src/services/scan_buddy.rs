@@ -393,7 +393,9 @@ impl ScanBuddyState {
     pub fn with_history_directory(directory: std::path::PathBuf) -> Self {
         let mut state = Self::new();
         let loaded = (|| -> Result<_, String> {
-            let mut builder = std::fs::DirBuilder::new();
+            let builder = std::fs::DirBuilder::new();
+            #[cfg(unix)]
+            let mut builder = builder;
             #[cfg(unix)]
             {
                 use std::os::unix::fs::DirBuilderExt;

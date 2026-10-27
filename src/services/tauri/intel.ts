@@ -1,3 +1,4 @@
+import { invoke } from '@tauri-apps/api/core';
 import { isTauriEnvironment } from './isTauri';
 
 export interface ConnectivityStatus {
@@ -51,7 +52,6 @@ export interface WatchtowerEnrichmentResult {
 /** Explicit refresh only; local Watchtower snapshots never invoke this path. */
 export async function refreshWatchtowerEnrichment(): Promise<WatchtowerEnrichmentResult> {
   if (!isTauriEnvironment()) throw new Error('Enrichment refresh requires the native desktop app.');
-  const { invoke } = await import('@tauri-apps/api/core');
   return invoke<WatchtowerEnrichmentResult>('refresh_watchtower_enrichment');
 }
 
@@ -90,7 +90,6 @@ export interface DnsQueryEntry {
 export async function getConnectivityStatus(): Promise<ConnectivityStatus | null> {
   if (isTauriEnvironment()) {
     try {
-      const { invoke } = await import('@tauri-apps/api/core');
       return await invoke<ConnectivityStatus>('get_connectivity_status');
     } catch (err) {
       console.warn('Failed to get connectivity status:', err);
@@ -102,7 +101,6 @@ export async function getConnectivityStatus(): Promise<ConnectivityStatus | null
 export async function getGeoipForActiveFlows(): Promise<GeoIpEntry[]> {
   if (isTauriEnvironment()) {
     try {
-      const { invoke } = await import('@tauri-apps/api/core');
       return await invoke<GeoIpEntry[]>('get_geoip_for_active_flows');
     } catch (err) {
       console.warn('Failed to get geoip for active flows:', err);
@@ -114,7 +112,6 @@ export async function getGeoipForActiveFlows(): Promise<GeoIpEntry[]> {
 export async function getGeoipLookup(ip: string): Promise<GeoIpEntry | null> {
   if (isTauriEnvironment()) {
     try {
-      const { invoke } = await import('@tauri-apps/api/core');
       return await invoke<GeoIpEntry | null>('get_geoip_lookup', { ip });
     } catch (err) {
       console.warn('Failed to get geoip lookup:', err);
@@ -126,7 +123,6 @@ export async function getGeoipLookup(ip: string): Promise<GeoIpEntry | null> {
 export async function getPublicIp(): Promise<string | null> {
   if (isTauriEnvironment()) {
     try {
-      const { invoke } = await import('@tauri-apps/api/core');
       return await invoke<string | null>('get_public_ip');
     } catch (err) {
       console.warn('Failed to get public IP:', err);
@@ -138,7 +134,6 @@ export async function getPublicIp(): Promise<string | null> {
 export async function getThreatIntelStatus(): Promise<ThreatIntelStatus | null> {
   if (isTauriEnvironment()) {
     try {
-      const { invoke } = await import('@tauri-apps/api/core');
       return await invoke<ThreatIntelStatus>('get_threat_intel_status');
     } catch (err) {
       console.warn('Failed to get threat intel status:', err);
@@ -150,7 +145,6 @@ export async function getThreatIntelStatus(): Promise<ThreatIntelStatus | null> 
 export async function evaluateFlowsForThreats(): Promise<ThreatMatchEntry[]> {
   if (isTauriEnvironment()) {
     try {
-      const { invoke } = await import('@tauri-apps/api/core');
       return await invoke<ThreatMatchEntry[]>('evaluate_flows_for_threats');
     } catch (err) {
       console.warn('Failed to evaluate flows for threats:', err);
@@ -162,7 +156,6 @@ export async function evaluateFlowsForThreats(): Promise<ThreatMatchEntry[]> {
 export async function getThreatMatches(limit = 100): Promise<ThreatMatchEntry[]> {
   if (isTauriEnvironment()) {
     try {
-      const { invoke } = await import('@tauri-apps/api/core');
       return await invoke<ThreatMatchEntry[]>('get_threat_matches', { limit });
     } catch (err) {
       console.warn('Failed to get threat matches:', err);
@@ -174,7 +167,6 @@ export async function getThreatMatches(limit = 100): Promise<ThreatMatchEntry[]>
 export async function getDevices(): Promise<DeviceEntry[]> {
   if (isTauriEnvironment()) {
     try {
-      const { invoke } = await import('@tauri-apps/api/core');
       return await invoke<DeviceEntry[]>('get_devices');
     } catch (err) {
       console.warn('Failed to get devices:', err);
@@ -186,7 +178,6 @@ export async function getDevices(): Promise<DeviceEntry[]> {
 export async function refreshDevices(): Promise<DeviceEntry[]> {
   if (isTauriEnvironment()) {
     try {
-      const { invoke } = await import('@tauri-apps/api/core');
       return await invoke<DeviceEntry[]>('refresh_devices');
     } catch (err) {
       console.warn('Failed to refresh devices:', err);
@@ -198,7 +189,6 @@ export async function refreshDevices(): Promise<DeviceEntry[]> {
 export async function getPortScanResults(limit = 100): Promise<PortScanEntry[]> {
   if (isTauriEnvironment()) {
     try {
-      const { invoke } = await import('@tauri-apps/api/core');
       return await invoke<PortScanEntry[]>('get_port_scan_results', { limit });
     } catch (err) {
       console.warn('Failed to get port scan results:', err);
@@ -210,7 +200,6 @@ export async function getPortScanResults(limit = 100): Promise<PortScanEntry[]> 
 export async function scanHostPorts(ip: string, extraPorts?: number[]): Promise<PortScanEntry[]> {
   if (isTauriEnvironment()) {
     try {
-      const { invoke } = await import('@tauri-apps/api/core');
       return await invoke<PortScanEntry[]>('scan_host_ports', { ip, extraPorts: extraPorts ?? [] });
     } catch (err) {
       console.warn('Failed to scan host ports:', err);
@@ -223,7 +212,6 @@ export async function scanHostPorts(ip: string, extraPorts?: number[]): Promise<
 export async function getDnsRecords(limit = 100): Promise<DnsQueryEntry[]> {
   if (isTauriEnvironment()) {
     try {
-      const { invoke } = await import('@tauri-apps/api/core');
       return await invoke<DnsQueryEntry[]>('get_dns_records', { limit });
     } catch (err) {
       console.warn('Failed to get DNS records:', err);
@@ -245,7 +233,6 @@ export interface AuditLogEntry {
 export async function getAuditLog(limit = 100): Promise<AuditLogEntry[]> {
   if (isTauriEnvironment()) {
     try {
-      const { invoke } = await import('@tauri-apps/api/core');
       return await invoke<AuditLogEntry[]>('get_audit_log', { limit });
     } catch (err) {
       console.warn('Failed to get audit log:', err);

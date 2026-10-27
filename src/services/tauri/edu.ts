@@ -1,3 +1,4 @@
+import { invoke } from '@tauri-apps/api/core';
 import { isTauriEnvironment } from './isTauri';
 
 export type EduExplanation = {
@@ -23,7 +24,6 @@ export async function getFieldExplanation(
 ): Promise<EduExplanation | null> {
   if (isTauriEnvironment()) {
     try {
-      const { invoke } = await import('@tauri-apps/api/core');
       return await invoke<EduExplanation>('get_field_explanation', {
         fieldId,
         currentValue,
@@ -44,7 +44,6 @@ export async function getEntityExplanation(
 ): Promise<EduExplanation | null> {
   if (isTauriEnvironment()) {
     try {
-      const { invoke } = await import('@tauri-apps/api/core');
       return await invoke<EduExplanation>('get_entity_explanation', {
         entityType,
         entityId,
@@ -64,7 +63,6 @@ export async function getDetectionExplanation(
 ): Promise<EduExplanation | null> {
   if (isTauriEnvironment()) {
     try {
-      const { invoke } = await import('@tauri-apps/api/core');
       return await invoke<EduExplanation | null>('get_detection_explanation', {
         findingId,
       });
@@ -83,7 +81,6 @@ export async function getJa4Explanation(
 ): Promise<EduExplanation | null> {
   if (isTauriEnvironment()) {
     try {
-      const { invoke } = await import('@tauri-apps/api/core');
       return await invoke<EduExplanation>('get_ja4_explanation', {
         fingerprint,
       });

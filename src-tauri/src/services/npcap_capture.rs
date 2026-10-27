@@ -2,7 +2,9 @@ use crate::models::DnsQueryEntry;
 use crate::models::PacketMetadata;
 use crate::services::packet_parser::parse_raw_packet;
 use crate::services::{DetectionEngine, FlowEngine, GraphEngine, Ja4Engine, StorylineBuilder};
-use pcap::{Active, Capture, Device, Error as PcapError};
+use pcap::Error as PcapError;
+#[cfg(not(target_os = "linux"))]
+use pcap::{Active, Capture};
 use std::collections::VecDeque;
 use std::sync::{Arc, Condvar, Mutex};
 use std::time::{Duration, Instant};
@@ -10,7 +12,7 @@ use tauri::{AppHandle, Emitter};
 
 pub struct NpcapCapture {
     pub active_iface: Arc<Mutex<Option<String>>>,
-    pub capture_handle: Arc<Mutex<Option<Capture<Active>>>>,
+    pub(crate) capture_handle: Arc<Mutex<Option<CaptureSource>>>,
     pub packets_captured: Arc<Mutex<u64>>,
     pub bytes_captured: Arc<Mutex<u64>>,
     pub dropped_packets: Arc<Mutex<u64>>,
@@ -32,6 +34,61 @@ struct WorkerLifecycle {
     generation: u64,
     running: bool,
     stop_requested: bool,
+    error: Option<String>,
+}
+
+pub(crate) enum CaptureSource {
+    #[cfg(not(target_os = "linux"))]
+    Native(Capture<Active>),
+    #[cfg(target_os = "linux")]
+    Helper(crate::services::capture_helper::HelperCapture),
+    #[cfg(test)]
+    Fixture(VecDeque<Result<(Vec<u8>, String), PcapError>>),
+}
+
+impl CaptureSource {
+    fn next_packet(&mut self) -> Result<(Vec<u8>, String), PcapError> {
+        match self {
+            #[cfg(target_os = "linux")]
+            Self::Helper(capture) => capture.next_packet(),
+            #[cfg(not(target_os = "linux"))]
+            Self::Native(capture) => {
+                let packet = capture.next_packet()?;
+                let timestamp = chrono::DateTime::from_timestamp(packet.header.ts.tv_sec as i64,
+                    packet.header.ts.tv_usec as u32 * 1000).ok_or_else(|| PcapError::PcapError("Invalid capture timestamp".into()))?;
+                Ok((packet.data.to_vec(), timestamp.to_rfc3339()))
+            }
+            #[cfg(test)]
+            Self::Fixture(packets) => packets.pop_front().unwrap_or(Err(PcapError::TimeoutExpired)),
+        }
+    }
+}
+
+enum LoopEvent {
+    Stats(crate::models::CaptureMetrics),
+    Flows(Vec<crate::models::FlowRecord>),
+    Summary(crate::models::FlowSummaryStats),
+    Graph(crate::models::AttackGraph),
+    Ja4(crate::models::Ja4Observation),
+    Detection(crate::models::DetectionFinding),
+    Persisted(usize),
+    Status(&'static str),
+}
+
+struct WorkerCompletion {
+    lifecycle: Arc<(Mutex<WorkerLifecycle>, Condvar)>,
+    generation: u64,
+}
+
+impl Drop for WorkerCompletion {
+    fn drop(&mut self) {
+        let mut state = self.lifecycle.0.lock().unwrap_or_else(|e| e.into_inner());
+        if state.generation == self.generation && state.running {
+            state.running = false;
+            state.error = Some("Native capture worker exited unexpectedly".into());
+            self.lifecycle.1.notify_all();
+        }
+    }
 }
 
 struct FlowSnapshot {
@@ -102,13 +159,19 @@ impl NpcapCapture {
     }
 
     pub fn list_interfaces(&self) -> Vec<String> {
-        match Device::list() {
+        match crate::platform::capture::devices() {
             Ok(devs) => devs.into_iter().map(|d| d.name).collect(),
             Err(_) => vec![],
         }
     }
 
     pub fn open_interface(&self, iface_name: &str) -> Result<(), PcapError> {
+        self.open_filtered_interface(iface_name, "")
+    }
+
+    pub fn open_filtered_interface(&self, iface_name: &str, filter: &str) -> Result<(), PcapError> {
+        crate::platform::capture::ensure_capture_runtime().map_err(PcapError::PcapError)?;
+        if filter.len() > 2048 { return Err(PcapError::PcapError("Capture filter exceeds 2048 bytes".into())); }
         // Keep admission closed through opening: a timed-out worker still owns
         // its capture and may still be persisting its final batch.
         let state = self.worker_lifecycle.0.lock().unwrap();
@@ -117,19 +180,46 @@ impl NpcapCapture {
                 "Previous capture worker has not finished".into(),
             ));
         }
+        #[cfg(not(target_os = "linux"))]
         let capture = Capture::from_device(iface_name)?
             .promisc(false)
             .snaplen(65535)
             .timeout(100)
             .open()?
             .setnonblock()?;
-        Self::validate_datalink(capture.get_datalink())?;
+        #[cfg(not(target_os = "linux"))]
+        let capture = {
+            let mut capture = capture;
+            if !filter.is_empty() { capture.filter(filter, true)?; }
+            Self::validate_datalink(capture.get_datalink())?;
+            CaptureSource::Native(capture)
+        };
+        #[cfg(target_os = "linux")]
+        let capture = {
+            let helper = crate::services::capture_helper::HelperCapture::open(iface_name, filter)?;
+            Self::validate_datalink(helper.datalink())?;
+            CaptureSource::Helper(helper)
+        };
+        self.reset_recording();
         let mut lock = self.capture_handle.lock().unwrap();
         *lock = Some(capture);
         let mut active = self.active_iface.lock().unwrap();
         *active = Some(iface_name.to_string());
-        *self.start_time.lock().unwrap() = Some(Instant::now());
         Ok(())
+    }
+
+    fn reset_recording(&self) {
+        *self.packets_captured.lock().unwrap() = 0;
+        *self.bytes_captured.lock().unwrap() = 0;
+        *self.dropped_packets.lock().unwrap() = 0;
+        *self.last_packet_timestamp.lock().unwrap() = None;
+        self.recent_packets.lock().unwrap().clear();
+        self.detection_engine.lock().unwrap().reset_window();
+        *self.start_time.lock().unwrap() = Some(Instant::now());
+    }
+
+    pub fn worker_error(&self) -> Option<String> {
+        self.worker_lifecycle.0.lock().unwrap().error.clone()
     }
 
     fn validate_datalink(link: pcap::Linktype) -> Result<(), PcapError> {
@@ -150,10 +240,7 @@ impl NpcapCapture {
         let mut lock = self.capture_handle.lock().unwrap();
         if let Some(ref mut capture) = *lock {
             match capture.next_packet() {
-                Ok(packet) => {
-                    let ts = chrono::Utc::now().to_rfc3339();
-                    Ok(Some((packet.data.to_vec(), ts)))
-                }
+                Ok(packet) => Ok(Some(packet)),
                 Err(PcapError::TimeoutExpired) => Ok(None),
                 Err(err) => Err(err),
             }
@@ -177,6 +264,7 @@ impl NpcapCapture {
     /// forever, and a timed-out worker is prevented from being restarted by
     /// `begin_worker` until it eventually reports completion.
     pub fn stop_and_wait(&self, timeout: Duration) -> bool {
+        let deadline = Instant::now() + timeout;
         self.close();
         let (lifecycle_lock, done) = &*self.worker_lifecycle;
         let guard = lifecycle_lock.lock().unwrap();
@@ -184,12 +272,12 @@ impl NpcapCapture {
             return true;
         }
         let (guard, _) = done
-            .wait_timeout_while(guard, timeout, |state| state.running)
+            .wait_timeout_while(guard, deadline.saturating_duration_since(Instant::now()), |state| state.running)
             .unwrap();
         !guard.running
     }
 
-    fn begin_worker(&self) -> Option<(u64, Capture<Active>)> {
+    fn begin_worker(&self) -> Option<(u64, CaptureSource)> {
         let (lifecycle_lock, _) = &*self.worker_lifecycle;
         let mut state = lifecycle_lock.lock().unwrap();
         if state.running {
@@ -199,6 +287,7 @@ impl NpcapCapture {
         state.generation = state.generation.wrapping_add(1);
         state.running = true;
         state.stop_requested = false;
+        state.error = None;
         Some((state.generation, capture))
     }
 
@@ -234,12 +323,12 @@ impl NpcapCapture {
             .unwrap()
             .map(|t| t.elapsed().as_secs())
             .unwrap_or(0);
-        let pps = if duration_secs > 0 {
+        let pps = if status == "RUNNING" && duration_secs > 0 {
             packets as f64 / duration_secs as f64
         } else {
             0.0
         };
-        let bps = if duration_secs > 0 {
+        let bps = if status == "RUNNING" && duration_secs > 0 {
             bytes as f64 / duration_secs as f64
         } else {
             0.0
@@ -262,7 +351,23 @@ impl NpcapCapture {
     }
 
     pub fn run_capture_loop(&self, app_handle: AppHandle) -> bool {
-        let Some((worker_generation, mut capture)) = self.begin_worker() else {
+        self.start_worker(move |event| match event {
+            LoopEvent::Stats(m) => { let _ = app_handle.emit("capture-stats", m); }
+            LoopEvent::Flows(f) => { let _ = app_handle.emit("capture-flows", f); }
+            LoopEvent::Summary(s) => { let _ = app_handle.emit("flow-summary", s); }
+            LoopEvent::Graph(g) => { let _ = app_handle.emit("graph-updated", g); }
+            LoopEvent::Ja4(j) => { let _ = app_handle.emit("ja4-stream", j); }
+            LoopEvent::Detection(d) => { let _ = app_handle.emit("detection-created", d); }
+            LoopEvent::Persisted(n) => { let _ = app_handle.emit("capture-persisted", n); }
+            LoopEvent::Status(s) => { let _ = app_handle.emit("capture-status", s); }
+        }, |flows| crate::database::duckdb::persist_flow_records(flows).map(|_| ()).map_err(|e| e.to_string()),
+            crate::database::sqlite::insert_dns_records_batch)
+    }
+
+    fn start_worker(&self, emit: impl Fn(LoopEvent) + Send + 'static,
+        persist_flows: impl Fn(&[crate::models::FlowRecord]) -> Result<(), String> + Send + 'static,
+        persist_dns: impl Fn(&[DnsQueryEntry]) + Send + 'static) -> bool {
+        let Some((worker_generation, source)) = self.begin_worker() else {
             return false;
         };
         let worker_lifecycle = self.worker_lifecycle.clone();
@@ -281,52 +386,21 @@ impl NpcapCapture {
         let storyline_builder = self.storyline_builder.clone();
         let persist_interval_ms = self.persist_interval_ms;
 
-        enum LoopEvent {
-            Stats(crate::models::CaptureMetrics),
-            Flows(Vec<crate::models::FlowRecord>),
-            Summary(crate::models::FlowSummaryStats),
-            Graph(crate::models::AttackGraph),
-            Ja4(crate::models::Ja4Observation),
-            Detection(crate::models::DetectionFinding),
-            Persisted(usize),
-        }
-
         let (tx, rx) = std::sync::mpsc::sync_channel::<LoopEvent>(128);
-        tauri::async_runtime::spawn_blocking(move || loop {
-            match rx.recv() {
-                Ok(LoopEvent::Stats(m)) => {
-                    let _ = app_handle.emit("capture-stats", m);
-                }
-                Ok(LoopEvent::Flows(f)) => {
-                    let _ = app_handle.emit("capture-flows", f);
-                }
-                Ok(LoopEvent::Summary(summary)) => {
-                    let _ = app_handle.emit("flow-summary", summary);
-                }
-                Ok(LoopEvent::Graph(g)) => {
-                    let _ = app_handle.emit("graph-updated", g);
-                }
-                Ok(LoopEvent::Ja4(j)) => {
-                    let _ = app_handle.emit("ja4-stream", j);
-                }
-                Ok(LoopEvent::Detection(d)) => {
-                    let _ = app_handle.emit("detection-created", d);
-                }
-                Ok(LoopEvent::Persisted(n)) => {
-                    let _ = app_handle.emit("capture-persisted", n);
-                }
-                Err(_) => break,
-            }
+        tauri::async_runtime::spawn_blocking(move || {
+            while let Ok(event) = rx.recv() { emit(event); }
         });
 
         tauri::async_runtime::spawn_blocking(move || {
+            let _completion = WorkerCompletion { lifecycle: worker_lifecycle.clone(), generation: worker_generation };
+            let mut capture = source;
             let mut packet_count: u64 = 0;
             let mut last_stats_emit = Instant::now();
             let mut last_stats_bytes = *bytes_captured.lock().unwrap();
             let mut last_persist = Instant::now();
             let mut flow_cadence = FlowEventCadence::new(Instant::now());
-            let mut emitted_findings: std::collections::HashSet<String> =
-                std::collections::HashSet::new();
+            let mut emitted_findings = VecDeque::new();
+            let mut terminal_error = None;
 
             loop {
                 if NpcapCapture::worker_should_stop(&worker_lifecycle, worker_generation) {
@@ -334,11 +408,13 @@ impl NpcapCapture {
                 }
 
                 let packet_data = match capture.next_packet() {
-                    Ok(packet) => Some((packet.data.to_vec(), chrono::Utc::now().to_rfc3339())),
+                    Ok(packet) => Some(packet),
                     Err(PcapError::TimeoutExpired) => None,
+                    Err(PcapError::NoMorePackets) => break,
                     Err(err) => {
-                        tracing::warn!("Transient packet capture error: {}", err);
-                        None
+                        tracing::warn!("Packet capture stopped: {}", err);
+                        terminal_error = Some(err.to_string());
+                        break;
                     }
                 };
 
@@ -354,9 +430,6 @@ impl NpcapCapture {
                     if let Some(ref qname) = metadata.dns_qname {
                         if !qname.is_empty() {
                             let mut pending = dns_pending.lock().unwrap();
-                            if pending.len() >= 256 {
-                                pending.clear();
-                            }
                             pending.push(DnsQueryEntry {
                                 timestamp: timestamp.clone(),
                                 client_ip: metadata.src_ip.clone(),
@@ -396,7 +469,9 @@ impl NpcapCapture {
 
                     let detections = detection_engine.lock().unwrap().evaluate_flow(&flow_record);
                     for finding in detections {
-                        if emitted_findings.insert(finding.finding_id.clone()) {
+                        if !emitted_findings.contains(&finding.finding_id) {
+                            if emitted_findings.len() >= 500 { emitted_findings.pop_front(); }
+                            emitted_findings.push_back(finding.finding_id.clone());
                             graph_engine.lock().unwrap().ingest_finding(&finding);
                             let related_flows = flow_engine.lock().unwrap().get_recent_flows(500);
                             let observations = ja4_engine.lock().unwrap().get_observations(500);
@@ -427,10 +502,11 @@ impl NpcapCapture {
                 }
 
                 // Persist on idle interfaces too; retain failed batches.
-                if last_persist.elapsed() >= Duration::from_millis(persist_interval_ms) {
+                if last_persist.elapsed() >= Duration::from_millis(persist_interval_ms)
+                    || dns_pending.lock().unwrap().len() >= 256 {
                     let flows = flow_engine.lock().unwrap().flush_flows();
                     if !flows.is_empty() {
-                        if let Err(err) = crate::database::duckdb::persist_flow_records(&flows) {
+                        if let Err(err) = persist_flows(&flows) {
                             tracing::warn!("⚠️ Batched flow persistence failed: {}", err);
                             flow_engine.lock().unwrap().reinsert_retry(flows);
                         } else {
@@ -439,7 +515,7 @@ impl NpcapCapture {
                     }
                     let dns = std::mem::take(&mut *dns_pending.lock().unwrap());
                     if !dns.is_empty() {
-                        crate::database::sqlite::insert_dns_records_batch(&dns);
+                        persist_dns(&dns);
                     }
                     last_persist = Instant::now();
                 }
@@ -479,20 +555,25 @@ impl NpcapCapture {
                 std::thread::yield_now();
             }
 
-            // Final flush on stop
+            // Release the recorder before potentially slow final persistence.
+            drop(capture);
+            // Final flush on stop, bounded helper completion, or terminal error.
             let flows = flow_engine.lock().unwrap().flush_flows();
             if !flows.is_empty() {
-                if let Err(err) = crate::database::duckdb::persist_flow_records(&flows) {
+                if let Err(err) = persist_flows(&flows) {
                     tracing::warn!("⚠️ Final flow persistence failed: {}", err);
+                    terminal_error.get_or_insert_with(|| format!("Final flow persistence failed: {err}"));
                     flow_engine.lock().unwrap().reinsert_retry(flows);
                 }
             }
             let dns = std::mem::take(&mut *dns_pending.lock().unwrap());
             if !dns.is_empty() {
-                crate::database::sqlite::insert_dns_records_batch(&dns);
+                persist_dns(&dns);
             }
-            drop(capture);
+            let outcome = if terminal_error.is_some() { "ERROR" } else { "STOPPED" };
+            worker_lifecycle.0.lock().unwrap().error = terminal_error;
             NpcapCapture::finish_worker(&worker_lifecycle, worker_generation);
+            let _ = tx.try_send(LoopEvent::Status(outcome));
         });
         true
     }
@@ -501,6 +582,12 @@ impl NpcapCapture {
         let queue = self.recent_packets.lock().unwrap();
         let limit = limit.min(500);
         queue.iter().rev().take(limit).cloned().collect()
+    }
+}
+
+impl Drop for NpcapCapture {
+    fn drop(&mut self) {
+        let _ = self.stop_and_wait(Duration::from_secs(2));
     }
 }
 
@@ -516,6 +603,124 @@ mod lifecycle_tests {
             Arc::new(Mutex::new(GraphEngine::new())),
             Arc::new(Mutex::new(StorylineBuilder::new())),
         )
+    }
+
+    fn wait_finished(capture: &NpcapCapture) {
+        let deadline = Instant::now() + Duration::from_secs(3);
+        while capture.worker_running() && Instant::now() < deadline {
+            std::thread::sleep(Duration::from_millis(5));
+        }
+        assert!(!capture.worker_running(), "fixture worker did not finish");
+    }
+
+    #[test]
+    fn terminal_read_error_flushes_once_releases_ownership_and_restart_resets_metrics() {
+        let capture = capture();
+        let dns = Arc::new(Mutex::new(Vec::new()));
+        let flows = Arc::new(Mutex::new(Vec::new()));
+        let saved_dns = dns.clone();
+        let saved_flows = flows.clone();
+        capture.reset_recording();
+        *capture.capture_handle.lock().unwrap() = Some(CaptureSource::Fixture(VecDeque::from([
+            Ok((crate::services::buddy_engine::tests::dns_packet(), "2026-10-24T00:00:00Z".into())),
+            Err(PcapError::PcapError("fixture interface disappeared".into())),
+        ])));
+        assert!(capture.start_worker(|_| {}, move |batch| { saved_flows.lock().unwrap().extend_from_slice(batch); Ok(()) },
+            move |batch| saved_dns.lock().unwrap().extend_from_slice(batch)));
+        wait_finished(&capture);
+        assert!(capture.worker_error().unwrap().contains("interface disappeared"));
+        assert!(capture.capture_handle.lock().unwrap().is_none());
+        assert_eq!(capture.get_metrics("ERROR").packets_captured, 1);
+        assert_eq!(dns.lock().unwrap().len(), 1);
+        assert_eq!(flows.lock().unwrap()[0].packet_count, 1);
+        assert_eq!(capture.last_packet_timestamp.lock().unwrap().as_deref(), Some("2026-10-24T00:00:00Z"));
+
+        capture.reset_recording();
+        let metrics = capture.get_metrics("STARTING");
+        assert_eq!(metrics.packets_captured, 0);
+        assert_eq!(metrics.bytes_captured, 0);
+        assert_eq!(metrics.packets_per_sec, 0.0);
+        assert!(capture.last_packet_timestamp.lock().unwrap().is_none());
+        assert!(capture.get_recent_packets(500).is_empty());
+        *capture.capture_handle.lock().unwrap() = Some(CaptureSource::Fixture(VecDeque::from([Err(PcapError::NoMorePackets)])));
+        assert!(capture.start_worker(|_| {}, |_| Ok(()), |_| {}));
+        wait_finished(&capture);
+        assert!(capture.worker_error().is_none());
+    }
+
+    #[test]
+    fn stop_flushes_pending_dns_and_waits_for_final_persistence_before_restart() {
+        let capture = capture();
+        let dns = Arc::new(Mutex::new(Vec::new()));
+        let saved_dns = dns.clone();
+        let (entered, received) = std::sync::mpsc::channel();
+        let (release, released) = std::sync::mpsc::channel();
+        *capture.capture_handle.lock().unwrap() = Some(CaptureSource::Fixture(VecDeque::from([
+            Ok((crate::services::buddy_engine::tests::dns_packet(), "fixture".into())),
+        ])));
+        assert!(capture.start_worker(|_| {}, move |_| {
+            entered.send(()).unwrap();
+            released.recv_timeout(Duration::from_secs(3)).unwrap();
+            Ok(())
+        }, move |batch| saved_dns.lock().unwrap().extend_from_slice(batch)));
+        let deadline = Instant::now() + Duration::from_secs(2);
+        while *capture.packets_captured.lock().unwrap() == 0 && Instant::now() < deadline {
+            std::thread::sleep(Duration::from_millis(5));
+        }
+        assert_eq!(*capture.packets_captured.lock().unwrap(), 1);
+        assert!(!capture.stop_and_wait(Duration::from_millis(5)));
+        received.recv_timeout(Duration::from_secs(2)).unwrap();
+        assert!(capture.open_interface("never-open-this-fixture").unwrap_err().to_string().contains("Previous capture worker"));
+        release.send(()).unwrap();
+        assert!(capture.stop_and_wait(Duration::from_secs(2)));
+        assert_eq!(dns.lock().unwrap().len(), 1);
+    }
+
+    #[test]
+    fn full_dns_batch_is_persisted_instead_of_discarded() {
+        let capture = capture();
+        let dns = Arc::new(Mutex::new(Vec::new()));
+        let saved = dns.clone();
+        let mut packets: VecDeque<_> = (0..257).map(|_| Ok((crate::services::buddy_engine::tests::dns_packet(), "fixture".into()))).collect();
+        packets.push_back(Err(PcapError::NoMorePackets));
+        *capture.capture_handle.lock().unwrap() = Some(CaptureSource::Fixture(packets));
+        assert!(capture.start_worker(|_| {}, |_| Ok(()), move |batch| saved.lock().unwrap().extend_from_slice(batch)));
+        wait_finished(&capture);
+        assert_eq!(dns.lock().unwrap().len(), 257);
+        assert!(capture.dns_pending.lock().unwrap().is_empty());
+    }
+
+    #[test]
+    fn dropping_capture_owner_cancels_worker_and_flushes_pending_evidence() {
+        let capture = capture();
+        let lifecycle = capture.worker_lifecycle.clone();
+        let dns = Arc::new(Mutex::new(Vec::new()));
+        let saved = dns.clone();
+        *capture.capture_handle.lock().unwrap() = Some(CaptureSource::Fixture(VecDeque::from([
+            Ok((crate::services::buddy_engine::tests::dns_packet(), "fixture".into())),
+        ])));
+        assert!(capture.start_worker(|_| {}, |_| Ok(()), move |batch| saved.lock().unwrap().extend_from_slice(batch)));
+        let deadline = Instant::now() + Duration::from_secs(2);
+        while *capture.packets_captured.lock().unwrap() == 0 && Instant::now() < deadline {
+            std::thread::sleep(Duration::from_millis(5));
+        }
+        assert_eq!(*capture.packets_captured.lock().unwrap(), 1);
+        drop(capture);
+        assert!(!lifecycle.0.lock().unwrap().running);
+        assert_eq!(dns.lock().unwrap().len(), 1);
+    }
+
+    #[test]
+    fn final_persistence_failure_is_reported_and_evidence_retained() {
+        let capture = capture();
+        *capture.capture_handle.lock().unwrap() = Some(CaptureSource::Fixture(VecDeque::from([
+            Ok((crate::services::buddy_engine::tests::dns_packet(), "fixture".into())),
+            Err(PcapError::NoMorePackets),
+        ])));
+        assert!(capture.start_worker(|_| {}, |_| Err("fixture database unavailable".into()), |_| {}));
+        wait_finished(&capture);
+        assert!(capture.worker_error().unwrap().contains("Final flow persistence failed"));
+        assert_eq!(capture.flow_engine.lock().unwrap().get_active_flows(10).len(), 1);
     }
 
     #[test]

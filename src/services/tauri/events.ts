@@ -1,3 +1,4 @@
+import { invoke } from '@tauri-apps/api/core';
 import { isTauriEnvironment } from './isTauri';
 
 export interface WindowsEventEntry {
@@ -25,7 +26,6 @@ export interface TelemetryPayload {
 export async function getWindowsEvents(limit = 20): Promise<WindowsEventEntry[]> {
   if (isTauriEnvironment()) {
     try {
-      const { invoke } = await import('@tauri-apps/api/core');
       return await invoke<WindowsEventEntry[]>('get_windows_events', { limit });
     } catch (err) {
       console.warn('Failed to invoke native get_windows_events:', err);

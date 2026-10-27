@@ -3,6 +3,8 @@ pub mod buddy_engine;
 pub mod buddy_search;
 pub mod capture_brief;
 pub mod capture_investigation;
+pub mod capture_helper;
+pub mod capture_io;
 pub mod capture_service;
 pub mod connectivity_monitor;
 pub mod detection_engine;

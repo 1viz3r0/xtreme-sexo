@@ -59,7 +59,7 @@ test('every career family has searchable roles at every career level', () => {
 
 test('expanded roles are searchable through aliases, tools, and skills', () => {
   assert.ok(searchCareerPaths('ciso').some(path => path.id === 'role-ciso'));
-  assert.ok(searchCareerPaths('Wireshark').some(path => path.id === 'role-soc-analyst-tier-1'));
+  assert.ok(searchCareerPaths('Capture Buddy').some(path => path.id === 'role-soc-analyst-tier-1'));
   assert.ok(searchCareerPaths('Evidence-based reporting').some(path => path.id === 'role-malware-analyst'));
 });
 

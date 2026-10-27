@@ -36,7 +36,7 @@ test('contract rejects old synthetic types, malformed numbers, missing fields an
     { ...sample, conversations: [{ ...conversation, payload: 'extra' }] },
   ]) assert.equal(isCaptureInvestigation(bad), false);
 });
-test('adapter is browser-only guarded and deadline starts before lazy import finishes', async t => {
+test('adapter guards browser mode and times out a stalled native request', async t => {
   await assert.rejects(generateCaptureInvestigation('fixture'), /desktop-only/);
   const previous = Object.getOwnPropertyDescriptor(globalThis, 'window');
   Object.defineProperty(globalThis, 'window', { configurable: true, value: { __TAURI_INTERNALS__: { invoke: () => new Promise(() => {}) } } });

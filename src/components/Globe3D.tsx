@@ -5,7 +5,8 @@ import countriesData from '../assets/geodata/countries.json';
 import regionsData from '../assets/geodata/regions-index.json';
 import citiesData from '../assets/geodata/cities.json';
 import type { CountryPolyData } from '../lib/countryIndex';
-import { globeCoordinate, globeCountry, globePoint, hubArc, unwrapRing, validCoordinate } from './globeGeometry';
+import { DEFAULT_CAMERA_POSITION, MAX_CAMERA_DISTANCE, MAX_ENDPOINT_MARKERS, MAX_FLOW_ARCS, MIN_CAMERA_DISTANCE, disposeGroup, geoMarker, globeCoordinate, globeCountry, globePoint, hubArc, nearestGeography, unwrapRing, validCoordinate, visibleHit } from './globeGeometry';
+import { captureDisplayState, telemetryMetric, telemetryStateHasValues } from '../lib/captureBuddyPresentation';
 
 export type LocationNode = {
   id: string;
@@ -64,27 +65,6 @@ const countrySelection = (country: GlobeCountry): CountryGeo => ({
   name: country.n, iso: country.iso, lat: country.la, lng: country.lo,
   cap: country.cap, r: country.r, sr: country.sr, fl: country.fl,
 });
-
-export function disposeGroup(group: THREE.Group) {
-  const geometries = new Set<THREE.BufferGeometry>();
-  const textures = new Set<THREE.Texture>();
-  const ownedMaterials = new Set<THREE.Material>();
-  group.traverse(object => {
-    const mesh = object as THREE.Mesh;
-    if (mesh.geometry) geometries.add(mesh.geometry);
-    const materials = Array.isArray(mesh.material) ? mesh.material : mesh.material ? [mesh.material] : [];
-    materials.forEach(material => {
-      // Dispose any owned map texture before releasing the material.
-      const map = (material as THREE.MeshBasicMaterial).map;
-      if (map) textures.add(map);
-      ownedMaterials.add(material);
-    });
-  });
-  geometries.forEach(geometry => geometry.dispose());
-  textures.forEach(texture => texture.dispose());
-  ownedMaterials.forEach(material => material.dispose());
-  group.clear();
-}
 
 function countryTexture(): THREE.CanvasTexture {
   const canvas = document.createElement('canvas');
@@ -152,77 +132,14 @@ type GlobeRuntime = {
   setZoomLevel: (level: ZoomLevel) => void;
 };
 type ZoomLevel = 'WORLD' | 'REGIONS' | 'CITIES';
-// Do not let OrbitControls enlarge individual texture texels across the view.
-// This still leaves a useful close-up for the CITIES stage while keeping the
-// whole globe and its marker layers usable on modest displays.
-export const MIN_CAMERA_DISTANCE = 1.85;
-export const MAX_CAMERA_DISTANCE = 5.5;
 const zoomLevelFor = (distance: number): ZoomLevel => distance <= 2.25 ? 'CITIES' : distance <= 3.5 ? 'REGIONS' : 'WORLD';
 // The globe is intentionally monochrome. Endpoint status is still conveyed by
 // the surrounding telemetry/detail views, not by introducing accent colors here.
 const colorFor = (_color: string) => '#f5f5f5';
-const metric = (value: number, decimals?: number) => Number.isFinite(value) && value >= 0
-  ? decimals === undefined ? value.toLocaleString() : value.toFixed(decimals)
-  : '—';
-export const telemetryMetric = (value: number, decimals?: number, available = true) => available ? metric(value, decimals) : '—';
-export const captureDisplayState = (value: string) => {
-  const normalized = value.trim().toUpperCase();
-  if (normalized === 'RUNNING' || normalized === 'LIVE') return 'LIVE';
-  if (normalized === 'STALE') return 'STALE';
-  if (normalized === 'STOPPED' || normalized === 'IDLE') return 'STOPPED';
-  return normalized || 'UNAVAILABLE';
-};
-
-export const telemetryStateHasValues = (state: string) => state === 'LIVE' || state === 'STALE';
-
-export function geoMarker(lat: number, lng: number, color: string, label: string, kind: 'region' | 'city'): THREE.Group {
-  const group = new THREE.Group();
-  group.position.copy(globePoint(lat, lng, 1.014));
-  // Keep the geometry deliberately small.  Its screen size is adjusted by the
-  // camera-distance scaler below rather than by making a billboard/text sprite.
-  const marker = new THREE.Mesh(new THREE.SphereGeometry(0.006, 8, 6), new THREE.MeshBasicMaterial({ color }));
-  marker.name = 'geography-marker';
-  // Keep the hit target separate from the visible dot: labels should be easy to
-  // trigger without making the geography look like a field of oversized blobs.
-  const hitProxy = new THREE.Mesh(
-    // The proxy is intentionally much larger than the dot so deep-zoom hover
-    // remains usable without adding any visible text or oversized markers.
-    new THREE.SphereGeometry(0.025, 8, 6),
-    new THREE.MeshBasicMaterial({ transparent: true, opacity: 0, depthWrite: false }),
-  );
-  hitProxy.name = 'geography-hit-proxy';
-  hitProxy.userData.hoverLabel = label;
-  hitProxy.userData.kind = kind;
-  group.add(marker);
-  group.add(hitProxy);
-  return group;
-}
-
 // Keep the scene bounded even when the bundled geography grows. Labels are
 // never created here: only these dots and their invisible hit proxies exist.
 const MAX_REGION_MARKERS = 240;
 const MAX_CITY_MARKERS = 320;
-export const MAX_ENDPOINT_MARKERS = 500;
-export const MAX_FLOW_ARCS = 150;
-export const DEFAULT_CAMERA_POSITION = { lat: 20, lng: 10, distance: 3.2 };
-
-// Prefer the geography nearest the current view instead of truncating the
-// alphabetically ordered dataset to a handful of countries.
-export function nearestGeography<T>(items: T[], coordinate: (item: T) => { lat: number; lng: number }, camera: THREE.Vector3, limit: number): T[] {
-  const direction = camera.clone().normalize();
-  return items.filter(item => validCoordinate(coordinate(item)))
-    .map(item => ({ item, score: globePoint(coordinate(item).lat, coordinate(item).lng).dot(direction) }))
-    .sort((a, b) => b.score - a.score).slice(0, limit).map(entry => entry.item);
-}
-
-export function visibleHit(hits: THREE.Intersection[], surfaceHit: THREE.Intersection | undefined, camera: THREE.Vector3): THREE.Intersection | undefined {
-  return hits.find(hit => {
-    const center = hit.object.getWorldPosition(new THREE.Vector3());
-    return (!surfaceHit || hit.distance < surfaceHit.distance)
-      && center.dot(camera.clone().sub(center)) > 0;
-  });
-}
-
 /** Markers should never bloom into oversized dots at the closest zoom. */
 function markerScaleForDistance(distance: number): number {
   return THREE.MathUtils.clamp(0.48 + (distance - 1.4) / (5.5 - 1.4) * 0.52, 0.48, 1);

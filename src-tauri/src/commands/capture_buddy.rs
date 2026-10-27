@@ -1,6 +1,7 @@
 //! Native Capture Buddy orchestration. libpcap/Npcap supplies adapter access only.
 use crate::services::capture_brief::InvestigationBrief;
 use crate::services::{buddy_engine as engine, buddy_search};
+use crate::services::capture_io::{create_private_file, open_recording, private_capture_folder};
 use serde::Serialize;
 use std::{
     collections::{HashMap, HashSet},
@@ -27,7 +28,12 @@ struct Worker {
     stop: Arc<AtomicBool>,
     thread: std::thread::JoinHandle<()>,
 }
-const HELPER_PATH: &str = "/usr/lib/netoze/netoze-capture-helper";
+#[cfg(target_os = "linux")]
+use crate::services::capture_helper::HELPER_PATH;
+#[cfg(test)]
+use crate::services::capture_helper::restricted_launch;
+#[cfg(all(test, target_os = "linux"))]
+use crate::services::capture_helper::helper_setup_guidance_for;
 #[derive(Serialize)]
 pub struct BuddyStatus {
     pub session_id: String,
@@ -77,102 +83,23 @@ pub struct SavedRecording {
     pub bytes: u64,
 }
 static READ_SLOTS: tokio::sync::Semaphore = tokio::sync::Semaphore::const_new(2);
-const RESTRICTED_GUIDANCE:&str="CAPTURE_RESTRICTED: This launch environment blocks packet-capture privileges (NoNewPrivs). Launch NET0ZE from your desktop menu; if still restricted, ask the administrator to review the launch policy. Saved captures remain available.";
 const CAPTURE_QUOTA_BYTES: u64 = 512 * 1024 * 1024;
 const MAX_RETAINED_CAPTURES: usize = 32;
 const MAX_CAPTURE_BYTES: u64 = 32 * 1024 * 1024;
 const MAX_CAPTURE_PACKETS: u64 = 100_000;
 const MAX_SNAPSHOT_LENGTH: u32 = 262_144;
 
-#[cfg(target_os = "linux")]
-fn helper_setup_guidance() -> String {
-    helper_setup_guidance_for(std::env::var_os("APPIMAGE").is_some())
-}
-
-#[cfg(target_os = "linux")]
-fn helper_setup_guidance_for(appimage: bool) -> String {
-    if appimage {
-        "CAPTURE_SETUP: This AppImage is portable and cannot install privileged capture access. Install the NET0ZE DEB with your system package manager; its one-time post-install step installs the native helper. Saved captures remain available here.".into()
-    } else {
-        "CAPTURE_SETUP: Install the new NET0ZE DEB with your system package manager. The previous per-user installation has no privileged native capture helper. Saved captures remain available here.".into()
-    }
-}
-
-#[cfg(target_os = "linux")]
-fn helper_access() -> Result<(), String> {
-    use std::os::unix::fs::MetadataExt;
-    use std::process::{Command, Stdio};
-    let metadata = std::fs::metadata(HELPER_PATH).map_err(|_| helper_setup_guidance())?;
-    if !metadata.is_file() || metadata.uid() != 0 || metadata.mode() & 0o022 != 0 {
-        return Err("CAPTURE_SETUP: The capture helper must be root-owned and not writable by ordinary users. Reinstall the NET0ZE DEB.".into());
-    }
-    let mut child=Command::new(HELPER_PATH).arg("--check").env_clear().stdin(Stdio::null()).stdout(Stdio::piped()).stderr(Stdio::null()).spawn()
-        .map_err(|e|format!("CAPTURE_SETUP: Cannot access the native helper ({e}). Check that your login belongs to the netdev group; group changes require signing out and back in."))?;
-    let deadline = Instant::now() + Duration::from_secs(2);
-    loop {
-        if child.try_wait().map_err(|e| e.to_string())?.is_some() {
-            break;
-        }
-        if Instant::now() > deadline {
-            let _ = child.kill();
-            let _ = child.wait();
-            return Err("CAPTURE_SETUP: Capture helper check timed out.".into());
-        }
-        std::thread::sleep(Duration::from_millis(10));
-    }
-    let mut response = String::new();
-    if let Some(stdout) = child.stdout.take() {
-        stdout
-            .take(256)
-            .read_to_string(&mut response)
-            .map_err(|e| e.to_string())?;
-    }
-    if response.trim() == "NETOZE_CAPTURE_V1 net_raw=1 restricted=0"
-        || response.trim() == "NETOZE_CAPTURE_V1 net_raw=1 restricted=1"
-    {
-        Ok(())
-    } else {
-        Err("CAPTURE_SETUP: Native helper has no CAP_NET_RAW capability. Reinstall the NET0ZE DEB through the system package manager; do not run the desktop GUI as root.".into())
-    }
-}
 fn capture_access() -> Result<(), String> {
-    if launch_blocks_capture() {
-        return Err(RESTRICTED_GUIDANCE.into());
-    }
     #[cfg(target_os = "linux")]
     {
-        helper_access()
+        crate::services::capture_helper::check_access()
     }
     #[cfg(not(target_os = "linux"))]
     {
-        Ok(())
+        crate::platform::capture::ensure_capture_runtime()
     }
 }
 
-fn restricted_launch(status: &str) -> bool {
-    let restricted = status
-        .lines()
-        .find_map(|s| s.strip_prefix("NoNewPrivs:"))
-        .map(str::trim)
-        == Some("1");
-    let caps = status
-        .lines()
-        .find_map(|s| s.strip_prefix("CapEff:"))
-        .and_then(|s| u64::from_str_radix(s.trim(), 16).ok());
-    restricted && caps.map(|n| n & (1 << 13) == 0).unwrap_or(false)
-}
-fn launch_blocks_capture() -> bool {
-    #[cfg(target_os = "linux")]
-    {
-        std::fs::read_to_string("/proc/self/status")
-            .map(|s| restricted_launch(&s))
-            .unwrap_or(false)
-    }
-    #[cfg(not(target_os = "linux"))]
-    {
-        false
-    }
-}
 fn duration_arg(seconds: u32) -> Result<Duration, String> {
     if !(1..=3600).contains(&seconds) {
         Err("Choose a whole-number duration from 1 to 3600 seconds.".into())
@@ -281,7 +208,7 @@ fn cleanup_capture_storage(folder: &Path, protected: &HashSet<PathBuf>) -> Resul
 }
 
 fn prepare_capture_folder(folder: &Path, active: &HashMap<String, Session>) -> Result<(), String> {
-    std::fs::create_dir_all(folder).map_err(|e| e.to_string())?;
+    private_capture_folder(folder).map_err(|e| e.to_string())?;
     let protected = active.values().map(|s| s.path.clone()).collect();
     cleanup_capture_storage(folder, &protected)
 }
@@ -293,7 +220,7 @@ pub fn buddy_engine_status() -> EngineStatus {
 }
 #[tauri::command]
 pub fn buddy_interfaces() -> Result<Vec<String>, String> {
-    Ok(pcap::Device::list()
+    Ok(crate::platform::capture::devices()
         .map_err(|e| e.to_string())?
         .into_iter()
         .enumerate()
@@ -309,7 +236,7 @@ pub fn buddy_interfaces() -> Result<Vec<String>, String> {
 }
 
 fn load_file(path: &Path, growing: bool) -> Result<Vec<engine::Packet>, String> {
-    let input = std::fs::File::open(path).map_err(|e| format!("Cannot read capture: {e}"))?;
+    let input = open_recording(path).map_err(|e| format!("Cannot read capture: {e}"))?;
     let meta = input.metadata().map_err(|e| e.to_string())?;
     if !meta.is_file() || meta.len() > engine::MAX_BYTES as u64 {
         return Err("Select a regular capture file up to 64 MiB".into());
@@ -335,19 +262,22 @@ fn location(state: &BuddyState, session_id: &str) -> Result<(PathBuf, bool), Str
             .unwrap_or(false),
     ))
 }
+async fn bounded_read<T: Send + 'static>(slots: &'static tokio::sync::Semaphore,
+    operation: impl FnOnce() -> Result<T, String> + Send + 'static) -> Result<T, String> {
+    let permit = slots.try_acquire().map_err(|_| "Native analyzer is busy; retry shortly")?;
+    tokio::task::spawn_blocking(move || {
+        // Cancellation of the awaiting IPC future must not admit more work
+        // while this blocking read/analysis still owns its resources.
+        let _permit = permit;
+        operation()
+    }).await.map_err(|e| format!("Native analyzer failed: {e}"))?
+}
 pub(crate) async fn packets(
     state: &BuddyState,
     session_id: &str,
 ) -> Result<Vec<engine::Packet>, String> {
     let (path, growing) = location(state, session_id)?;
-    let permit = READ_SLOTS
-        .try_acquire()
-        .map_err(|_| "Native analyzer is busy; retry shortly")?;
-    let result = tokio::task::spawn_blocking(move || load_file(&path, growing))
-        .await
-        .map_err(|e| format!("Native analyzer failed: {e}"))?;
-    drop(permit);
-    result
+    bounded_read(&READ_SLOTS, move || load_file(&path, growing)).await
 }
 
 #[tauri::command]
@@ -356,14 +286,9 @@ pub async fn buddy_open_file(
     state: State<'_, BuddyState>,
 ) -> Result<BuddyStatus, String> {
     let mut audit = crate::services::logging::OperationAudit::new("import");
-    let _permit = READ_SLOTS
-        .try_acquire()
-        .map_err(|_| "Native analyzer is busy; retry shortly")?;
     let path = std::fs::canonicalize(path).map_err(|e| e.to_string())?;
     let check = path.clone();
-    tokio::task::spawn_blocking(move || load_file(&check, false))
-        .await
-        .map_err(|e| e.to_string())??;
+    bounded_read(&READ_SLOTS, move || load_file(&check, false)).await?;
     let mut map = state
         .sessions
         .lock()
@@ -622,6 +547,7 @@ pub fn buddy_session_status(
     Ok(status(session_id, s))
 }
 
+#[cfg(not(target_os = "linux"))]
 fn write_header(file: &mut std::fs::File, link: u32, snapshot_length: u32) -> std::io::Result<()> {
     file.write_all(&0xa1b2c3d4u32.to_le_bytes())?;
     file.write_all(&2u16.to_le_bytes())?;
@@ -675,7 +601,7 @@ pub fn buddy_start(
     {
         return Err("Close unused sessions and stop the running recording first.".into());
     }
-    let devices = pcap::Device::list().map_err(|e| e.to_string())?;
+    let devices = crate::platform::capture::devices().map_err(|e| e.to_string())?;
     let device = if let Ok(index) = interface.parse::<usize>() {
         devices
             .into_iter()
@@ -707,16 +633,16 @@ pub fn buddy_start(
     }
     #[cfg(not(target_os = "linux"))]
     {
-        let mut capture = pcap::Capture::from_device(device)
+        let capture = pcap::Capture::from_device(device)
             .map_err(|e| e.to_string())?
             .promisc(promiscuous)
             .snaplen(snapshot_length as i32)
             .timeout(100)
             .open()
             .map_err(|e| format!("Native capture permission/interface error: {e}"))?;
-        capture
-            .direction(direction)
-            .map_err(|e| format!("Capture direction: {e}"))?;
+        if direction != pcap::Direction::InOut {
+            capture.direction(direction).map_err(|e| format!("Capture direction: {e}"))?;
+        }
         let mut capture = capture.setnonblock().map_err(|e| e.to_string())?;
         if !capture_filter.trim().is_empty() {
             capture
@@ -727,11 +653,7 @@ pub fn buddy_start(
         prepare_capture_folder(&folder, &map)?;
         let key = id();
         let path = folder.join(format!("{key}.pcap"));
-        let mut file = std::fs::OpenOptions::new()
-            .write(true)
-            .create_new(true)
-            .open(&path)
-            .map_err(|e| e.to_string())?;
+        let mut file = create_private_file(&path).map_err(|e| e.to_string())?;
         write_header(&mut file, capture.get_datalink().0 as u32, snapshot_length)
             .map_err(|e| e.to_string())?;
         let stop = Arc::new(AtomicBool::new(false));
@@ -813,40 +735,23 @@ fn start_helper(
     max_packets: u64,
     map: &mut HashMap<String, Session>,
 ) -> Result<BuddyStatus, String> {
-    let _ = (promiscuous, direction, snapshot_length, max_bytes, max_packets);
     use std::process::{Command, Stdio};
     let folder = crate::database::sqlite::get_app_dir().join("captures");
     prepare_capture_folder(&folder, map)?;
     let key = id();
     let path = folder.join(format!("{key}.pcap"));
     let diagnostics = folder.join(format!("{key}.log"));
-    let file = std::fs::OpenOptions::new()
-        .write(true)
-        .create_new(true)
-        .open(&path)
-        .map_err(|e| e.to_string())?;
-    let errors = match std::fs::OpenOptions::new()
-        .write(true)
-        .create_new(true)
-        .open(&diagnostics)
-    {
+    let file = create_private_file(&path).map_err(|e| e.to_string())?;
+    let errors = match create_private_file(&diagnostics) {
         Ok(file) => file,
         Err(error) => {
             let _ = std::fs::remove_file(&path);
             return Err(error.to_string());
         }
     };
-    let direction = match direction {
-        pcap::Direction::In => "in",
-        pcap::Direction::Out => "out",
-        pcap::Direction::InOut => "inout",
-    };
-    // Use the stable three-argument helper protocol. New helpers accept it
-    // with safe defaults, and this keeps the GUI compatible with an older
-    // system-installed helper until the administrator upgrades the package.
-    // Capture options remain bounded by the parent and helper.
     let mut child = Command::new(HELPER_PATH)
-        .args([interface, duration.as_secs().to_string(), filter])
+        .args(crate::services::capture_helper::arguments(&interface, duration, &filter,
+            promiscuous, direction, snapshot_length, max_bytes, max_packets))
         .env_clear()
         .stdin(Stdio::piped())
         .stdout(Stdio::from(file))
@@ -991,17 +896,11 @@ pub async fn buddy_save_file(
     state: State<'_, BuddyState>,
 ) -> Result<SavedRecording, String> {
     let mut audit = crate::services::logging::OperationAudit::new("export");
-    let _permit = READ_SLOTS
-        .try_acquire()
-        .map_err(|_| "Native analyzer is busy; retry shortly")?;
     let (source, running) = location(&state, &session_id)?;
     if running {
         return Err("Finish recording before saving a copy.".into());
     }
-    let result =
-        tokio::task::spawn_blocking(move || save_recording(&source, &PathBuf::from(destination)))
-            .await
-            .map_err(|e| e.to_string())?;
+    let result = bounded_read(&READ_SLOTS, move || save_recording(&source, &PathBuf::from(destination))).await;
     if result.is_ok() {
         audit.complete(1);
     }
@@ -1011,7 +910,7 @@ fn save_recording(source: &Path, destination: &Path) -> Result<SavedRecording, S
     if !destination.is_absolute() {
         return Err("Enter an absolute destination path including the filename.".into());
     }
-    let input = std::fs::File::open(source).map_err(|e| e.to_string())?;
+    let input = open_recording(source).map_err(|e| e.to_string())?;
     let meta = input.metadata().map_err(|e| e.to_string())?;
     if !meta.is_file() || meta.len() > engine::MAX_BYTES as u64 {
         return Err("Recording must be a regular file up to 64 MiB".into());
@@ -1038,10 +937,7 @@ fn save_recording(source: &Path, destination: &Path) -> Result<SavedRecording, S
             "Use a .{ext} filename to preserve the recording format."
         ));
     }
-    let mut output = std::fs::OpenOptions::new()
-        .write(true)
-        .create_new(true)
-        .open(destination)
+    let mut output = create_private_file(destination)
         .map_err(|e| {
             if e.kind() == std::io::ErrorKind::AlreadyExists {
                 "A file already exists there; choose a new filename.".into()
@@ -1063,6 +959,27 @@ fn save_recording(source: &Path, destination: &Path) -> Result<SavedRecording, S
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[tokio::test]
+    async fn cancelled_analyzer_retains_slot_until_blocking_work_really_finishes() {
+        static SLOTS: tokio::sync::Semaphore = tokio::sync::Semaphore::const_new(1);
+        let (entered, started) = tokio::sync::oneshot::channel();
+        let (release, released) = std::sync::mpsc::channel();
+        let request = tokio::spawn(bounded_read(&SLOTS, move || {
+            let _ = entered.send(());
+            released.recv_timeout(Duration::from_secs(2)).unwrap();
+            Ok(())
+        }));
+        started.await.unwrap();
+        request.abort();
+        assert!(request.await.unwrap_err().is_cancelled());
+        assert!(SLOTS.try_acquire().is_err());
+        release.send(()).unwrap();
+        let deadline = Instant::now() + Duration::from_secs(2);
+        while SLOTS.available_permits() == 0 && Instant::now() < deadline {
+            tokio::time::sleep(Duration::from_millis(5)).await;
+        }
+        assert_eq!(SLOTS.available_permits(), 1);
+    }
     #[cfg(target_os = "linux")]
     #[test]
     fn appimage_setup_guidance_is_explicit() {

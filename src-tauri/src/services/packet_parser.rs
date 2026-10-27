@@ -46,6 +46,57 @@ fn l3_offset(payload: &[u8]) -> Option<(u16, usize)> {
     Some((eth_type, off))
 }
 
+// A transport header must belong to the declared IP packet, never Ethernet
+// padding or a non-reassembled fragment. Both metadata and TLS use this slice.
+fn transport(payload: &[u8]) -> Option<(u8, &[u8])> {
+    let (kind, offset) = l3_offset(payload)?;
+    let ip = payload.get(offset..)?;
+    let (mut next, mut cursor, end) = match kind {
+        0x0800 if ip.len() >= 20 && ip[0] >> 4 == 4 => {
+            let ihl = (ip[0] & 15) as usize * 4;
+            let length = u16::from_be_bytes([ip[2], ip[3]]) as usize;
+            if ihl < 20 || ihl > ip.len() || length < ihl
+                || u16::from_be_bytes([ip[6], ip[7]]) & 0x3fff != 0 { return None; }
+            (ip[9], ihl, length.min(ip.len()))
+        }
+        0x86dd if ip.len() >= 40 && ip[0] >> 4 == 6 => {
+            let length = u16::from_be_bytes([ip[4], ip[5]]) as usize;
+            if length == 0 { return None; }
+            (ip[6], 40, (40 + length).min(ip.len()))
+        }
+        _ => return None,
+    };
+    for _ in 0..8 {
+        if next == 44 { return None; }
+        if ![0, 43, 60, 51].contains(&next) { return Some((next, ip.get(cursor..end)?)); }
+        let extension = ip.get(cursor..end)?;
+        if extension.len() < 2 { return None; }
+        let size = if next == 51 { (extension[1] as usize + 2) * 4 } else { (extension[1] as usize + 1) * 8 };
+        if size > extension.len() { return None; }
+        cursor += size;
+        next = extension[0];
+    }
+    None
+}
+
+fn tcp_payload(tcp: &[u8]) -> Option<&[u8]> {
+    if tcp.len() < 20 { return None; }
+    let size = (tcp[12] >> 4) as usize * 4;
+    if size < 20 { return None; }
+    tcp.get(size..)
+}
+
+fn dns_metadata(data: &[u8], tcp: bool) -> (Option<String>, String, i16, u16) {
+    if tcp {
+        if data.len() < 2 { return (None, String::new(), -1, 0); }
+        let length = u16::from_be_bytes([data[0], data[1]]) as usize;
+        match data.get(2..2 + length) {
+            Some(message) => parse_dns(message, 0),
+            None => (None, String::new(), -1, 0),
+        }
+    } else { parse_dns(data, 0) }
+}
+
 fn dns_qtype_name(qtype: u16) -> String {
     match qtype {
         1 => "A".to_string(),
@@ -165,76 +216,30 @@ pub fn parse_raw_packet(payload: &[u8], timestamp: &str) -> PacketMetadata {
 
     let l3_data = &payload[l3_off..];
 
-    if eth_type_num == 0x0800 && l3_data.len() >= 20 {
+    if eth_type_num == 0x0800 && l3_data.len() >= 20 && l3_data[0] >> 4 == 4 {
         eth_type = "IPv4".to_string();
-        let ihl = (l3_data[0] & 0x0F) as usize * 4;
         let proto_num = l3_data[9];
         src_ip = parse_ipv4_addr(&l3_data[12..16]);
         dst_ip = parse_ipv4_addr(&l3_data[16..20]);
 
         protocol = match proto_num {
             1 => "ICMP".to_string(),
-            6 => "TCP".to_string(),
-            17 => "UDP".to_string(),
+            6 | 17 => "IPv4".to_string(),
             _ => format!("IP_PROTO_{}", proto_num),
         };
 
-        // Ports exist only on TCP/UDP. ICMP (and other L4) must not be parsed as ports.
-        if (proto_num == 6 || proto_num == 17) && ihl >= 20 && l3_data.len() >= ihl + 4 {
-            let l4_data = &l3_data[ihl..];
-            src_port = u16::from_be_bytes([l4_data[0], l4_data[1]]);
-            dst_port = u16::from_be_bytes([l4_data[2], l4_data[3]]);
-            if proto_num == 6 && l4_data.len() >= 14 {
-                tcp_flags = l4_data[13];
-                if src_port == 53 || dst_port == 53 {
-                    let data_off = ((l4_data[12] >> 4) as usize).saturating_mul(4).max(20);
-                    if l4_data.len() >= data_off + 12 {
-                        let (q, t, r, a) = parse_dns(l4_data, data_off);
-                        dns_qname = q;
-                        dns_qtype = t;
-                        dns_rcode = r;
-                        dns_answers = a;
-                    }
-                }
-            } else if proto_num == 17 && (src_port == 53 || dst_port == 53) {
-                if l4_data.len() >= 20 {
-                    let (q, t, r, a) = parse_dns(l4_data, 8);
-                    dns_qname = q;
-                    dns_qtype = t;
-                    dns_rcode = r;
-                    dns_answers = a;
-                }
-            }
-        }
-    } else if eth_type_num == 0x86DD && l3_data.len() >= 40 {
+    } else if eth_type_num == 0x86DD && l3_data.len() >= 40 && l3_data[0] >> 4 == 6 {
         eth_type = "IPv6".to_string();
         let next_hdr = l3_data[6];
         src_ip = parse_ipv6_addr(&l3_data[8..24]);
         dst_ip = parse_ipv6_addr(&l3_data[24..40]);
 
         protocol = match next_hdr {
-            6 => "TCP".to_string(),
-            17 => "UDP".to_string(),
+            6 | 17 => "IPv6".to_string(),
             58 => "ICMPv6".to_string(),
             _ => format!("IPV6_NEXT_{}", next_hdr),
         };
 
-        if (next_hdr == 6 || next_hdr == 17) && l3_data.len() >= 44 {
-            let l4_data = &l3_data[40..];
-            src_port = u16::from_be_bytes([l4_data[0], l4_data[1]]);
-            dst_port = u16::from_be_bytes([l4_data[2], l4_data[3]]);
-            if next_hdr == 6 && l4_data.len() >= 14 {
-                tcp_flags = l4_data[13];
-            } else if next_hdr == 17 && (src_port == 53 || dst_port == 53) {
-                if l4_data.len() >= 20 {
-                    let (q, t, r, a) = parse_dns(l4_data, 8);
-                    dns_qname = q;
-                    dns_qtype = t;
-                    dns_rcode = r;
-                    dns_answers = a;
-                }
-            }
-        }
     } else if eth_type_num == 0x0806 {
         eth_type = "ARP".to_string();
         protocol = "ARP".to_string();
@@ -249,6 +254,26 @@ pub fn parse_raw_packet(payload: &[u8], timestamp: &str) -> PacketMetadata {
                 protocol = "ARP_REQUEST".to_string();
             } else if opcode == 2 {
                 protocol = "ARP_REPLY".to_string();
+            }
+        }
+    }
+
+    if let Some((next, data)) = transport(payload) {
+        let application = match next {
+            6 => tcp_payload(data).map(|application| (application, true)),
+            17 if data.len() >= 8 => {
+                let length = u16::from_be_bytes([data[4], data[5]]) as usize;
+                if length < 8 { None } else { data.get(8..length).map(|application| (application, false)) }
+            }
+            _ => None,
+        };
+        if let Some((application, tcp)) = application {
+            protocol = if tcp { "TCP" } else { "UDP" }.into();
+            src_port = u16::from_be_bytes([data[0], data[1]]);
+            dst_port = u16::from_be_bytes([data[2], data[3]]);
+            if tcp { tcp_flags = data[13]; }
+            if src_port == 53 || dst_port == 53 {
+                (dns_qname, dns_qtype, dns_rcode, dns_answers) = dns_metadata(application, tcp);
             }
         }
     }
@@ -277,39 +302,8 @@ pub fn parse_raw_packet(payload: &[u8], timestamp: &str) -> PacketMetadata {
 
 /// Returns the TCP payload (after L2/IP/TCP headers) for TLS-layer inspection, if any.
 pub fn l4_payload(payload: &[u8]) -> Option<&[u8]> {
-    let (eth_type_num, l3_off) = l3_offset(payload)?;
-    if eth_type_num == 0x0800 {
-        let l3 = payload.get(l3_off..)?;
-        if l3.len() < 20 {
-            return None;
-        }
-        let ihl = (l3[0] & 0x0F) as usize * 4;
-        if ihl < 20 || l3.len() < ihl + 20 || l3[9] != 6 {
-            return None;
-        }
-        let tcp = &l3[ihl..];
-        let data_off = (tcp[12] >> 4) as usize * 4;
-        if data_off < 20 || tcp.len() < data_off {
-            return None;
-        }
-        Some(&tcp[data_off..])
-    } else if eth_type_num == 0x86DD {
-        let l3 = payload.get(l3_off..)?;
-        if l3.len() < 40 || l3[6] != 6 {
-            return None;
-        }
-        let tcp = &l3[40..];
-        if tcp.len() < 13 {
-            return None;
-        }
-        let data_off = (tcp[12] >> 4) as usize * 4;
-        if data_off < 20 || tcp.len() < data_off {
-            return None;
-        }
-        Some(&tcp[data_off..])
-    } else {
-        None
-    }
+    let (next, data) = transport(payload)?;
+    if next == 6 { tcp_payload(data) } else { None }
 }
 
 #[cfg(test)]
@@ -322,6 +316,7 @@ mod l4_payload_tests {
         frame[12] = 0x08;
         frame[13] = 0x00;
         frame[14] = 0x45;
+        frame[16..18].copy_from_slice(&72u16.to_be_bytes());
         frame[23] = 6;
         frame[14 + 20 + 12] = 0x50;
         let payload = &frame[14 + 20 + 20..];
@@ -344,18 +339,46 @@ mod tests {
     use super::*;
 
     #[test]
+    fn rejects_padding_fragments_bad_lengths_and_segmented_dns() {
+        let dns = crate::services::buddy_engine::tests::dns_packet();
+        let valid = parse_raw_packet(&dns, "fixture");
+        assert_eq!(valid.dns_qname.as_deref(), Some("example.com"));
+        for (offset, value) in [(16, 20u16), (20, 1), (20, 0x2000), (38, 65535)] {
+            let mut frame = dns.clone();
+            frame[offset..offset + 2].copy_from_slice(&value.to_be_bytes());
+            let parsed = parse_raw_packet(&frame, "fixture");
+            assert_eq!(parsed.src_port, 0, "offset {offset} value {value}");
+            assert_eq!(parsed.dst_port, 0);
+            assert!(parsed.dns_qname.is_none());
+            assert!(l4_payload(&frame).is_none());
+        }
+        let message = &dns[42..];
+        let mut framed = (message.len() as u16).to_be_bytes().to_vec();
+        framed.extend(message);
+        let mut tcp = crate::services::buddy_engine::tests::tcp_packet(1, 16, &framed);
+        tcp[36..38].copy_from_slice(&53u16.to_be_bytes());
+        assert_eq!(parse_raw_packet(&tcp, "fixture").dns_qname.as_deref(), Some("example.com"));
+        tcp.pop();
+        assert!(parse_raw_packet(&tcp, "fixture").dns_qname.is_none());
+        let mut padded = crate::services::buddy_engine::tests::tcp_packet(1, 16, &[]);
+        padded.extend(b"not a TLS payload");
+        assert_eq!(l4_payload(&padded), Some(&[][..]));
+    }
+
+    #[test]
     fn test_ipv4_tcp_packet_decoding() {
         let sample = [
             0x52, 0x54, 0x00, 0x12, 0x34, 0x56, // Dst MAC: 52:54:00:12:34:56
             0x00, 0x11, 0x22, 0x33, 0x44, 0x55, // Src MAC: 00:11:22:33:44:55
             0x08, 0x00,                         // IPv4
-            0x45, 0x00, 0x00, 0x3C, 0x1A, 0x2B, 0x00, 0x00, 0x40, 0x06, 0x00, 0x00,
+            0x45, 0x00, 0x00, 0x28, 0x1A, 0x2B, 0x00, 0x00, 0x40, 0x06, 0x00, 0x00,
             192, 168, 1, 104,                   // Src IP: 192.168.1.104
             185, 199, 108, 153,                 // Dst IP: 185.199.108.153
             0xD8, 0xF0, 0x01, 0xBB,             // Src Port: 55536, Dst Port: 443
             0x00, 0x00, 0x00, 0x00,             // Sequence Number
             0x00, 0x00, 0x00, 0x00,             // Acknowledgment Number
             0x50, 0x10, 0x20, 0x00,             // Data Offset 5, Flags 0x10 (ACK), Window
+            0x00, 0x00, 0x00, 0x00,             // Checksum, urgent pointer
         ];
 
         let meta = parse_raw_packet(&sample, "2026-08-08T18:25:00Z");
@@ -393,6 +416,9 @@ mod tests {
         pkt.extend(ip);
         pkt.extend(udp);
         pkt.extend(dns);
+        let ip_len = (pkt.len() - 14) as u16;
+        pkt[16..18].copy_from_slice(&ip_len.to_be_bytes());
+        pkt[38..40].copy_from_slice(&(ip_len - 20).to_be_bytes());
 
         let meta = parse_raw_packet(&pkt, "2026-08-08T18:25:00Z");
         assert_eq!(meta.protocol, "UDP");
@@ -409,6 +435,7 @@ mod tests {
         let mut pkt = vec![0u8; 14 + 40];
         pkt[12] = 0x86;
         pkt[13] = 0xDD;
+        pkt[14] = 0x60;
         pkt[14 + 6] = 58; // ICMPv6
         for i in 0..16 {
             pkt[14 + 8 + i] = i as u8;
@@ -452,6 +479,7 @@ mod tests {
         pkt[16] = 0x08;
         pkt[17] = 0x00;
         pkt[18] = 0x45;
+        pkt[20..22].copy_from_slice(&28u16.to_be_bytes());
         pkt[27] = 17; // UDP
         pkt[30] = 192;
         pkt[31] = 168;
@@ -465,6 +493,7 @@ mod tests {
         pkt[39] = 0x00;
         pkt[40] = 0x00;
         pkt[41] = 0x35;
+        pkt[42..44].copy_from_slice(&8u16.to_be_bytes());
         let meta = parse_raw_packet(&pkt, "2026-08-08T18:25:00Z");
         assert_eq!(meta.eth_type, "IPv4");
         assert_eq!(meta.protocol, "UDP");

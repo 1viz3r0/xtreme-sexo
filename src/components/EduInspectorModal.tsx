@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { BookOpen, X, Terminal, Code, Info, ShieldAlert, ArrowRight, Map, CheckCircle2 } from 'lucide-react';
 import { getFieldExplanation, type EduExplanation } from '../services/tauri/edu';
 import { ALL_CAREER_PATHS, CAREER_LEVELS, GUIDE_TOPICS, findCareerPath, searchCareerPaths, topicsForCareer, type CareerPathId } from '../lib/fieldGuideCatalog';
@@ -27,42 +27,45 @@ export const EduInspectorModal: React.FC<EduInspectorModalProps> = ({
   const [levelFilter, setLevelFilter] = useState('all');
   const [section, setSection] = useState<'profile' | 'map' | 'skills' | 'projects' | 'toolkit'>('profile');
   const [completed, setCompleted] = useState<Set<number>>(new Set());
+  const explanationRequest = useRef(0);
   const careerPath = findCareerPath(career);
   const searchResults = useMemo(() => searchCareerPaths(query, familyFilter, levelFilter), [query, familyFilter, levelFilter]);
   const recommendedTopics = useMemo(() => topicsForCareer(career), [career]);
 
   useEffect(() => {
-    loadExplanation(fieldKey, fieldValue);
+    if (selectedField) {
+      setFieldKey(selectedField);
+      setFieldValue(currentValue ?? '');
+    }
+  }, [currentValue, selectedField]);
+
+  useEffect(() => {
+    let cancelled = false;
+    const request = ++explanationRequest.current;
+    setExplanation(null);
+    void getFieldExplanation(fieldKey, fieldValue).then((data) => {
+      if (cancelled || request !== explanationRequest.current) return;
+      setExplanation(data ?? {
+        field_id: fieldKey,
+        title: `Field: ${fieldKey}`,
+        category: 'NETWORK',
+        short_description: 'Native field guidance is unavailable in this runtime.',
+        detailed_explanation: 'Open the installed desktop app to load the native Edu Inspector explanation for this field. Browser mode does not claim a local observation or a native knowledge-base result.',
+        current_value: fieldValue,
+        interpretation: 'No native interpretation was loaded.',
+        status_level: 'UNAVAILABLE',
+        evidence: ['Native Edu Inspector response unavailable.'],
+        related_entities: [],
+        analyst_next_steps: ['Open the desktop app and select this field again.', 'Use the source record rather than treating this placeholder as a finding.'],
+      });
+    });
+    return () => { cancelled = true; };
   }, [fieldKey, fieldValue]);
 
   const availableFields = recommendedTopics.length ? recommendedTopics : GUIDE_TOPICS;
 
-  const loadExplanation = async (id: string, val: string) => {
-    const data = await getFieldExplanation(id, val);
-    if (data) {
-      setExplanation(data);
-    } else {
-      // Fallback object for browser preview mode
-      setExplanation({
-        field_id: id,
-        title: `Field: ${id}`,
-        category: 'NETWORK',
-        short_description: `Contextual inspection of ${id} field value: ${val}`,
-        detailed_explanation: `In network analysis, ${id} represents traffic metadata evaluated against baseline standards.`,
-        current_value: val,
-        interpretation: `Observed value ${val} in current flow session.`,
-        status_level: 'OBSERVED',
-        evidence: [`Field ${id}: ${val}`],
-        related_entities: ['source_ip', 'destination_ip'],
-        analyst_next_steps: [
-          'Review related flow duration and byte volume.',
-          'Inspect correlated detection findings.',
-        ],
-      });
-    }
-  };
 
-  const handleSelectField = (id: string, actualFieldId: string, val: string) => {
+  const handleSelectField = (actualFieldId: string, val: string) => {
     setFieldKey(actualFieldId);
     setFieldValue(val);
   };
@@ -106,7 +109,7 @@ export const EduInspectorModal: React.FC<EduInspectorModalProps> = ({
        </nav>
        {section === 'profile' && <section className="space-y-4" aria-label="Integrated role profile"><div className="grid gap-3 md:grid-cols-2"><article className="rounded-xl border border-cyan-500/20 bg-cyan-950/10 p-4"><h3 className="font-bold uppercase tracking-wider text-cyan-200">Mission and responsibilities</h3><ul className="mt-3 list-disc space-y-2 pl-5 text-sm text-slate-300 font-sans">{careerPath.responsibilities.map(item => <li key={item}>{item}</li>)}</ul></article><article className="rounded-xl border border-[#142646] p-4"><h3 className="font-bold uppercase tracking-wider text-slate-200">Recurring activities</h3><ul className="mt-3 list-disc space-y-2 pl-5 text-sm text-slate-300 font-sans">{careerPath.activities.map(item => <li key={item}>{item}</li>)}</ul></article></div><article className="rounded-xl border border-cyan-500/20 bg-cyan-950/10 p-4"><h3 className="font-bold uppercase tracking-wider text-cyan-200">Workflow for {careerPath.title}</h3><div className="mt-3 grid gap-2 md:grid-cols-5">{careerPath.workflow.map((step, index) => <div key={step} className="rounded-lg border border-[#142646] bg-black/30 p-3"><span className="text-xs text-cyan-400">STEP {index + 1}</span><p className="mt-1 text-sm text-slate-200 font-sans">{step}</p></div>)}</div></article><article className="rounded-xl border border-[#142646] p-4"><h3 className="font-bold uppercase tracking-wider text-amber-200">Evidence and deliverables</h3><ul className="mt-3 grid gap-2 md:grid-cols-2 list-disc pl-5 text-sm text-slate-300 font-sans">{[...careerPath.deliverables, ...careerPath.evidence].map(item => <li key={item}>{item}</li>)}</ul></article><article className="rounded-xl border border-[#142646] p-4"><h3 className="font-bold uppercase tracking-wider text-emerald-200">Growth and sources</h3><p className="mt-3 text-sm text-slate-300 font-sans"><b>Next transitions:</b> {careerPath.transitions.join(' · ')}</p><p className="mt-3 text-xs text-slate-400 font-sans"><b>Certification guidance:</b> {careerPath.certifications.join(' · ')}</p><p className="mt-3 text-xs text-slate-500 font-sans"><b>Reference frameworks:</b> {careerPath.sources.join(' · ')}</p></article></section>}
       {section === 'map' && <section className="grid gap-3 md:grid-cols-3"><div className="rounded-xl border border-[#142646] p-4"><b className="text-cyan-300">START HERE</b><p className="mt-2 text-sm text-slate-300 font-sans">Learn the network path: interface → IP → route → port → protocol → evidence.</p><button type="button" onClick={() => setSection('skills')} className="mt-3 rounded border border-cyan-500/40 px-3 py-2 text-xs text-cyan-200">Open skill matrix →</button></div><div className="rounded-xl border border-[#142646] p-4"><b className="text-amber-300">PROVE IT</b><p className="mt-2 text-sm text-slate-300 font-sans">A tool output is only a starting point. Record scope, evidence, confidence, and limitations.</p><button type="button" onClick={() => setSection('projects')} className="mt-3 rounded border border-amber-500/40 px-3 py-2 text-xs text-amber-200">Choose a mission →</button></div><div className="rounded-xl border border-[#142646] p-4"><b className="text-emerald-300">NEXT MOVE</b><p className="mt-2 text-sm text-slate-300 font-sans">Build a small authorized project, export the evidence, and review what you still cannot prove.</p><button type="button" onClick={() => setSection('toolkit')} className="mt-3 rounded border border-emerald-500/40 px-3 py-2 text-xs text-emerald-200">Open toolkit →</button></div></section>}
-      {section === 'skills' && <section className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">{careerPath.skills.map((skill, index) => <article key={skill} className="rounded-xl border border-[#142646] bg-black/30 p-4"><div className="flex justify-between gap-2"><b className="text-slate-200">{skill}</b><span className="text-xs text-cyan-300">{index < 2 ? 'Core' : 'Build'}</span></div><div className="mt-3 h-2 rounded bg-slate-900"><div className="h-2 rounded bg-cyan-400" style={{ width: `${35 + index * 9}%` }} /></div><p className="mt-2 text-xs text-slate-500 font-sans">Path-specific proof: explain it, observe it in a lab, document it, then test a boundary.</p></article>)}</section>}
+       {section === 'skills' && <section className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">{careerPath.skills.map((skill, index) => <article key={skill} className="rounded-xl border border-[#142646] bg-black/30 p-4"><div className="flex justify-between gap-2"><b className="text-slate-200">{skill}</b><span className="text-xs text-cyan-300">{index < 2 ? 'Core' : 'Build'}</span></div><p className="mt-3 text-xs text-slate-500 font-sans">Practice status: not assessed in NET0ZE. Prove this skill by explaining it, observing it in an authorized exercise, documenting the evidence, and testing a boundary.</p></article>)}</section>}
       {section === 'projects' && <section className="space-y-3"><div className="rounded-xl border border-amber-500/20 bg-amber-950/10 p-4 text-sm text-amber-100 font-sans">Labs and CTF missions will be connected to this path later. For now, these are portfolio missions: complete them only with synthetic data, owned systems, or explicit authorization.</div><div className="grid gap-3 md:grid-cols-2">{careerPath.projects.map((project, index) => <article key={project} className="rounded-xl border border-[#142646] p-4"><span className="text-xs uppercase tracking-wider text-amber-300">Portfolio mission {index + 1}</span><h3 className="mt-2 font-bold text-white">{project}</h3><p className="mt-2 text-sm text-slate-400 font-sans">Deliver: scope note, observations, evidence, confidence, remediation, and a short lessons-learned section.</p><button type="button" onClick={() => toggleMilestone(index % careerPath.milestones.length)} className="mt-3 rounded border border-slate-700 px-3 py-2 text-xs text-slate-200">Mark related milestone</button></article>)}</div></section>}
       {section === 'toolkit' && <section className="space-y-4"><div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">{careerPath.tools.map(tool => <article key={tool} className="rounded-xl border border-[#142646] p-4"><b className="text-white">{tool}</b><p className="mt-2 text-xs text-slate-400 font-sans">Use it to answer a specific question in an owned or explicitly authorized environment. Record what it can and cannot observe.</p><span className="mt-3 inline-block rounded border border-emerald-500/30 px-2 py-1 text-xs text-emerald-300">Learn with evidence</span></article>)}</div><div className="rounded-xl border border-cyan-500/20 bg-cyan-950/10 p-4"><h3 className="font-bold uppercase tracking-wider text-cyan-200">Roadmap sequence</h3><div className="mt-3 grid gap-2 md:grid-cols-4">{careerPath.roadmap.map((step, index) => <div key={step} className="rounded-lg border border-[#142646] bg-black/30 p-3"><span className="text-xs text-cyan-400">PHASE {index + 1}</span><p className="mt-1 text-sm text-slate-200 font-sans">{step}</p></div>)}</div></div></section>}
 
@@ -120,7 +123,7 @@ export const EduInspectorModal: React.FC<EduInspectorModalProps> = ({
           return (
             <button
               key={item.id}
-              onClick={() => handleSelectField(item.id, actualId, item.value)}
+              onClick={() => handleSelectField(actualId, item.value)}
               className={`px-3 py-1.5 rounded-lg text-xs font-mono font-bold transition-all border cursor-pointer ${
                 isActive
                   ? 'bg-cyan-500/20 text-cyan-400 border-cyan-500 shadow-md shadow-cyan-500/20'

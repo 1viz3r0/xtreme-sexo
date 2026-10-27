@@ -77,6 +77,15 @@ test('Markdown escapes table delimiters, newlines, backslashes and HTML', () => 
   assert.ok(output.includes('&lt;script&gt;\\|a\\\\b next'));
   assert.ok(!output.includes('<script>'));
 });
+test('PDF keeps ASCII text and tabs, strips unsupported controls and escapes PDF strings', () => {
+  const output = exportScan({ ...job, id: 'safe\tname(owned)\u0000\u0007é' }, 'pdf');
+  assert.ok(output.startsWith('%PDF-1.4\n'));
+  assert.ok(output.includes('safe\tname\\(owned\\)'));
+  assert.ok(!output.includes('\u0000') && !output.includes('\u0007') && !output.includes('é'));
+  assert.ok(output.includes('\nstream\nBT\n'));
+  const xref = Number(output.match(/startxref\n(\d+)/)?.[1]);
+  assert.equal(output.slice(xref, xref + 4), 'xref');
+});
 test('desktop service rejects SSR/browser requests rather than returning fake success; read lane recovers', async () => {
   assert.equal(scanBuddyAvailable(), false);
   await assert.rejects(planScan(request), /desktop-only/);

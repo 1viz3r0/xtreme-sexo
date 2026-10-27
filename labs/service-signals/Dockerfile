@@ -1,4 +1,4 @@
-FROM python:3.12-alpine
+FROM python:3.13-alpine@sha256:2d9aefe2fef018a7eb2c13064c89c71929800fd2e5dccdbf52ea5da5bb8d929a
 WORKDIR /app
 COPY server.py config.json ./
 RUN addgroup -S netoze && adduser -S -G netoze -u 10001 netoze

@@ -85,7 +85,7 @@ export const UserProfileView: React.FC<UserProfileViewProps> = ({
 
   if (!user) {
     return (
-      <div className="flex h-full items-center justify-center">
+      <div className="enterprise-page enterprise-profile-empty flex h-full items-center justify-center">
         <div className="w-full max-w-md rounded-2xl border-2 border-slate-800 bg-slate-950 p-8 text-center">
           <ShieldAlert className="mx-auto mb-4 h-12 w-12 text-amber-500" />
           <h2 className="font-mono text-lg font-bold tracking-widest text-slate-200">
@@ -110,10 +110,10 @@ export const UserProfileView: React.FC<UserProfileViewProps> = ({
   const isAdmin = role === 'ADMIN';
 
   return (
-    <div className="h-full overflow-y-auto p-6">
+    <div className="enterprise-page enterprise-profile-page h-full overflow-y-auto p-6">
       <div className="mb-6 flex items-center justify-between">
-        <h1 className="font-mono text-lg font-bold tracking-widest text-cyan-300">
-          USER PROFILE
+         <h1 className="font-mono text-lg font-bold tracking-widest text-cyan-300">
+           PROFILE / ACCOUNT
         </h1>
         <button
           onClick={onLogout}

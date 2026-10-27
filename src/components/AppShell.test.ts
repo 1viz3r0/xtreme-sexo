@@ -24,6 +24,8 @@ test('Studio header and monitoring navigation are accessible and concise', () =>
   const sidebar = renderToStaticMarkup(React.createElement(Sidebar, sidebarProps));
   assert.match(sidebar, /aria-label="Primary navigation"/);
   assert.match(sidebar, /Monitoring/);
+  assert.match(sidebar, /aria-label="Overview"/);
+  assert.ok(sidebar.indexOf('Overview') < sidebar.indexOf('Watchtower'));
   assert.match(sidebar, /aria-label="Watchtower"/);
   assert.ok(sidebar.indexOf('Watchtower') < sidebar.indexOf('Capture Buddy'));
   assert.match(sidebar, /aria-current="page" aria-label="Capture Buddy"/);
@@ -31,30 +33,34 @@ test('Studio header and monitoring navigation are accessible and concise', () =>
    assert.ok(sidebar.indexOf('Scan Buddy') < sidebar.indexOf('Dashboard'));
    assert.match(sidebar, /aria-label="Dashboard"/);
    assert.match(sidebar, /aria-label="Labs"/);
+   assert.match(sidebar, /aria-label="CTFs"/);
   assert.ok(sidebar.indexOf('Field Guide') < sidebar.indexOf('Additional tools'));
   assert.ok(sidebar.indexOf('Labs') < sidebar.indexOf('Additional tools'));
    assert.doesNotMatch(sidebar, />Experimental</);
    assert.doesNotMatch(sidebar, /aria-label="Host &amp; Logs"/);
   assert.doesNotMatch(sidebar, /<details[^>]* open/);
-   assert.doesNotMatch(sidebar, /Overview/);
-   assert.match(sidebar, /aria-label="Evidence"/);
+  assert.match(sidebar, /aria-label="Overview"/);
+   assert.match(sidebar, /aria-label="Additional tools"/);
+   assert.match(sidebar, /aria-expanded="false"/);
+   assert.doesNotMatch(sidebar, /aria-label="Locked additional tools"/);
   assert.doesNotMatch(sidebar, /aria-label="Users"/);
   const admin = renderToStaticMarkup(React.createElement(Sidebar, { ...sidebarProps, user: { name: 'Admin fixture', email: 'fixture@example.test', isVerified: true, role: 'admin' } }));
   assert.match(admin, /aria-label="Users"/);
-  assert.doesNotMatch(admin, /Overview/);
+  assert.match(admin, /aria-label="Overview"/);
   const collapsed = renderToStaticMarkup(React.createElement(Sidebar, { ...sidebarProps, isCollapsed: true }));
-  assert.doesNotMatch(collapsed, /Overview/);
+  assert.match(collapsed, /aria-label="Overview"/);
   assert.equal(renderToStaticMarkup(React.createElement(Sidebar, { ...sidebarProps, isFullyHidden: true })), '');
 });
 
-test('App opens Capture Buddy and hides all Overview entry points including admin sign-in', () => {
+test('App opens Overview and keeps the live workspace routes wired', () => {
   const app = readFileSync(new URL('../App.tsx', import.meta.url), 'utf8');
-  assert.match(app, /useState<TabType>\('conversations'\)/);
+  assert.match(app, /useState<TabType>\('global_intel'\)/);
   assert.match(app, /const Watchtower = lazy\(\(\) => import\('\.\/components\/Watchtower'\)/);
+  assert.match(app, /const GlobalIntelView = lazy\(\(\) => import\('\.\/components\/GlobalIntelView'\)/);
   assert.match(app, /activeTab === 'watchtower'[\s\S]*?<Watchtower flows=\{flows\} events=\{events\} graph=\{graphData\}(?:[\s\S]*?)\/>/);
+  assert.match(app, /activeTab === 'global_intel'[\s\S]*?<GlobalIntelView/);
   assert.match(app, /activeTab === 'watchtower'[\s\S]*?flows: true, detections: true, graph: true/);
   assert.match(app, /activeTab === 'conversations'[\s\S]*?<CaptureBuddy \/>/);
-  assert.doesNotMatch(app, /global_intel|GlobalIntelView|onOpenSearch/);
   assert.match(app, /userData\.role === 'admin'\) setActiveTab\('watchtower'\)/);
   assert.match(app, /authSession\(stored\)/);
   assert.match(app, /authLogout\(stored\)/);
@@ -71,7 +77,7 @@ test('Studio shell uses a neutral monochrome palette', () => {
   assert.doesNotMatch(studioCss, /#(?:101e34|293d59|0b1424|14233b|223c60|3c5b83|0e1b30|354b6b|93b7ff|27466f|4c74a9|a3c6ff|5275a2|1b2d49|22334d)/i);
 });
 
-test('mounted shell preserves navigation and sign-in without exposing Overview or location search', async () => {
+test('mounted shell preserves navigation, Overview, sign-in, and location search boundaries', async () => {
   const window = new Window({ url: 'http://localhost/' });
   const names = ['window', 'document', 'navigator', 'HTMLElement', 'Event', 'MouseEvent', 'IS_REACT_ACT_ENVIRONMENT'];
   const previous = new Map(names.map(name => [name, Object.getOwnPropertyDescriptor(globalThis, name)]));
@@ -95,7 +101,7 @@ test('mounted shell preserves navigation and sign-in without exposing Overview o
     );
   }
   const click = async (label: string) => {
-    const button = host.querySelector(`[aria-label="${label}"]`) || [...host.querySelectorAll('button')].find(element => element.textContent === label);
+    const button = host.querySelector(`button[aria-label="${label}"]`) || [...host.querySelectorAll('button')].find(element => element.textContent === label);
     assert.ok(button, `Missing ${label}`);
     await act(async () => { (button as unknown as { click: () => void }).click(); });
   };
@@ -105,15 +111,22 @@ test('mounted shell preserves navigation and sign-in without exposing Overview o
     assert.equal(host.querySelector('[aria-current="page"]')?.getAttribute('aria-label'), 'Scan Buddy');
     await click('Watchtower');
     assert.equal(host.querySelector('[aria-current="page"]')?.getAttribute('aria-label'), 'Watchtower');
+    await click('Overview');
+    assert.equal(host.querySelector('[aria-current="page"]')?.getAttribute('aria-label'), 'Overview');
     await click('Collapse navigation');
     assert.ok(host.querySelector('.studio-sidebar.is-collapsed'));
      await click('Dashboard');
      assert.equal(host.querySelector('[aria-current="page"]')?.getAttribute('aria-label'), 'Dashboard');
-    await click('Hide navigation');
+     await click('Expand navigation');
+     await click('Additional tools');
+     assert.equal(host.querySelector('button[aria-label="Additional tools"]')?.getAttribute('aria-expanded'), 'true');
+     assert.ok(host.querySelector('[aria-label="Locked additional tools"]'));
+     assert.equal(host.querySelector('[aria-label="Locked additional tools"] button'), null);
+     await click('Hide navigation');
     assert.equal(host.querySelector('aside'), null);
     await click('Show navigation');
-     assert.equal(host.querySelector('[aria-label="Search locations"]'), null);
-     assert.equal(host.querySelector('[aria-label="Overview"]'), null);
+    await click('Overview');
+    assert.equal(host.querySelector('[aria-label="Overview"]')?.getAttribute('aria-current'), 'page');
     await click('Sign in');
     assert.ok(host.querySelector('[aria-label="Users"]'));
     assert.match(host.textContent, /Admin/);

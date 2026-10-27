@@ -93,7 +93,7 @@ mod tests {
     }
     #[test] fn bounds_and_empty_are_safe() {
         let empty = build(&[]); assert!(empty.conversations.is_empty()); assert_eq!(empty.generated_from_packets, 0);
-        let mut ps = Vec::new(); for i in 0..600 { let mut p = analyze(vec![crate::services::buddy_engine::Frame { number: i + 1, timestamp: None, link: 999, wire_len: 1500, data: vec![] }]); ps.extend(p); }
+        let mut ps = Vec::new(); for i in 0..600 { let p = analyze(vec![crate::services::buddy_engine::Frame { number: i + 1, timestamp: None, link: 999, wire_len: 1500, data: vec![] }]); ps.extend(p); }
         let model = build(&ps); assert!(model.timeline.len() <= MAX_TIMELINE); assert!(model.anomalies.len() <= MAX_ANOMALIES); assert!(model.conversations.len() <= MAX_CONVERSATIONS);
     }
 }

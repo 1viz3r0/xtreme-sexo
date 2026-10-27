@@ -3,6 +3,7 @@ import { invoke } from '@tauri-apps/api/core'
 import { isTauriEnvironment } from '../services/tauri/isTauri'
 import { captureDurationError, captureBuddyMasteryStepAt, CAPTURE_BUDDY_MASTERY_STEPS } from '../lib/captureBuddyMastery'
 import { awardLabBadge } from '../lib/labBadges'
+import { CaptureWorkflow, type CaptureToken } from './captureWorkflow'
 
 export interface CaptureBuddyEngineStatus { available: boolean; detail: string; live_capture_blocked: boolean; capture_guidance: string | null; visibility_scope: string; visibility_note: string }
 export interface CaptureBuddySession { session_id: string; path: string; running: boolean; bytes: number }
@@ -12,6 +13,7 @@ export interface CaptureBuddyMiniPanelService {
   interfaces: () => Promise<string[]>
   start: (input: { interface: string; durationSeconds: number }) => Promise<CaptureBuddySession>
   stop: (sessionId: string) => Promise<void>
+  close: (sessionId: string) => Promise<void>
   status: (sessionId: string) => Promise<CaptureBuddySession>
   brief: (sessionId: string) => Promise<CaptureBuddyBrief>
 }
@@ -21,6 +23,7 @@ const nativeService: CaptureBuddyMiniPanelService = {
   interfaces: () => invoke<string[]>('buddy_interfaces'),
   start: input => invoke<CaptureBuddySession>('buddy_start', { interface: input.interface, captureFilter: '', durationSeconds: input.durationSeconds, promiscuous: false, direction: 'inout', snapshotLength: 65535, maxBytes: 4 * 1024 * 1024, maxPackets: 5000 }),
   stop: sessionId => invoke('buddy_stop', { sessionId }),
+  close: sessionId => invoke('buddy_close', { sessionId }),
   status: sessionId => invoke<CaptureBuddySession>('buddy_session_status', { sessionId }),
   brief: sessionId => invoke<CaptureBuddyBrief>('buddy_investigation_brief', { sessionId }),
 }
@@ -41,14 +44,77 @@ export function CaptureBuddyMiniPanel({ service = nativeService, available = isT
   const [brief, setBrief] = useState<CaptureBuddyBrief | null>(null)
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [workflow] = useState(() => new CaptureWorkflow())
+  const [pollRevision, setPollRevision] = useState(0)
+  const sessionId = session?.session_id
   const durationError = captureDurationError(duration)
+  useEffect(() => {
+    workflow.mount()
+    return () => {
+      const id = workflow.unmount()
+      if (id) void service.close(id).catch(console.error)
+    }
+  }, [workflow, service])
   useEffect(() => {
     if (!available) return
     let cancelled = false
-    void service.engineStatus().then(value => { if (!cancelled) { setEngine(value); if (value.available) void service.interfaces().then(items => { if (!cancelled) { setInterfaces(items); setIface(items[0]?.split('.')[0] ?? '') } }) } }).catch(value => { if (!cancelled) setError(String(value)) })
+    void (async () => {
+      const value = await service.engineStatus()
+      if (cancelled) return
+      setEngine(value)
+      if (value.available) {
+        const items = await service.interfaces()
+        if (!cancelled) { setInterfaces(items); setIface(items[0]?.split('.')[0] ?? '') }
+      }
+    })().catch(value => { if (!cancelled) setError(String(value)) })
     return () => { cancelled = true }
   }, [available, service])
-  const run = async (operation: () => Promise<void>) => { setBusy(true); setError(null); try { await operation() } catch (value) { setError(value instanceof Error ? value.message : String(value)) } finally { setBusy(false) } }
+  useEffect(() => {
+    if (!sessionId) return
+    let cancelled = false
+    let timer: ReturnType<typeof setTimeout> | undefined
+    const token = workflow.token('view')
+    const current = () => !cancelled && workflow.current(token)
+    const poll = () => workflow.serialPoll(current, async () => {
+      let repeat = false
+      try {
+        const value = await service.status(sessionId)
+        if (current()) { setSession(value); repeat = value.running }
+      } catch (value) {
+        if (current()) {
+          setError(String(value))
+          // Native diagnostics are consumed once; reconcile the terminal state.
+          try {
+            const value = await service.status(sessionId)
+            if (current()) { setSession(value); repeat = value.running }
+          } catch { repeat = false }
+        }
+      } finally { if (current() && repeat) timer = setTimeout(poll, 1000) }
+    })
+    void poll()
+    return () => { cancelled = true; clearTimeout(timer) }
+  }, [sessionId, pollRevision, service, workflow])
+  const run = async (operation: (token: CaptureToken) => Promise<void>) => {
+    const release = workflow.acquireAction()
+    if (!release) return
+    const token = workflow.token()
+    setBusy(true); setError(null)
+    try { await operation(token) }
+    catch (value) { if (workflow.current(token)) setError(value instanceof Error ? value.message : String(value)) }
+    finally { release(); if (workflow.currentLifetime(token)) setBusy(false) }
+  }
+  const start = async (token: CaptureToken) => {
+    const value = await service.start({ interface: iface, durationSeconds: Number(duration) })
+    if (!workflow.current(token)) { await service.close(value.session_id); return }
+    const previous = workflow.sessionId
+    if (previous) {
+      try { await service.close(previous) }
+      catch (error) { await service.close(value.session_id); throw error }
+    }
+    if (!workflow.current(token)) { await service.close(value.session_id); return }
+    workflow.setSession(value.session_id)
+    setSession(value); setBrief(null)
+  }
   const running = session?.running === true
   const ready = available && engine?.available === true && !engine.live_capture_blocked && !!iface && !durationError && authorized
   useEffect(() => { if (brief) awardLabBadge('capture-buddy-challenge', profileScope) }, [brief, profileScope])
@@ -61,8 +127,18 @@ export function CaptureBuddyMiniPanel({ service = nativeService, available = isT
       {durationError && <p role="alert" className="text-xs text-amber-200">{durationError}</p>}
       <p className="text-xs leading-5 text-slate-500">{engine?.visibility_scope ?? 'Selected local interface'}. {engine?.visibility_note ?? 'Only traffic delivered to the selected interface is eligible.'}</p>
       <label className="flex gap-2 rounded-lg border border-slate-700 bg-white/5 p-3 text-xs text-slate-300"><input type="checkbox" checked={authorized} onChange={event => setAuthorized(event.target.checked)} disabled={!available || running || busy} className="mt-0.5" />I have explicit authorization to observe this interface for this bounded capture.</label>
-      <div className="flex gap-2"><button className={`${button} flex-1 bg-white text-slate-950`} disabled={!ready || busy || running} onClick={() => void run(async () => setSession(await service.start({ interface: iface, durationSeconds: Number(duration) })))}>{busy ? 'Working…' : 'Start bounded capture'}</button>{running && <button className={button} disabled={busy} onClick={() => void run(async () => { await service.stop(session.session_id); setSession(await service.status(session.session_id)) })}>Finish capture</button>}</div>
-      {!running && session && <button className={`${button} w-full`} disabled={busy || session.bytes === 0} onClick={() => void run(async () => setBrief(await service.brief(session.session_id)))}>Build evidence brief</button>}
+      <div className="flex gap-2"><button className={`${button} flex-1 bg-white text-slate-950`} disabled={!ready || busy || running} onClick={() => void run(start)}>{busy ? 'Working…' : 'Start bounded capture'}</button>{running && <button className={button} disabled={busy} onClick={() => void run(async token => {
+        workflow.invalidateView()
+        try {
+          await service.stop(session.session_id)
+          const value = await service.status(session.session_id)
+          if (workflow.current(token)) setSession(value)
+        } finally { if (workflow.current(token)) setPollRevision(value => value + 1) }
+      })}>Finish capture</button>}</div>
+      {!running && session && <button className={`${button} w-full`} disabled={busy || session.bytes === 0} onClick={() => void run(async token => {
+        const value = await service.brief(session.session_id)
+        if (workflow.current(token)) setBrief(value)
+      })}>Build evidence brief</button>}
       {error && <p role="alert" className="rounded-lg border border-slate-700 p-2 text-xs text-slate-200">{error}</p>}
       {session && <p role="status" className="text-xs text-slate-400">Native session: {running ? 'recording' : 'ready for review'} · {session.bytes.toLocaleString()} bytes</p>}
        <section aria-label="Observe in the live panel" className="rounded-lg border border-slate-700 bg-white/[.03] p-3 text-xs"><h3 className="font-semibold text-white">Observe in the live panel</h3>{!available && <p className="mt-1 leading-5 text-slate-400">Browser mode has no native capture source. There are no packets, interfaces, or readiness claims to observe here.</p>}{available && !engine && <p className="mt-1 leading-5 text-slate-400">Checking native engine readiness…</p>}{available && engine && <ul className="mt-2 space-y-1 text-slate-400"><li>Engine: <span className="text-slate-200">{engine.available ? 'available' : 'unavailable'}</span></li><li>Scope: <span className="text-slate-200">{engine.visibility_scope}</span></li><li>{engine.visibility_note}</li>{engine.capture_guidance && <li>{engine.capture_guidance}</li>}</ul>}{session && <p className="mt-2 text-slate-300">Native session is {running ? 'recording' : 'stopped'} with {session.bytes.toLocaleString()} captured bytes.</p>}</section>

@@ -1,6 +1,6 @@
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { Search, X, Globe2, MapPin, Building2 } from 'lucide-react';
-import { searchGeoCached, debounce, type GeoSearchResult } from '../lib/geoSearch';
+import { searchGeoCached, type GeoSearchResult } from '../lib/geoSearch';
 
 interface SearchModalProps {
   isOpen: boolean;
@@ -18,8 +18,7 @@ export const SearchModal: React.FC<SearchModalProps> = ({ isOpen, onClose, onSel
   const [query, setQuery] = useState('');
   const [results, setResults] = useState<GeoSearchResult[]>([]);
   const [searching, setSearching] = useState(false);
-  const seqRef = useRef(0);
-  const queryRef = useRef('');
+  const [searchError, setSearchError] = useState<string | null>(null);
 
   useEffect(() => {
     if (!isOpen) return;
@@ -27,32 +26,30 @@ export const SearchModal: React.FC<SearchModalProps> = ({ isOpen, onClose, onSel
     setResults([]);
   }, [isOpen]);
 
-  const runSearch = useRef(
-    debounce(async () => {
-      const q = queryRef.current.trim();
-      const seq = ++seqRef.current;
-      if (q.length < 2) {
-        setResults([]);
-        setSearching(false);
-        return;
-      }
-      setSearching(true);
-      const res = await searchGeoCached(q, 12);
-      if (seq === seqRef.current) {
-        setResults(res);
-        setSearching(false);
-      }
-    }, 220)
-  ).current;
-
   useEffect(() => {
     if (!isOpen) return;
-    queryRef.current = query;
-    runSearch();
+    let cancelled = false;
+    const q = query.trim();
+    setResults([]);
+    setSearchError(null);
+    setSearching(q.length >= 2);
+    if (q.length < 2) return;
+    const timer = setTimeout(() => {
+      void searchGeoCached(q, 12).then((res) => {
+        if (cancelled) return;
+        setResults(res);
+        setSearching(false);
+      }, () => {
+        if (cancelled) return;
+        setSearchError('Geographic search is unavailable. Try again.');
+        setSearching(false);
+      });
+    }, 220);
     return () => {
-      seqRef.current++;
+      cancelled = true;
+      clearTimeout(timer);
     };
-  }, [query, isOpen, runSearch]);
+  }, [query, isOpen]);
 
   if (!isOpen) return null;
 
@@ -88,6 +85,8 @@ export const SearchModal: React.FC<SearchModalProps> = ({ isOpen, onClose, onSel
               Type at least 2 characters — suggestions resolve against the bundled geographic dataset
               (Natural Earth 10m + world-countries).
             </div>
+          ) : searchError ? (
+            <div role="alert" className="text-center py-8 text-amber-300">{searchError}</div>
           ) : searching && results.length === 0 ? (
             <div className="text-center py-8 text-cyan-400 animate-pulse">SEARCHING…</div>
           ) : results.length === 0 ? (

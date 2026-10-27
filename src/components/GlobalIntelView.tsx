@@ -10,9 +10,7 @@ import { getGlobalIntelSnapshot, type GlobalIntelSnapshot } from '../services/ta
 import { isTauriEnvironment } from '../services/tauri/isTauri';
 import type { GeoIpEntry, ThreatMatchEntry } from '../services/tauri/intel';
 import { getPcapInterfaces, startPacketCapture, stopPacketCapture, type NpcapInterface } from '../services/tauri/capture';
-import { getDetailedSystemInfo, type DetailedSystemInfo } from '../services/tauri/system';
-import { getDetailedNetworkInterfaces, type DetailedAdapterInfo } from '../services/tauri/network';
-import { OverviewSummary } from './OverviewSummary';
+import { captureIsRunning } from '../lib/captureBuddyPresentation';
 
 interface GlobalIntelViewProps {
   selectedNode: LocationNode | null;
@@ -45,8 +43,6 @@ export const GlobalIntelView: React.FC<GlobalIntelViewProps> = ({
   const [selectedCountry, setSelectedCountry] = useState<CountryGeo | null>(null);
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [interfaces, setInterfaces] = useState<NpcapInterface[]>([]);
-  const [systemInfo, setSystemInfo] = useState<DetailedSystemInfo | null>(null);
-  const [networkInfo, setNetworkInfo] = useState<DetailedAdapterInfo[] | null>(null);
   const [selectedFinding, setSelectedFinding] = useState<string | null>(null);
   const [selectedInterface, setSelectedInterface] = useState('');
   const [captureActionError, setCaptureActionError] = useState<string | null>(null);
@@ -165,11 +161,14 @@ export const GlobalIntelView: React.FC<GlobalIntelViewProps> = ({
         }
       }
     };
+    const onVisible = () => { if (document.visibilityState !== 'hidden') void refresh(); };
+    document.addEventListener('visibilitychange', onVisible);
     refreshRef.current = () => { void refresh(); };
     void refresh();
     return () => {
       cancelled = true;
       clearTimeout(timer);
+      document.removeEventListener('visibilitychange', onVisible);
       refreshRef.current = () => {};
     };
   }, [desktopAvailable]);
@@ -182,16 +181,6 @@ export const GlobalIntelView: React.FC<GlobalIntelViewProps> = ({
       setInterfaces(items);
       setSelectedInterface((current) => current || items.find((item) => !item.is_loopback)?.id || items[0]?.id || '');
     }).catch((error) => setCaptureActionError(error instanceof Error ? error.message : String(error)));
-  }, [desktopAvailable]);
-
-  // One bounded passive host read; never scans, captures, or calls external GeoIP.
-  useEffect(() => {
-    if (!desktopAvailable) return;
-    let cancelled = false;
-    Promise.all([getDetailedSystemInfo(), getDetailedNetworkInterfaces()]).then(([system, network]) => {
-      if (!cancelled) { setSystemInfo(system); setNetworkInfo(network); }
-    }).catch(() => { if (!cancelled) setNetworkInfo(null); });
-    return () => { cancelled = true; };
   }, [desktopAvailable]);
 
   const handleCaptureAction = async () => {
@@ -335,7 +324,8 @@ export const GlobalIntelView: React.FC<GlobalIntelViewProps> = ({
   };
 
   const connState = refreshError ? 'STALE' : connectivity?.state || 'UNAVAILABLE';
-  const captureRunning = captureIsRunning(captureStatus);
+  const captureRunning = captureIsRunning(metrics?.status ?? captureStatus);
+  const captureStopping = metrics?.status === 'STOPPING';
   const avgRtt = summary?.avg_rtt_ms ?? 0;
   const emptyAlertMessage = !desktopAvailable ? 'Alerts unavailable in browser mode'
     : refreshError ? 'Alerts unavailable — snapshot refresh failed'
@@ -354,45 +344,19 @@ export const GlobalIntelView: React.FC<GlobalIntelViewProps> = ({
           ? 'No observed endpoints with coordinates in this session.'
           : null;
   return (
-    <div className="flex min-h-0 flex-1 flex-col overflow-hidden bg-[#050505] font-mono text-slate-200">
-      <OverviewSummary system={systemInfo} interfaces={networkInfo} snapshot={snapshot} unavailable={!desktopAvailable ? 'Native desktop required' : refreshError ? 'Snapshot stale' : null} onNavigate={setActiveTab} />
-      <div className="flex items-center justify-between gap-3 border-b border-[#292929] bg-[#090909] px-3 py-2 text-[10px] text-slate-500 sm:px-4">
-        <span>{snapshot ? `CURRENT SESSION · ${new Date(snapshot.collected_at).toLocaleTimeString()}` : !desktopAvailable ? 'BROWSER MODE · LOCAL TELEMETRY UNAVAILABLE' : refreshError ? 'LAST SNAPSHOT RETAINED · REFRESH FAILED' : 'LOADING NATIVE SNAPSHOT'}</span>
-        <button type="button" onClick={handleRefresh} disabled={!desktopAvailable || isRefreshing} className="border border-[#525252] px-2 py-1 text-slate-200 hover:bg-[#252525] disabled:cursor-not-allowed disabled:opacity-50">{isRefreshing ? 'REFRESHING…' : desktopAvailable ? 'REFRESH' : 'REFRESH UNAVAILABLE'}</button>
-      </div>
-      <div className="grid min-h-0 flex-1 grid-cols-12 gap-3 overflow-y-auto p-3 sm:p-4">
-        <section className="col-span-12 flex min-h-[620px] min-w-0 flex-col overflow-hidden border border-[#292929] bg-[#0b0b0b] xl:col-span-9" aria-labelledby="map-title">
-          <header className="flex flex-wrap items-center justify-between gap-3 border-b border-[#292929] px-3 py-2">
-            <div><h2 id="map-title" className="text-xs tracking-[0.18em] text-white">GOD'S EYE / LIVE EARTH</h2><p className="mt-1 text-[10px] text-slate-500">Native endpoints and active flows over bundled reference geography.</p></div>
-            <div className="flex items-center gap-2 text-[10px]"><span className="text-slate-500">{globeNodes.length} endpoints · {locationNodes.length} active destinations</span><button type="button" onClick={() => setIsAutoRotate(!isAutoRotate)} className="border border-[#525252] px-2 py-1 text-slate-200 hover:bg-[#252525]">ROTATION: {isAutoRotate ? 'ON' : 'OFF'}</button></div>
-          </header>
-          <div className="relative min-h-[560px] flex-1">
-            <Globe3D nodes={globeNodes} selectedNode={selectedNode} selectedCountry={selectedCountry} onSelectNode={(node) => { setSelectedCountry(null); setSelectedNode(node); setIsDetailPanelOpen(true); }} onSelectCountry={(country) => { setSelectedNode(null); setSelectedCountry(country); setIsDetailPanelOpen(true); }} isAutoRotate={isAutoRotate} hub={hubInfo && hasCoordinates(hubInfo) ? { lat: hubInfo.latitude, lng: hubInfo.longitude } : null} captureStatus={captureStatus} captureMetrics={captureMetrics} activeFlows={locationNodes} />
-            {globeMessage && !selectedCountry && <div className="pointer-events-none absolute inset-x-0 top-16 z-10 flex justify-center"><div role="status" className="max-w-md border border-[#525252] bg-black/80 px-4 py-2 text-center text-[11px] text-slate-400">{globeMessage}</div></div>}
-            {isDetailPanelOpen && (selectedNode || selectedCountry) && <CountryDetailPanel node={selectedNode} country={selectedCountry} vector={countryVector} regions={regions} selectedRegion={selectedRegion} onSelectRegion={setSelectedRegion} connectivity={connectivity} stats={selectedCountry ? countryStatsFor(selectedCountry.iso) : null} onClose={() => setIsDetailPanelOpen(false)} topOffset={selectedCountry ? '3.4rem' : '0.75rem'} />}
-            <SearchModal isOpen={isSearchOpen} onClose={() => setIsSearchOpen(false)} onSelectGeo={handleSelectGeo} />
-          </div>
-        </section>
-
-        <aside className="col-span-12 flex min-w-0 flex-col gap-3 xl:col-span-3" aria-label="God's Eye controls and signals">
-          <section className="border border-[#292929] bg-[#0b0b0b] p-3">
-            <div className="flex items-center justify-between"><h2 className="text-[10px] tracking-[0.16em] text-slate-400">CAPTURE CONTROL</h2><span className={captureRunning ? 'text-emerald-300' : 'text-slate-500'}>{captureStatus}</span></div>
-            <div className="mt-2 flex gap-2"><select value={selectedInterface} onChange={(e) => setSelectedInterface(e.target.value)} disabled={!desktopAvailable || captureRunning || captureActionBusy} aria-label="Capture interface" className="min-w-0 flex-1 border border-[#525252] bg-[#111111] px-2 py-1 text-[10px]"><option value="">No interface available</option>{interfaces.map((item) => <option key={item.id} value={item.id}>{item.name || item.id}</option>)}</select><button type="button" onClick={() => void handleCaptureAction()} disabled={!desktopAvailable || captureActionBusy || (!captureRunning && !selectedInterface)} className="border border-[#525252] px-2 py-1 text-[10px] text-white hover:bg-[#252525] disabled:opacity-40">{captureActionBusy ? 'WORKING…' : captureRunning ? 'STOP' : 'START'}</button></div>
-            {captureActionError && <p className="mt-2 text-[10px] text-rose-300">{captureActionError}</p>}
-            <div className="mt-3 grid grid-cols-3 gap-2 border-t border-[#292929] pt-2 text-center text-[10px]"><span>PACKETS<br/><b className="text-white">{metrics?.packets_captured ?? '—'}</b></span><span>DROPPED<br/><b className="text-white">{metrics?.dropped_packets ?? '—'}</b></span><span>FLOWS<br/><b className="text-white">{summary?.active_flows_count ?? '—'}</b></span></div>
-          </section>
-
-          <section className="border border-[#292929] bg-[#0b0b0b] p-3">
-            <div className="flex items-center justify-between"><h2 className="text-[10px] tracking-[0.16em] text-slate-400">OBSERVED SIGNALS</h2><span className="text-[10px] text-slate-500">{connState}</span></div>
-            <div className="mt-3 grid grid-cols-2 gap-2 text-[10px]"><div className="border border-[#292929] p-2"><span className="text-slate-500">RTT</span><p className="mt-1 text-white">{avgRtt > 0 ? `${avgRtt.toFixed(1)} ms` : '—'}</p></div><div className="border border-[#292929] p-2"><span className="text-slate-500">THREAT FEED</span><p className="mt-1 text-white">{threatStatus?.feed_state || '—'}</p></div><div className="border border-[#292929] p-2"><span className="text-slate-500">FINDINGS</span><p className="mt-1 text-white">{snapshot ? sev.total_findings_count : '—'}</p></div><div className="border border-[#292929] p-2"><span className="text-slate-500">HIGH+</span><p className="mt-1 text-white">{snapshot ? sev.critical_count + sev.high_count : '—'}</p></div></div>
-          </section>
-
-          <section className="min-h-0 flex-1 border border-[#292929] bg-[#0b0b0b] p-3">
-            <div className="flex items-center justify-between"><h2 className="text-[10px] tracking-[0.16em] text-slate-400">CONTACTS</h2><span className="text-[10px] text-slate-500">click to track</span></div>
-            <div className="mt-2 flex max-h-64 flex-col gap-1 overflow-y-auto">{globeNodes.length ? globeNodes.slice(0, 24).map((node) => <button type="button" key={node.id} onClick={() => { setSelectedCountry(null); setSelectedNode(node); setIsDetailPanelOpen(true); }} className="border border-[#292929] bg-[#111111] p-2 text-left text-[10px] hover:bg-[#252525]"><span className="block truncate text-white">{node.name}</span><span className="mt-1 block text-slate-500">{node.ip} · {node.activeFlowsCount} flows · {node.threatLevel}</span></button>) : <p className="text-[10px] text-slate-500">{!desktopAvailable ? 'Native endpoint telemetry unavailable.' : refreshError ? 'Last endpoint snapshot is stale.' : 'No geolocated contacts in this session.'}</p>}</div>
-          </section>
-
-          <section className="border border-[#292929] bg-[#0b0b0b] p-3"><div className="flex items-center justify-between"><h2 className="text-[10px] tracking-[0.16em] text-slate-400">RECENT FINDINGS</h2><button type="button" onClick={() => setActiveTab('watchtower')} className="text-[10px] text-slate-300 hover:underline">WATCHTOWER →</button></div><div className="mt-2 flex flex-col gap-1">{recentFindings.length ? recentFindings.map((alert) => <button type="button" key={alert.finding_id} onClick={() => setSelectedFinding(selectedFinding === alert.finding_id ? null : alert.finding_id)} className="border border-[#292929] bg-[#111111] p-2 text-left text-[10px] hover:bg-[#252525]"><span className="text-white">{alert.severity} · {alert.title}</span><span className="mt-1 block text-slate-500">{alert.source_ip} → {alert.destination_ip}</span>{selectedFinding === alert.finding_id && <span className="mt-1 block text-slate-300">{alert.evidence || 'No evidence text reported.'}</span>}</button>) : <span className="text-slate-500">{emptyAlertMessage}</span>}</div></section>
+    <div className="enterprise-overview">
+      <header className="enterprise-overview-header">
+         <div><p className="enterprise-kicker">NET0ZE / OPERATIONS</p><h1>Overview</h1><p>One calm surface for what this node can actually observe.</p></div>
+        <div className="enterprise-overview-actions"><span className={`enterprise-status-chip ${desktopAvailable && !refreshError ? 'is-ready' : ''}`}>{snapshot ? `Snapshot · ${new Date(snapshot.collected_at).toLocaleTimeString()}` : !desktopAvailable ? 'BROWSER MODE · LOCAL TELEMETRY UNAVAILABLE' : refreshError ? 'Snapshot stale' : 'LOADING NATIVE SNAPSHOT'}</span><button type="button" onClick={handleRefresh} disabled={!desktopAvailable || isRefreshing} className="enterprise-secondary-button">{isRefreshing ? 'Refreshing…' : desktopAvailable ? 'Refresh snapshot' : 'Refresh unavailable'}</button></div>
+      </header>
+      <div className="enterprise-overview-metrics"><div><span>Endpoints</span><strong>{globeNodes.length}</strong><small>Observed with coordinates</small></div><div><span>Active destinations</span><strong>{locationNodes.length}</strong><small>Only while capture is running</small></div><div><span>Findings</span><strong>{snapshot ? sev.total_findings_count : '—'}</strong><small>Loaded session evidence</small></div><div><span>High+</span><strong>{snapshot ? sev.critical_count + sev.high_count : '—'}</strong><small>Not a risk score</small></div><div><span>Connectivity</span><strong>{connState}</strong><small>{avgRtt > 0 ? `${avgRtt.toFixed(1)} ms observed RTT` : 'No RTT reported'}</small></div></div>
+      <div className="enterprise-overview-grid">
+         <section className="enterprise-map-card" aria-labelledby="map-title"><div className="enterprise-card-heading"><div><p className="enterprise-kicker">01 · OBSERVE</p><h2 id="map-title">Observed geography</h2><p>Observed endpoints and active flows over bundled reference geography.</p></div><div className="enterprise-card-actions"><button type="button" onClick={() => setIsSearchOpen(true)} aria-label="Search locations" className="enterprise-secondary-button">Search <span>⌘/CTRL+K</span></button><button type="button" onClick={() => setIsAutoRotate(!isAutoRotate)} className="enterprise-secondary-button">Rotation {isAutoRotate ? 'on' : 'off'}</button></div></div><div className="enterprise-map-stage"><Globe3D nodes={globeNodes} selectedNode={selectedNode} selectedCountry={selectedCountry} onSelectNode={(node) => { setSelectedCountry(null); setSelectedNode(node); setIsDetailPanelOpen(true); }} onSelectCountry={(country) => { setSelectedNode(null); setSelectedCountry(country); setIsDetailPanelOpen(true); }} isAutoRotate={isAutoRotate} hub={hubInfo && hasCoordinates(hubInfo) ? { lat: hubInfo.latitude, lng: hubInfo.longitude } : null} captureStatus={captureStatus} captureMetrics={captureMetrics} activeFlows={locationNodes} />{globeMessage && !selectedCountry && <div className="enterprise-map-message" role="status">{globeMessage}</div>}{isDetailPanelOpen && (selectedNode || selectedCountry) && <CountryDetailPanel node={selectedNode} country={selectedCountry} vector={countryVector} regions={regions} selectedRegion={selectedRegion} onSelectRegion={setSelectedRegion} connectivity={connectivity} stats={selectedCountry ? countryStatsFor(selectedCountry.iso) : null} onClose={() => setIsDetailPanelOpen(false)} topOffset={selectedCountry ? '3.4rem' : '0.75rem'} />}<SearchModal isOpen={isSearchOpen} onClose={() => setIsSearchOpen(false)} onSelectGeo={handleSelectGeo} /></div></section>
+        <aside className="enterprise-overview-rail" aria-label="Overview controls and signals">
+          <section aria-label="CAPTURE CONTROL" className="enterprise-control-card"><div className="enterprise-card-heading"><div><p className="enterprise-kicker">02 · CONTROL</p><h2>Capture control</h2></div><span className={captureRunning ? 'enterprise-state-good' : 'enterprise-muted'}>{captureStatus}</span></div><div className="enterprise-control-row"><select value={selectedInterface} onChange={(e) => setSelectedInterface(e.target.value)} disabled={!desktopAvailable || captureRunning || captureStopping || captureActionBusy} aria-label="Capture interface"><option value="">No interface available</option>{interfaces.map((item) => <option key={item.id} value={item.id}>{item.name || item.id}</option>)}</select><button type="button" onClick={() => void handleCaptureAction()} disabled={!desktopAvailable || captureActionBusy || captureStopping || (!captureRunning && !selectedInterface)} className="enterprise-primary-button">{captureActionBusy ? 'WORKING…' : captureStopping ? 'STOPPING…' : captureRunning ? 'STOP' : 'START'}</button></div>{captureStopping && <p role="status" className="enterprise-help-text">Finishing the previous capture and its final persistence before restart.</p>}{captureActionError && <p className="enterprise-error-text">{captureActionError}</p>}<div className="enterprise-control-metrics"><span><strong>{metrics?.packets_captured ?? '—'}</strong>Packets</span><span><strong>{metrics?.dropped_packets ?? '—'}</strong>Dropped</span><span><strong>{summary?.active_flows_count ?? '—'}</strong>Flows</span></div></section>
+          <section className="enterprise-control-card"><div className="enterprise-card-heading"><div><p className="enterprise-kicker">03 · SIGNAL</p><h2>Observed signals</h2></div><span className="enterprise-muted">{threatStatus?.feed_state || 'Unavailable'}</span></div><div className="enterprise-signal-list"><div><span>RTT</span><strong>{avgRtt > 0 ? `${avgRtt.toFixed(1)} ms` : '—'}</strong></div><div><span>Threat feed</span><strong>{threatStatus?.feed_state || '—'}</strong></div><div><span>Scope</span><strong>{snapshot?.scope || 'Local session'}</strong></div></div></section>
+          <section className="enterprise-control-card enterprise-contacts-card"><div className="enterprise-card-heading"><div><p className="enterprise-kicker">04 · CONTACTS</p><h2>Observed endpoints</h2></div><span className="enterprise-muted">Select to track</span></div><div className="enterprise-contact-list">{globeNodes.length ? globeNodes.slice(0, 12).map((node) => <button type="button" key={node.id} onClick={() => { setSelectedCountry(null); setSelectedNode(node); setIsDetailPanelOpen(true); }}><span>{node.name}</span><small>{node.ip} · {node.activeFlowsCount} flows · {node.threatLevel}</small></button>) : <p className="enterprise-empty">{!desktopAvailable ? 'Native endpoint telemetry unavailable.' : refreshError ? 'Last endpoint snapshot is stale.' : 'No geolocated contacts in this session.'}</p>}</div></section>
+          <section className="enterprise-control-card"><div className="enterprise-card-heading"><div><p className="enterprise-kicker">05 · REVIEW</p><h2>Recent findings</h2></div><button type="button" onClick={() => setActiveTab('watchtower')} className="enterprise-text-button">Watchtower →</button></div><div className="enterprise-finding-list">{recentFindings.length ? recentFindings.map((alert) => <button type="button" key={alert.finding_id} onClick={() => setSelectedFinding(selectedFinding === alert.finding_id ? null : alert.finding_id)}><strong>{alert.severity} · {alert.title}</strong><small>{alert.source_ip} → {alert.destination_ip}</small>{selectedFinding === alert.finding_id && <span>{alert.evidence || 'No evidence text reported.'}</span>}</button>) : <span className="enterprise-empty">{emptyAlertMessage}</span>}</div></section>
         </aside>
       </div>
     </div>
@@ -421,9 +385,4 @@ function nodeSeverity(severity: string): LocationNode['status'] {
     case 'MEDIUM': return 'medium';
     default: return 'low';
   }
-}
-
-/** Capture engines have used both RUNNING and LIVE for the active state. */
-export function captureIsRunning(status: string): boolean {
-  return status === 'RUNNING' || status === 'LIVE';
 }

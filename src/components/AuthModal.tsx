@@ -94,7 +94,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({ isOpen, onClose, onLoginSu
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 backdrop-blur-sm">
+    <div className="enterprise-auth fixed inset-0 z-50 flex items-center justify-center bg-black/70 backdrop-blur-sm">
       <div className="w-full max-w-md rounded-2xl border-2 border-cyan-800/60 bg-slate-950 p-6 shadow-[0_0_40px_rgba(34,211,238,0.15)]">
         <div className="mb-5 flex items-start justify-between">
           <div className="flex items-center gap-3">

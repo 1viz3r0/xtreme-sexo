@@ -235,3 +235,254 @@ No backend source was edited during this pass. The hashes of
 `labs/web-exposure/server.py`, and `labs/web-exposure/Dockerfile` matched the
 pre-build snapshot. Visual confirmation in the host Hyprland window remains
 unavailable from this worker session.
+
+## 2026-10-24 Ponytail dead-code cleanup
+
+Starting revision: `34490da`. Existing and concurrent UI/test edits were preserved;
+this cleanup is not a commit or a release rebuild.
+
+Removed after import/reference checks, including tests and lazy imports:
+
+- Unreachable UI: `ConversationTable.tsx`, `CountryMapView.tsx`, `HybridIntel.tsx`.
+- Unreachable Tauri adapters/barrel: `capabilities.ts`, `database.ts`,
+  `forensics.ts`, `index.ts`, `ja4.ts`, `system_inspector.ts` under
+  `src/services/tauri/`. Native command registration and implementations remain.
+- Unimported starter `src/App.css` and unregistered Rust `src-tauri/src/db.rs` shim.
+- Unused SVG projection helpers, formatter/alias, shadowed geo cache declarations,
+  unused component callbacks and an unused Field Guide argument (callers updated).
+- Unread private lab-run field, obsolete TCP state table/dummy helper, unused
+  SQLite import, unused direction-to-string conversion, and redundant test `mut`.
+- Seven retired Express-backend dependencies: `bcryptjs`, `cors`, `dotenv`,
+  `express`, `jsonwebtoken`, `mongoose`, `nodemailer`. Refreshed the npm lockfile;
+  no previously locked package versions changed. npm also filled in six optional
+  Tailwind WASM dependency records while resolving the existing lockfile.
+
+Windows-only event-log helpers and the non-Linux PCAP writer were retained with
+matching compile-time platform guards. React default imports were retained:
+although the production TypeScript unused-import check flags some, the current
+`tsx` test runner requires them for JSX. Manual build/debug scripts, assets,
+test-backed helpers, public native APIs, and saved-data formats were not pruned
+merely for lacking frontend callers.
+
+Verification:
+
+- Baseline: 181 frontend/service tests + 13 script tests passed; `tsc -b` passed;
+  lint reported 26 warnings; Rust library tests passed (145, two Docker ignores).
+- Final checkout: `npm test` passed (187 frontend/service + 13 script tests,
+  including concurrently updated tests); `npm run build` passed.
+- `npm run lint`: zero errors, 17 existing non-unused-code warnings remaining.
+- `cargo check --manifest-path src-tauri/Cargo.toml --lib --offline`: passed
+  without warnings. Rust library tests: 145 passed, two existing Docker ignores.
+- Capture-helper option test and auth integration passed; ordinary lab runtime
+  contracts/persistence passed (three); runtime-log integration passed with its
+  required isolated `XDG_DATA_HOME` containing `improvement-test-data`.
+- Seven Python lab suites: 16 tests passed. First Contact and Service Signals
+  emitted existing unclosed-socket ResourceWarnings.
+- TypeScript import reachability rescan: zero unreachable modules among 121
+  scanned modules, using the app entrypoint and tests as roots.
+- `npm ci --dry-run --ignore-scripts --offline --no-audit --no-fund` and
+  `git diff --check`: passed.
+
+The broad native integration run is **not fully passing**: live DNS capture
+failed opening pcap with `socket: Operation not permitted` in this container.
+Docker lifecycle, Windows runtime, and installed host GUI acceptance were not
+rerun. Existing Vite chunk-size/dynamic-import warnings and the capture-helper
+binary's unrelated unused-`mut` warning remain. Next verification belongs on a
+capture-capable native host; no installer, launcher, or release was replaced.
+
+## 2026-10-24 Ponytail warning fixes and verification follow-up
+
+This follows the cleanup above. Unrelated/concurrent edits remain preserved;
+nothing was committed, pushed, installed on the host, or published.
+
+Changes:
+
+- Moved non-component exports into the existing capture presentation, globe
+  geometry, and Overview helper modules; updated callers/tests. Fast Refresh
+  warnings are fixed without disabling rules.
+- Replaced SearchModal's ref/debounce machinery with a cancellable effect and
+  explicit failure state. Failed geographic dataset promises can be retried;
+  tests cover failed loads, latest-query ownership, Enter selection, close,
+  reopen, and unmount. PDF sanitization retains its behavior with a lint-safe
+  regex and an export regression test.
+- Made Tauri core imports consistently static, retaining all existing desktop
+  guards, validation, deadlines, and error paths.
+- Emit full world-country metadata as a bundled local JSON asset loaded with
+  topology on demand. Split Three.js using the existing Rolldown configuration;
+  the largest emitted JavaScript chunk is about 399 kB. No warning threshold was
+  raised and no geography was removed.
+- Closed HTTP server sockets in the First Contact and Service Signals tests.
+- Fixed capture-helper and Windows-only Rust warnings with precise platform/test
+  guards, local initialization, and mutability only where needed. Unix private
+  directory modes and public command contracts are unchanged.
+- Assert the expected WebGL-unavailable console diagnostic and visible fallback
+  in the mounted test; unexpected/non-WebGL diagnostics remain visible.
+
+Actual checks:
+
+- `npm test`: **190 frontend/lib/service + 13 script tests passed**.
+- `npm run lint`: **zero warnings, zero errors** across 136 files.
+- `tsc -b --pretty false` and `npm run build`: passed; production build has no
+  ineffective dynamic-import or oversized-chunk warnings.
+- `cargo check --manifest-path src-tauri/Cargo.toml --lib --bins --offline`:
+  passed without warnings. Cargo commands used `/root/.cargo/bin` on PATH.
+- `cargo test --manifest-path src-tauri/Cargo.toml --lib --bins --offline --
+  --test-threads=1`: 145 library tests and one helper test passed; two existing
+  real-Docker library tests remain ignored.
+- Auth integration: one passed. Ordinary lab contract/persistence integrations:
+  three passed; the real Docker lifecycle integration remains ignored.
+- Runtime-log integration passed with a fresh isolated `XDG_DATA_HOME` whose
+  path contains `improvement-test-data`.
+- All seven Python target suites, run with
+  `PYTHONDONTWRITEBYTECODE=1 python3 -W error::ResourceWarning -m unittest
+  discover -s labs/<room> -p test_target.py -v`: **16 passed, no ResourceWarnings**.
+- `npm ci --dry-run --ignore-scripts --offline --no-audit --no-fund` and
+  `git diff --check`: passed.
+
+Native packaging/rendering evidence:
+
+- Rebuilt the Linux helper, then ran Tauri `build --bundles deb` with the already
+  rebuilt frontend (`beforeBuildCommand: null`). New package:
+  `src-tauri/target/release/bundle/deb/NET0ZE_2.0.0_amd64.deb`, SHA-256
+  `eeee08701b9ee830ea7e0064e520ad164d866fbc83f4cfb8619545cce68df1c7`.
+- `python3 scripts/studio-ui-smoke.py` passed after installing its missing
+  container-only Xvfb/xdotool/ImageMagick dependencies. Inspected
+  `target/studio-ui-smoke/capture-workspace.png`: current God's Eye Overview,
+  native snapshot loaded, and rendered globe. Receipt is
+  `target/studio-ui-smoke/receipt.json`. The script closed its app/display;
+  no capture or scan was started. Generated evidence/private state stays ignored.
+- The production browser preview also rendered the globe and loaded India
+  metadata/regions while honestly labeling native data unavailable. Preview:
+  `http://localhost:4173`. This is not installed-host acceptance.
+- `PATH=/root/.cargo/bin:$PATH node scripts/build-desktop.mjs windows --cross
+  --backend-only` passed using the existing cached cross-toolchain, including a
+  final rebuild with current frontend assets. Installer:
+  `releases/windows/2.0.0-x64/NET0ZE_2.0.0_x64-setup.exe`, SHA-256
+  `d347cfaa198aba8446c4a613695fed6b459548f3adbf8b486174a469e1266905`.
+  The existing build script recorded its attempts/results in
+  `docs/BACKEND_LOGBOOK_IST.md`.
+
+Remaining limits (not hidden or reported as passed):
+
+- Node 22.23.3 emits MockTimers `ExperimentalWarning` in three existing test
+  files. Tests pass; no warning-suppression flag or runtime upgrade was added.
+- Windows source warnings are fixed, but the cached Microsoft runtime libraries
+  lack their referenced PDBs (linker LNK4099). Tauri also reports experimental
+  cross-host building/unsigned installers, and NSIS reports host charset warning
+  5202. These are toolchain/packaging limitations; Windows/WebView2/Npcap runtime
+  and signing were not verified.
+- `cargo test ... --test capture_verify -- --test-threads=1` still **fails** at
+  live pcap open with `socket: Operation not permitted`. Independent AF_PACKET
+  socket creation fails identically. No privilege or isolation control was
+  weakened to disguise the container restriction.
+- Docker CLI/daemon/socket are absent; actual room lifecycle/sandbox acceptance
+  remains unrun here. Do not equate passing Python/contract tests with Docker
+  acceptance. External API/host-journal acceptance was not added to this pass.
+- Installed Ryoku/Hyprland GUI acceptance, full Labs Start/Open/submit/Reset/Stop,
+  and Windows runtime require the corresponding native host. No host launcher,
+  installed package, or AppImage was replaced by these container builds.
+
+## 2026-10-24 complete repair-validation continuation
+
+The worktree is still intentionally uncommitted. Existing unrelated edits and
+deletions were preserved. This continuation integrated and independently
+verified the capture, Labs, auth/storage, forensic-query, dependency, packaging,
+and test-safety repairs described in `docs/NETOZE_REPAIR_VALIDATION_2026-10-24.md`.
+
+### Root causes repaired
+
+- Capture tests could delete ordinary app data; tests now use serialized,
+  disposable storage with a guarded cross-platform `NETOZE_TEST_DATA_HOME`.
+- Linux helper calls dropped capture options and the GUI could bypass the
+  privilege-separated helper; all eight options are forwarded and Linux passive
+  capture reads the helper stream. The helper's check now tests actual protocol-
+  zero socket usability rather than trusting a namespace-scoped capability bit.
+- Capture graph/detection/parser/session/storage paths were unbounded or leaked
+  state; caps, expiry/reset, parser bounds, ownership cleanup and private
+  `0700`/`0600` storage are now enforced.
+- Labs IPC performed blocking Docker work and could race Reset/Stop/status/open;
+  commands are worker-backed, lifecycle operations are serialized/cancellable,
+  reset preserves the active room, health and TCP ingress are reconciled, and
+  launcher/process cleanup is bounded.
+- Auth/download/forensic paths now use guarded storage, OS entropy, atomic
+  private writes, OS locks, PBKDF2 migration, exclusive no-follow file creation,
+  bounded SQLite VM/query work, returned-result caps, and worker-backed disk/auth/query commands.
+- Targeted dependency updates removed the npm audit findings and the initial
+  RustSec vulnerability entries. Remaining upstream advisory warnings are
+  visible and not ignored.
+- Cross-built Windows binaries previously had an eager `wpcap.dll` import. The
+  MSVC GUI now delay-loads it; required exports are checked before use through
+  absolute Windows system/Npcap paths with restricted loader flags. Missing
+  Npcap can therefore reach the app and report capture unavailable instead of
+  failing during process startup. This property is PE-inspected, not Windows
+  runtime-accepted.
+
+### Current checks and artifacts
+
+- Frontend: `npm test` **200 + 14 script tests passed**, `npm run lint`
+  **0 warnings/errors**, `npm run build` and `tsc -b` **passed**.
+- Rust: `cargo check --all-targets --offline --locked` passed; combined native
+  suite **198 passed, 0 failed**, with the documented Docker/live/provider/host
+  skips. Focused forensic safety tests **2 passed**.
+- Python: all seven room suites **17 passed**, strict ResourceWarning mode clean.
+- Security: npm audit **0 vulnerabilities**. RustSec **0 vulnerability
+  entries**, but **7 unmaintained + 1 unsound warnings** remain, including the
+  GTK/Tauri `glib 0.18.5` unsoundness advisory. Strict `cargo audit --deny
+  warnings`, rustfmt and strict Clippy are not green.
+- Linux DEB rebuilt/staged and checksum verified:
+  `releases/linux/2.0.0-x64/NET0ZE_2.0.0_amd64.deb`, SHA-256
+  `1f1b5d4eea3047de4b608431916bb45baa20c9fd9b23cc173edab2a0640aa8e`.
+- Windows cross NSIS rebuilt/staged, PE delay-import/export guard test passed,
+  checksum verified:
+  `releases/windows/2.0.0-x64/NET0ZE_2.0.0_x64-setup.exe`, SHA-256
+  `c3fde1ece216639ce240b2627e2450d091f6545556978221c9b7d933b51052c6`.
+- Isolated DEB/Xvfb smoke passed and rendered the current God's Eye Overview and
+  globe to `target/studio-ui-smoke/capture-workspace.png`; no capture or scan
+  started. This is not installed-host GUI acceptance.
+- All generated evidence is under ignored
+  `target/netoze-validation-2026-10-24/`, including final logs, audits, package
+  receipts, PE import checks, and the native smoke receipt.
+
+### Readiness and blockers
+
+Current classification: **SOURCE-READY**. Do not call this release-ready.
+
+Still required on actual hosts: isolated live capture with the installed Linux
+helper; Docker >=28 all-room lifecycle/sandbox acceptance; installed Ryoku /
+Hyprland Labs Start → Open → flag → Reset → Stop and Capture Buddy acceptance;
+Windows no-Npcap and approved-Npcap startup/runtime/WebView2/upgrade/uninstall
+acceptance; resolution of strict rustfmt/Clippy; and a reviewed path for the
+glib unsound advisory. Worker external acceptance showed threat-feed success,
+but connectivity and GeoIP providers were unavailable, so those failures are
+recorded rather than treated as passes.
+
+Next session should begin by choosing a host acceptance lane, not by adding
+another lab: use a capture-capable Linux/Docker host or a native Windows/Ryoku
+host, run the exact commands in the repair-validation document, then update the
+readiness classification only from those receipts.
+
+## 2026-10-24 release/source separation
+
+The repository boundary is now explicit:
+
+- `xtreme-sexo` is the private source/backend repository. Its GitHub repository
+  visibility is **private**.
+- `https://github.com/1viz3r0/netoze` is the public release-only repository.
+  Its branch contains only release artifacts, manifests, checksums, release
+  notes, and public security guidance.
+- Public release tag: `v2.0.0` — `NET0ZE 2.0.0`.
+- Public release page:
+  `https://github.com/1viz3r0/netoze/releases/tag/v2.0.0`.
+
+The public repository was replaced with a new release-only root commit. It has
+no frontend/backend source, development scripts, build caches, local databases,
+debug logs, private keys, credentials, or signing material. The release assets
+are currently marked **unsigned**; checksums are published and verified.
+
+Important security boundary: an executable distributed to users cannot be made
+impossible to reverse-engineer or “encrypted” in a meaningful way. The release
+repository's `SECURITY.md` records the practical controls: source separation,
+no embedded secrets, minimized release artifacts, checksums, future protected
+code signing, authenticated update metadata, and fail-closed native capability
+checks. Do not describe the binaries as unbreakable or cryptographically
+opaque.

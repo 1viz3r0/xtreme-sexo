@@ -6,6 +6,23 @@ use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 use std::time::{SystemTime, UNIX_EPOCH};
 
+const MAX_NODES: usize = 500;
+const MAX_EDGES: usize = 1000;
+
+fn bound_graph(nodes: &mut HashMap<String, GraphNode>, edges: &mut HashMap<String, GraphEdge>) {
+    while nodes.len() > MAX_NODES {
+        let oldest = nodes.values().min_by_key(|n| (n.last_seen, &n.node_id))
+            .map(|n| n.node_id.clone()).unwrap();
+        nodes.remove(&oldest);
+    }
+    edges.retain(|_, edge| nodes.contains_key(&edge.source_node) && nodes.contains_key(&edge.destination_node));
+    while edges.len() > MAX_EDGES {
+        let oldest = edges.values().min_by_key(|e| (e.last_seen, &e.edge_id))
+            .map(|e| e.edge_id.clone()).unwrap();
+        edges.remove(&oldest);
+    }
+}
+
 pub struct GraphEngine {
     nodes: Arc<Mutex<HashMap<String, GraphNode>>>,
     edges: Arc<Mutex<HashMap<String, GraphEdge>>>,
@@ -89,17 +106,7 @@ impl GraphEngine {
             evidence_ref: flow.flow_id.clone(),
         });
 
-        // Enforce bounded memory
-        if nodes_map.len() >= 500 {
-            if let Some(k) = nodes_map.keys().next().cloned() {
-                nodes_map.remove(&k);
-            }
-        }
-        if edges_map.len() >= 1000 {
-            if let Some(k) = edges_map.keys().next().cloned() {
-                edges_map.remove(&k);
-            }
-        }
+        bound_graph(&mut nodes_map, &mut edges_map);
     }
 
     pub fn ingest_ja4(&self, ja4: &Ja4Observation) {
@@ -131,6 +138,7 @@ impl GraphEngine {
                 evidence_ref: ja4.flow_id.clone(),
             });
         }
+        bound_graph(&mut nodes_map, &mut edges_map);
     }
 
     pub fn ingest_finding(&self, finding: &DetectionFinding) {
@@ -176,6 +184,7 @@ impl GraphEngine {
                 evidence_ref: finding.finding_id.clone(),
             });
         }
+        bound_graph(&mut nodes_map, &mut edges_map);
     }
 
     pub fn ingest_process_correlation(&self, corr: &SocketProcessCorrelation) {
@@ -210,12 +219,13 @@ impl GraphEngine {
             confidence: if corr.confidence == "HIGH" { 95 } else { 75 },
             evidence_ref: corr.correlation_id.clone(),
         });
+        bound_graph(&mut nodes_map, &mut edges_map);
     }
 
     pub fn get_graph(&self) -> AttackGraph {
-        let nodes = self.nodes.lock().unwrap().values().cloned().collect();
-        let edges = self.edges.lock().unwrap().values().cloned().collect();
-        AttackGraph { nodes, edges }
+        let nodes = self.nodes.lock().unwrap();
+        let edges = self.edges.lock().unwrap();
+        AttackGraph { nodes: nodes.values().cloned().collect(), edges: edges.values().cloned().collect() }
     }
 }
 
@@ -286,5 +296,18 @@ mod tests {
         let graph = engine.get_graph();
         let host_nodes: Vec<&GraphNode> = graph.nodes.iter().filter(|n| n.node_type == "HOST").collect();
         assert_eq!(host_nodes.len(), 2); // 192.168.1.50 and 10.0.0.1 deduplicated
+
+        for n in 0..1500 {
+            let mut flow = flow1.clone();
+            flow.flow_id = format!("flow-{n}");
+            flow.src_ip = format!("192.0.{}.{}", n / 256, n % 256);
+            flow.dst_ip = format!("198.51.{}.{}", n / 256, n % 256);
+            engine.ingest_flow(&flow);
+            let graph = engine.get_graph();
+            assert!(graph.nodes.len() <= MAX_NODES);
+            assert!(graph.edges.len() <= MAX_EDGES);
+            let ids: std::collections::HashSet<_> = graph.nodes.iter().map(|node| &node.node_id).collect();
+            assert!(graph.edges.iter().all(|edge| ids.contains(&edge.source_node) && ids.contains(&edge.destination_node)));
+        }
     }
 }

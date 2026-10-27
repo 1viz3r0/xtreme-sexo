@@ -1,3 +1,4 @@
+import { invoke } from '@tauri-apps/api/core';
 import { isTauriEnvironment } from './isTauri';
 
 export interface FlowRecord {
@@ -41,7 +42,6 @@ export interface FlowSummaryStats {
 export async function getActiveFlows(limit = 100): Promise<FlowRecord[]> {
   if (isTauriEnvironment()) {
     try {
-      const { invoke } = await import('@tauri-apps/api/core');
       return await invoke<FlowRecord[]>('get_active_flows', { limit });
     } catch (err) {
       console.warn('Failed to get active flows:', err);
@@ -56,7 +56,6 @@ export async function getActiveFlows(limit = 100): Promise<FlowRecord[]> {
 export async function getFlowSummary(): Promise<FlowSummaryStats> {
   if (isTauriEnvironment()) {
     try {
-      const { invoke } = await import('@tauri-apps/api/core');
       return await invoke<FlowSummaryStats>('get_flow_summary');
     } catch (err) {
       console.warn('Failed to get flow summary:', err);
@@ -81,7 +80,6 @@ export async function getFlowSummary(): Promise<FlowSummaryStats> {
 export async function flushFlowsToDuckDB(): Promise<number> {
   if (isTauriEnvironment()) {
     try {
-      const { invoke } = await import('@tauri-apps/api/core');
       return await invoke<number>('flush_flows_to_duckdb');
     } catch (err) {
       console.warn('Failed to flush flows to DuckDB:', err);

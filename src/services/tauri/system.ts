@@ -1,3 +1,4 @@
+import { invoke } from '@tauri-apps/api/core';
 import { isTauriEnvironment } from './isTauri';
 
 export interface SystemInfo {
@@ -30,7 +31,6 @@ export interface DetailedSystemInfo {
 export async function getSystemInfo(): Promise<SystemInfo> {
   if (isTauriEnvironment()) {
     try {
-      const { invoke } = await import('@tauri-apps/api/core');
       return await invoke<SystemInfo>('get_system_info');
     } catch (err) {
       console.warn('Failed to invoke native get_system_info:', err);
@@ -53,7 +53,6 @@ export async function getSystemInfo(): Promise<SystemInfo> {
 export async function getDetailedSystemInfo(): Promise<DetailedSystemInfo> {
   if (isTauriEnvironment()) {
     try {
-      const { invoke } = await import('@tauri-apps/api/core');
       return await invoke<DetailedSystemInfo>('get_detailed_system_info');
     } catch (err) {
       console.warn('Failed to invoke native get_detailed_system_info:', err);

@@ -74,9 +74,7 @@ pub fn get_active_tcp_connections() -> Vec<TcpConnectionEntry> {
 #[cfg(target_os = "linux")]
 mod linux_proc {
     use super::TcpConnectionEntry;
-    use std::{collections::HashMap, fs, net::{Ipv4Addr, Ipv6Addr}, path::Path};
-
-    const STATES: [&str; 13] = ["UNKNOWN", "CLOSED", "LISTEN", "SYN_SENT", "SYN_RECEIVED", "ESTABLISHED", "FIN_WAIT1", "FIN_WAIT2", "CLOSE_WAIT", "CLOSING", "LAST_ACK", "TIME_WAIT", "DELETE_TCB"];
+    use std::{collections::HashMap, fs, net::{Ipv4Addr, Ipv6Addr}};
 
     fn endpoint(value: &str, v6: bool) -> Option<(String, u16)> {
         let (address, port) = value.split_once(':')?;
@@ -140,8 +138,6 @@ mod linux_proc {
             .flatten().collect()
     }
 
-    #[allow(dead_code)]
-    fn _path_is_proc(path: &Path) -> bool { path.starts_with("/proc") }
 }
 
 #[cfg(target_os = "linux")]

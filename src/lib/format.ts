@@ -14,15 +14,6 @@ export function fmtEpoch(value: number | string | null | undefined): string {
   return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}:${p(d.getSeconds())}`;
 }
 
-/** Format an ISO-8601 UTC string (e.g. hybrid-engine asset timestamps) as readable local time. */
-export function fmtIso(value: string | null | undefined): string {
-  if (!value) return '—';
-  const d = new Date(value);
-  if (isNaN(d.getTime())) return value;
-  const p = (x: number) => String(x).padStart(2, '0');
-  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}:${p(d.getSeconds())}`;
-}
-
 /** Render a 1-based serial number with zero-padding to a target width. */
 export function sNo(idx: number, width: number = 2): string {
   return String(idx + 1).padStart(width, '0');

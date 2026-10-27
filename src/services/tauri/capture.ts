@@ -1,3 +1,4 @@
+import { invoke } from '@tauri-apps/api/core';
 import { isTauriEnvironment } from './isTauri';
 
 export interface NpcapInterface {
@@ -60,7 +61,6 @@ export interface PacketMetadata {
 export async function inspectNpcapAvailability(): Promise<[string, string]> {
   if (isTauriEnvironment()) {
     try {
-      const { invoke } = await import('@tauri-apps/api/core');
       return await invoke<[string, string]>('inspect_npcap_availability');
     } catch (err: any) {
       return ['ERROR', err?.message || 'Failed to inspect Npcap driver'];
@@ -78,7 +78,6 @@ export async function inspectNpcapAvailability(): Promise<[string, string]> {
 export async function getPcapInterfaces(): Promise<NpcapInterface[]> {
   if (isTauriEnvironment()) {
     try {
-      const { invoke } = await import('@tauri-apps/api/core');
       return await invoke<NpcapInterface[]>('get_pcap_interfaces');
     } catch (err) {
       console.warn('Failed to get Npcap interfaces:', err);
@@ -92,7 +91,6 @@ export async function getPcapInterfaces(): Promise<NpcapInterface[]> {
  */
 export async function startPacketCapture(interfaceId: string): Promise<void> {
   if (isTauriEnvironment()) {
-    const { invoke } = await import('@tauri-apps/api/core');
     await invoke('start_packet_capture', { interfaceId });
   }
 }
@@ -102,7 +100,6 @@ export async function startPacketCapture(interfaceId: string): Promise<void> {
  */
 export async function stopPacketCapture(): Promise<void> {
   if (isTauriEnvironment()) {
-    const { invoke } = await import('@tauri-apps/api/core');
     await invoke('stop_packet_capture');
   }
 }
@@ -113,7 +110,6 @@ export async function stopPacketCapture(): Promise<void> {
 export async function getCaptureMetrics(): Promise<CaptureMetrics> {
   if (isTauriEnvironment()) {
     try {
-      const { invoke } = await import('@tauri-apps/api/core');
       return await invoke<CaptureMetrics>('get_capture_metrics');
     } catch (err) {
       console.warn('Failed to get capture metrics:', err);
@@ -154,7 +150,6 @@ export async function subscribeToCaptureStats(
 export async function getCaptureEngineState(): Promise<CaptureEngineDiagnostics> {
   if (isTauriEnvironment()) {
     try {
-      const { invoke } = await import('@tauri-apps/api/core');
       return await invoke<CaptureEngineDiagnostics>('get_capture_engine_state');
     } catch (err) {
       console.warn('Failed to get capture engine state:', err);

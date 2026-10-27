@@ -50,7 +50,7 @@ test('top investigation links load off-page packet evidence and reject stale det
   try {
     await act(async () => { root.render(React.createElement(CaptureBuddy)); });
     const header = host.querySelector('h1')!.closest('header')!;
-    assert.equal(host.querySelector('h1')!.textContent, 'Capture workspace');
+    assert.equal(host.querySelector('h1')!.textContent, 'Capture Buddy');
     assert.deepEqual([...header.querySelectorAll('nav a')].map(link => link.textContent), ['Capture', 'Investigate', 'Evidence']);
     for (const link of header.querySelectorAll('nav a')) assert.ok(host.querySelector(link.getAttribute('href')!));
     assert.equal(header.nextElementSibling?.getAttribute('aria-label'), 'Capture investigation workspace');

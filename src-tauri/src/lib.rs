@@ -139,11 +139,17 @@ pub fn run() {
         .run(|app, event| {
             if matches!(event, tauri::RunEvent::Exit) {
                 use tauri::Manager;
+                let labs = app.state::<services::lab_runtime::LabRuntimeState>();
+                labs.request_shutdown();
+                let backend = app.state::<state::BackendState>();
+                if !backend.shutdown_capture() {
+                    tracing::warn!("Passive capture shutdown did not finish within its bounded shutdown window");
+                }
                 app.state::<commands::capture_buddy::BuddyState>()
                     .shutdown();
                 app.state::<services::scan_buddy::ScanBuddyState>()
                     .shutdown();
-                let _ = app.state::<services::lab_runtime::LabRuntimeState>().stop();
+                labs.shutdown();
             }
         });
 }

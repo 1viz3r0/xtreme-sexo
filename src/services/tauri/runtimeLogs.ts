@@ -1,3 +1,4 @@
+import { invoke } from '@tauri-apps/api/core';
 import { isTauriEnvironment } from './isTauri';
 
 export interface RuntimeLogStatus {
@@ -23,6 +24,5 @@ export interface RecentRuntimeLogs {
 
 export async function getRecentRuntimeLogs(): Promise<RecentRuntimeLogs> {
   if (!isTauriEnvironment()) throw new Error('Application logs require the native desktop app.');
-  const { invoke } = await import('@tauri-apps/api/core');
   return invoke<RecentRuntimeLogs>('get_recent_runtime_logs', { maxBytes: 65536 });
 }

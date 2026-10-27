@@ -1,4 +1,4 @@
-use rusqlite::{params, Connection, Result};
+use rusqlite::{Connection, Result};
 use std::fs;
 use std::path::PathBuf;
 
@@ -6,10 +6,29 @@ use std::path::PathBuf;
 /// Portable builds (feature "portable") use their own isolated directory so
 /// concurrent instances / the installed build never collide on the databases.
 pub fn get_app_dir() -> PathBuf {
-    let mut dir = dirs::data_dir().unwrap_or_else(|| PathBuf::from("."));
+    // Explicit disposable-test storage also works on Windows, whose known-folder
+    // API does not follow XDG_DATA_HOME or a replacement APPDATA environment value.
+    let mut dir = if let Some(root) = std::env::var_os("NETOZE_TEST_DATA_HOME") {
+        let root = PathBuf::from(root);
+        assert!(root.is_absolute() && root.file_name().is_some_and(|name|
+            name.to_string_lossy().starts_with("netoze-improvement-test-data-")),
+            "test storage must be an explicitly named disposable temporary directory");
+        let root = root.canonicalize().expect("test storage must already exist");
+        assert!(root.starts_with(std::env::temp_dir().canonicalize().expect("temporary directory unavailable")),
+            "test storage must stay inside the temporary directory");
+        root
+    } else {
+        dirs::data_dir().unwrap_or_else(|| PathBuf::from("."))
+    };
     dir.push(if cfg!(feature = "portable") { "NET0ZE-Portable" } else { "NET0ZE" });
     if !dir.exists() {
-        let _ = fs::create_dir_all(&dir);
+        let mut builder = fs::DirBuilder::new();
+        builder.recursive(true);
+        #[cfg(unix)] {
+            use std::os::unix::fs::DirBuilderExt;
+            builder.mode(0o700);
+        }
+        let _ = builder.create(&dir);
     }
     dir
 }

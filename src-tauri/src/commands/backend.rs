@@ -93,8 +93,9 @@ pub fn get_detailed_network_interfaces() -> Vec<DetailedAdapterInfo> { crate::pl
 #[command]
 pub fn get_dns_records(limit: Option<usize>) -> Vec<DnsQueryEntry> { crate::database::sqlite::load_dns_records(limit.unwrap_or(100).clamp(1, 500)) }
 #[command]
-pub fn execute_forensic_query(sql_query: String, max_rows: Option<usize>) -> Result<ForensicQueryResult, String> {
-    crate::database::execute_forensic_query(&sql_query, Some(max_rows.unwrap_or(100).clamp(1, 500)))
+pub async fn execute_forensic_query(sql_query: String, max_rows: Option<usize>) -> Result<ForensicQueryResult, String> {
+    tokio::task::spawn_blocking(move || crate::database::execute_forensic_query(&sql_query, Some(max_rows.unwrap_or(100).clamp(1, 500))))
+        .await.map_err(|_| "Forensic query worker failed".to_string())?
 }
 #[command]
 pub fn validate_forensic_query(sql_query: String) -> QueryValidationResult { crate::services::validate_sql_query(&sql_query) }

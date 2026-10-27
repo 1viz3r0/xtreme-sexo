@@ -29,8 +29,10 @@ export const SystemLogs: React.FC<SystemLogsProps> = ({ refreshMs = 3000 }) => {
   const [speedSnapshot, setSpeedSnapshot] = useState(emptySpeedSnapshot);
   const [error, setError] = useState<string | null>(null);
   const [updatedAt, setUpdatedAt] = useState<string | null>(null);
+  const [loading, setLoading] = useState(false);
   const busy = useRef(false);
   const generation = useRef(0);
+  const mounted = useRef(false);
 
   const isDesktop = isTauriEnvironment();
   const pollingMs = Number.isFinite(refreshMs) ? Math.max(1000, refreshMs) : 3000;
@@ -38,6 +40,7 @@ export const SystemLogs: React.FC<SystemLogsProps> = ({ refreshMs = 3000 }) => {
   const loadRealTelemetry = useCallback(async () => {
     if (!isDesktop || document.hidden || busy.current) return;
     busy.current = true;
+    setLoading(true);
     const requestGeneration = generation.current;
     try {
       const results = await Promise.allSettled([
@@ -72,16 +75,19 @@ export const SystemLogs: React.FC<SystemLogsProps> = ({ refreshMs = 3000 }) => {
     } finally {
       // Keep one shared gate across teardown/restart until native calls settle.
       busy.current = false;
+      if (mounted.current) setLoading(false);
     }
   }, [isDesktop, pollingMs]);
 
   useEffect(() => {
+    mounted.current = true;
     loadRealTelemetry();
     const intervalId = setInterval(loadRealTelemetry, pollingMs);
     const onVisible = () => { if (!document.hidden) void loadRealTelemetry(); };
     document.addEventListener('visibilitychange', onVisible);
 
     return () => {
+      mounted.current = false;
       clearInterval(intervalId);
       document.removeEventListener('visibilitychange', onVisible);
       generation.current += 1;
@@ -98,10 +104,10 @@ export const SystemLogs: React.FC<SystemLogsProps> = ({ refreshMs = 3000 }) => {
   const connectedDevices = devices.filter((device) => device.active);
 
   return (
-    <div className="space-y-7 rounded-2xl bg-[#070707] p-5 font-sans text-sm text-zinc-300 [&_.cyber-card]:!border-zinc-800 [&_.cyber-card]:!bg-[#111] [&_.cyber-card]:!shadow-none [&_.cyber-table_th]:!border-zinc-800 [&_.cyber-table_th]:!bg-zinc-900 [&_.cyber-table_td]:!border-zinc-800">
+    <div className="enterprise-page enterprise-dashboard space-y-7 rounded-2xl bg-[#070707] p-5 font-sans text-sm text-zinc-300 [&_.cyber-card]:!border-zinc-800 [&_.cyber-card]:!bg-[#111] [&_.cyber-card]:!shadow-none [&_.cyber-table_th]:!border-zinc-800 [&_.cyber-table_th]:!bg-zinc-900 [&_.cyber-table_td]:!border-zinc-800">
       <header className="flex flex-wrap items-end justify-between gap-4 border-b border-zinc-800 pb-5">
-        <div><div className="mb-2 flex items-center gap-3"><Activity className="h-5 w-5 text-white" /><h2 className="text-2xl font-semibold tracking-tight text-white">Dashboard</h2></div><p className="text-zinc-500">A calm view of this host, its link, and the evidence available locally.</p></div>
-        <button type="button" onClick={loadRealTelemetry} className="flex items-center gap-2 rounded-lg border border-zinc-700 bg-zinc-900 px-3 py-2 text-xs font-medium text-zinc-100 hover:border-zinc-400"><RefreshCw className="h-3.5 w-3.5" /> Refresh host</button>
+         <div><div className="mb-2 flex items-center gap-3"><Activity className="h-5 w-5 text-white" /><div><p className="enterprise-kicker">NET0ZE / SYSTEM STATE</p><h2 className="text-2xl font-semibold tracking-tight text-white">Dashboard</h2></div></div><p className="text-zinc-500">A calm view of this host, its link, and the evidence available locally.</p></div>
+         <button type="button" onClick={() => void loadRealTelemetry()} disabled={!isDesktop || loading} aria-busy={loading} className="flex items-center gap-2 rounded-lg border border-zinc-700 bg-zinc-900 px-3 py-2 text-xs font-medium text-zinc-100 hover:border-zinc-400 disabled:cursor-not-allowed disabled:opacity-50"><RefreshCw className="h-3.5 w-3.5" /> {loading ? 'Refreshing host…' : 'Refresh host'}</button>
       </header>
       <div className="flex flex-wrap items-center gap-x-5 gap-y-2 rounded-lg border border-zinc-800 bg-[#0d0d0d] px-4 py-3 text-xs text-zinc-400" role="status"><span className="font-medium text-zinc-200">{isDesktop ? 'DESKTOP LINKED' : 'DESKTOP TELEMETRY UNAVAILABLE'}</span><span>{isDesktop ? `Auto-refresh ${pollingMs / 1000}s` : 'Open the desktop application to view local activity.'}</span>{isDesktop && <span>{adapters.length} interfaces observed</span>}<span>{updatedAt ? `Last refresh ${updatedAt}` : isDesktop ? 'Connecting…' : 'No native read yet'}</span></div>
       {error && <div role="alert" className="rounded-lg border border-red-900/70 bg-red-950/30 p-3 text-xs text-red-300">{error}</div>}

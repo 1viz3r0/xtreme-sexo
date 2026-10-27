@@ -38,6 +38,7 @@ fn normalize_mac(mac: &str) -> Option<String> {
 }
 
 /// Linux kernel ARP cache: IP, hardware type, flags, MAC, mask, device.
+#[cfg(any(target_os = "linux", test))]
 fn parse_proc_arp_line(line: &str) -> Option<(String, String)> {
     let fields: Vec<_> = line.split_whitespace().collect();
     if fields.len() != 6 { return None; }

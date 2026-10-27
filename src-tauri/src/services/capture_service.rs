@@ -6,7 +6,6 @@ use crate::services::detection_engine::DetectionEngine;
 use crate::services::flow_engine::FlowEngine;
 use crate::services::graph_engine::GraphEngine;
 use crate::services::ja4_engine::Ja4Engine;
-use pcap::Device;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 use tauri::{AppHandle, Emitter};
@@ -44,7 +43,7 @@ impl CaptureEngine {
     }
 
     pub fn get_interfaces(&self) -> Vec<NpcapInterface> {
-        match Device::list() {
+        match crate::platform::capture::devices() {
             Ok(devices) => devices
                 .into_iter()
                 .map(|dev| {
@@ -70,7 +69,11 @@ impl CaptureEngine {
     }
 
     pub fn get_state(&self) -> CaptureState {
-        self.state.lock().unwrap().clone()
+        let mut state = self.state.lock().unwrap();
+        if matches!(*state, CaptureState::RUNNING | CaptureState::STOPPING) && !self.capture.worker_running() {
+            *state = if self.capture.worker_error().is_some() { CaptureState::ERROR } else { CaptureState::STOPPED };
+        }
+        state.clone()
     }
 
     pub fn active_interface(&self) -> Option<String> {
@@ -81,6 +84,7 @@ impl CaptureEngine {
         // Serialize start/stop transitions. In particular, do not allow a
         // restart to race the previous worker's final flush.
         let _operation = self.lifecycle_operation.lock().unwrap();
+        let _ = self.get_state();
         {
             let mut st = self.state.lock().unwrap();
             if *st == CaptureState::RUNNING {
@@ -111,14 +115,14 @@ impl CaptureEngine {
             return Err(format!("Failed to open capture interface: {}", err));
         }
 
+        *self.state.lock().unwrap() = CaptureState::RUNNING;
+        let _ = app_handle.emit("capture-status", "RUNNING");
         if !self.capture.run_capture_loop(app_handle.clone()) {
             self.capture.close();
             *self.state.lock().unwrap() = CaptureState::ERROR;
             let _ = app_handle.emit("capture-status", "ERROR");
             return Err("Capture worker is already running".to_string());
         }
-        *self.state.lock().unwrap() = CaptureState::RUNNING;
-        let _ = app_handle.emit("capture-status", "RUNNING");
         Ok(())
     }
 
@@ -136,15 +140,19 @@ impl CaptureEngine {
 
         {
             let mut st = self.state.lock().unwrap();
-            *st = if stopped { CaptureState::STOPPED } else { CaptureState::ERROR };
+            *st = if stopped { CaptureState::STOPPED } else { CaptureState::STOPPING };
         }
 
-        let _ = app_handle.emit("capture-status", if stopped { "STOPPED" } else { "ERROR" });
+        let _ = app_handle.emit("capture-status", if stopped { "STOPPED" } else { "STOPPING" });
     }
 
     pub fn get_metrics(&self) -> CaptureMetrics {
         let st = self.get_state();
         self.capture.get_metrics(&format!("{:?}", st))
+    }
+
+    pub(crate) fn worker_handle(&self) -> Arc<NpcapCapture> {
+        self.capture.clone()
     }
 
     pub fn get_recent_packets(&self, limit: usize) -> Vec<PacketMetadata> {

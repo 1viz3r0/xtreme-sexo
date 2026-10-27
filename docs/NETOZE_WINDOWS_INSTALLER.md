@@ -13,9 +13,9 @@ and uses the configured WebView2 bootstrapper when the Evergreen WebView2
 runtime is missing. No Node.js, Rust, npm, or development tools are required on
 the end-user machine.
 
-Docker is not needed to launch the application, but the Labs module requires a
-local Docker daemon (version 28 or newer) with an accessible socket; without it,
-Labs reports `setup-required`.
+Docker is not needed to launch the application. The current Labs ingress is
+supported on native Linux with local Docker >=28; Windows/Docker Desktop and
+rootless ingress report `setup-required` rather than a simulated running target.
 
 The release directory also contains an MSI for managed deployment. Use the
 NSIS `.exe` for the ordinary one-click download/install path.
@@ -32,6 +32,38 @@ capture.
 
 If Npcap is unavailable, NET0ZE must report capture as unavailable rather than
 pretending that live packets are being collected.
+
+The MSVC build delay-loads `wpcap.dll`. Before any native capture call, NET0ZE
+loads and validates the required exports using absolute paths obtained from
+Windows' system-directory API, preferring its `Npcap` subdirectory. It does not
+search PATH/current-directory DLLs or change the process-wide DLL search path.
+Missing/incompatible runtime errors are cached until the application restarts;
+saved-file analysis remains separate from live capture.
+
+`scripts/pcap-runtime.test.mjs` inspects the actual built PE import tables and
+checks that every delay-imported capture symbol has a pre-call export guard.
+The Windows build helper runs this check before staging. This verifies a
+packaging property, not Windows execution. On fresh checkouts without a Windows
+binary, the ordinary script suite explicitly skips this artifact-dependent case.
+
+Native acceptance, on separate Windows configurations, remains required:
+
+```powershell
+# Host WITHOUT Npcap:
+cargo test --manifest-path src-tauri/Cargo.toml --test npcap_loader_verify missing_npcap_keeps_the_application_and_saved_file_engine_available -- --ignored --exact
+# Host WITH the approved runtime:
+cargo test --manifest-path src-tauri/Cargo.toml --test npcap_loader_verify installed_system_runtime_loads_and_enumerates_without_opening_capture -- --ignored --exact
+```
+
+Neither test starts packet capture. The installed-app launch, WebView2,
+saved-file UI, driver permission, live capture and uninstall matrices are
+additional acceptance requirements. No Windows execution is claimed from a
+successful cross-build or import-table check.
+
+Primary API references: Microsoft Learn's `/DELAYLOAD (Delay Load Import)` and
+`LoadLibraryExW` documentation, plus the Npcap developer guide's DLL-loading
+section. The implementation deliberately uses per-load restricted search flags
+instead of Npcap's older process-wide `SetDllDirectory` example.
 
 ## Build and publish
 

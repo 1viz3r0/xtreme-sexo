@@ -1,7 +1,8 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
-import React from 'react';
+import React, { act } from 'react';
+import { Window } from 'happy-dom';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { SystemLogs } from './SystemLogs';
 
@@ -70,4 +71,51 @@ test('network snapshot is sourced by passive reads and retains polling safety', 
   assert.match(source, /document\.hidden \|\| busy\.current/);
   assert.match(source, /generation\.current !== requestGeneration/);
   assert.doesNotMatch(source, /refreshDevices\(|scanHostPorts\(|request_admin|upload\(/);
+});
+
+test('dashboard releases refresh loading after StrictMode or polling changes invalidate a pending read', async () => {
+  const window = new Window({ url: 'http://localhost/' });
+  const names = ['window', 'document', 'navigator', 'HTMLElement', 'React', 'IS_REACT_ACT_ENVIRONMENT'];
+  const previous = new Map(names.map(name => [name, Object.getOwnPropertyDescriptor(globalThis, name)]));
+  for (const name of names) Object.defineProperty(globalThis, name, {
+    configurable: true,
+    value: name === 'React' ? React : name === 'IS_REACT_ACT_ENVIRONMENT' ? true : (window as unknown as Record<string, unknown>)[name],
+  });
+  const pending: Array<{ resolve: (value: null) => void; reject: (error: Error) => void }> = [];
+  Object.assign(window, { __TAURI_INTERNALS__: { invoke: async (command: string) => {
+    if (command === 'get_detailed_system_info') return new Promise<null>((resolve, reject) => { pending.push({ resolve, reject }); });
+    if (['get_detailed_network_interfaces', 'get_active_tcp_connections', 'get_windows_events', 'get_devices'].includes(command)) return [];
+    if (command === 'get_backend_readiness') return null;
+    throw new Error(`Unexpected command: ${command}`);
+  } } });
+  const { createRoot } = await import('react-dom/client');
+  const host = window.document.createElement('div');
+  window.document.body.append(host);
+  const root = createRoot(host as unknown as Element);
+  const render = async (refreshMs: number) => { await act(async () => {
+    root.render(React.createElement(React.StrictMode, {}, React.createElement(SystemLogs, { refreshMs })));
+  }); };
+  const refresh = () => host.querySelector('header button')!;
+  try {
+    await render(60_000);
+    assert.equal(pending.length, 1, 'StrictMode must not duplicate in-flight native requests');
+    assert.equal(refresh().getAttribute('aria-busy'), 'true');
+    await render(120_000);
+    assert.equal(pending.length, 1, 'polling changes must retain the shared request gate');
+    await act(async () => { pending[0].resolve(null); });
+    assert.equal(refresh().getAttribute('aria-busy'), 'false');
+    assert.equal(refresh().hasAttribute('disabled'), false);
+    assert.match(refresh().textContent ?? '', /Refresh host/);
+    await act(async () => { (refresh() as unknown as HTMLButtonElement).click(); });
+    assert.equal(pending.length, 2);
+    await act(async () => { pending[1].resolve(null); });
+    assert.equal(refresh().getAttribute('aria-busy'), 'false');
+  } finally {
+    await act(async () => { root.unmount(); });
+    await window.happyDOM.close();
+    for (const [name, descriptor] of previous) {
+      if (descriptor) Object.defineProperty(globalThis, name, descriptor);
+      else Reflect.deleteProperty(globalThis, name);
+    }
+  }
 });

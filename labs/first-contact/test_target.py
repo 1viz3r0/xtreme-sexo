@@ -14,7 +14,7 @@ class TargetTests(unittest.TestCase):
         self.temp = TemporaryDirectory(); self.root = Path(self.temp.name); self.original = server.ROOT
         (self.root / "config.json").write_text(json.dumps({"flag": "NET0ZE{first-contact-test}"}), encoding="utf-8"); server.ROOT = self.root
         self.http = ThreadingHTTPServer(("127.0.0.1", 0), server.handler()); self.thread = threading.Thread(target=self.http.serve_forever); self.thread.start(); self.port = self.http.server_port
-    def tearDown(self): self.http.shutdown(); self.thread.join(); self.temp.cleanup(); server.ROOT = self.original
+    def tearDown(self): self.http.shutdown(); self.thread.join(); self.http.server_close(); self.temp.cleanup(); server.ROOT = self.original
     def get(self, path):
         conn = HTTPConnection("127.0.0.1", self.port); conn.request("GET", path); response = conn.getresponse(); body = response.read(); conn.close(); return response.status, body
     def test_beginner_path_and_validation(self):

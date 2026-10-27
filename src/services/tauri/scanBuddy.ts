@@ -1,3 +1,4 @@
+import { invoke } from '@tauri-apps/api/core';
 import { isTauriEnvironment } from './isTauri';
 import { createScanBuddyTransport } from '../../lib/scanBuddyTransport';
 
@@ -18,7 +19,6 @@ export const scanBuddyAvailable = isTauriEnvironment;
 const transport = createScanBuddyTransport({
   available: scanBuddyAvailable,
   invoke: async (name, args) => {
-    const { invoke } = await import('@tauri-apps/api/core');
     return invoke<unknown>(name, args);
   },
 });

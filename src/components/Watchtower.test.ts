@@ -7,7 +7,7 @@ import type { DetectionFinding } from '../services/tauri/detections';
 import type { AttackGraph } from '../services/tauri/graph';
 import type { DeviceEntry } from '../services/tauri/intel';
 import type { DetailedAdapterInfo } from '../services/tauri/network';
-import type { WatchtowerDataSources } from './Watchtower';
+import type { WatchtowerDataSources, WatchtowerProps } from './Watchtower';
 import type { WatchtowerSnapshot } from '../services/tauri/watchtower';
 
 const flow = { flow_id: 'flow-1' } as FlowRecord;
@@ -19,11 +19,12 @@ const finding = (id: string, timestamp: number): DetectionFinding => ({
 });
 const graph = { nodes: [{ node_id: 'node-1' }], edges: [{ edge_id: 'edge-1' }] } as AttackGraph;
 
-async function render(props: { flows: FlowRecord[]; events: DetectionFinding[]; graph: AttackGraph; inventorySources?: WatchtowerDataSources; kernelSnapshotSource?: (refresh?: boolean) => Promise<WatchtowerSnapshot> }) {
+async function render(props: WatchtowerProps, configure?: (window: Window) => void) {
   const window = new Window({ url: 'http://localhost/' });
   const previous = new Map(['window', 'document', 'navigator', 'HTMLElement', 'IS_REACT_ACT_ENVIRONMENT']
     .map(name => [name, Object.getOwnPropertyDescriptor(globalThis, name)]));
   for (const name of previous.keys()) Object.defineProperty(globalThis, name, { configurable: true, value: name === 'IS_REACT_ACT_ENVIRONMENT' ? true : (window as unknown as Record<string, unknown>)[name] });
+  configure?.(window);
   const { createRoot } = await import('react-dom/client');
   const { Watchtower } = await import('./Watchtower');
   const host = window.document.createElement('div');
@@ -231,5 +232,76 @@ test('Watchtower marks the previous kernel snapshot stale while refresh is pendi
     await act(async () => { await Promise.resolve(); });
     assert.match(rendered.host.textContent ?? '', /later/);
     assert.match(rendered.host.textContent ?? '', /current read/);
+  } finally { await cleanup(rendered); }
+});
+
+test('active discovery requires a manual start, serializes requests, pauses, resumes, and clears its timer', async (context) => {
+  const timers = new Map<number, () => void>();
+  let nextTimer = 0;
+  let discoveryCalls = 0;
+  let finishDiscovery!: (value: unknown) => void;
+  const snapshot = { captured_at: 'now', captured_at_unix_ms: 1, stale: false, interfaces: [], routes: [], default_gateway: null, neighbors: [], warnings: [] } as WatchtowerSnapshot;
+  const rendered = await render({
+    flows: [], events: [], graph: { nodes: [], edges: [] },
+    inventorySources: { getDetailedNetworkInterfaces: async () => [], getDevices: async () => [], refreshDevices: async () => [] },
+    kernelSnapshotSource: async () => snapshot,
+  }, window => {
+    context.mock.method(window, 'setInterval', (callback: () => void, delay: number) => {
+      assert.equal(delay, 30_000);
+      timers.set(++nextTimer, callback);
+      return nextTimer;
+    });
+    context.mock.method(window, 'clearInterval', (id: number) => { timers.delete(id); });
+    Object.assign(window, { __TAURI_INTERNALS__: { invoke: async (command: string) => {
+      if (command === 'get_backend_readiness') return null;
+      assert.equal(command, 'watchtower_discover_local');
+      discoveryCalls++;
+      return new Promise(resolve => { finishDiscovery = resolve; });
+    } } });
+  });
+  const click = async (label: string) => {
+    const button = [...rendered.host.querySelectorAll('button')].find(item => item.textContent === label);
+    assert.ok(button, `Missing ${label}`);
+    await act(async () => { button.click(); });
+  };
+  const tick = async () => { await act(async () => { for (const callback of timers.values()) callback(); }); };
+  const finish = async () => { await act(async () => {
+    finishDiscovery({ interface: 'fixture0', local_ip: '192.0.2.10', cidr: '192.0.2.0/24', gateway: null, devices: [], warnings: [] });
+  }); };
+  try {
+    assert.equal(discoveryCalls, 0);
+    assert.equal(timers.size, 0, 'no active polling before explicit user action');
+    await click('Refresh now');
+    assert.equal(discoveryCalls, 1);
+    assert.equal(timers.size, 1);
+    await tick();
+    assert.equal(discoveryCalls, 1, 'pending discovery must not overlap');
+    await finish();
+    await click('Pause discovery');
+    assert.equal(timers.size, 0);
+    await tick();
+    assert.equal(discoveryCalls, 1);
+    await click('Resume discovery');
+    assert.equal(timers.size, 1);
+    await tick();
+    assert.equal(discoveryCalls, 2);
+    await finish();
+  } finally { await cleanup(rendered); }
+  assert.equal(timers.size, 0, 'unmount must clear discovery polling');
+});
+
+test('empty inventory disables scan and capture handoffs even when callbacks exist', async () => {
+  const calls: unknown[] = [];
+  const rendered = await render({ flows: [], events: [], graph: { nodes: [], edges: [] },
+    onOpenScan: value => calls.push(value), onOpenCapture: value => calls.push(value),
+  });
+  try {
+    for (const label of ['Scan first neighbor', 'Capture interface']) {
+      const button = [...rendered.host.querySelectorAll('button')].find(item => item.textContent === label);
+      assert.ok(button);
+      assert.equal(button.disabled, true);
+      await act(async () => { button.click(); });
+    }
+    assert.deepEqual(calls, []);
   } finally { await cleanup(rendered); }
 });

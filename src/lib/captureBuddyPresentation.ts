@@ -1,3 +1,49 @@
+export type CapturePacket = { number: number; time: string; source: string; destination: string; protocol: string; length: string; info: string };
+export type CapturePage = { packets: CapturePacket[]; has_more: boolean; translated_filter?: string };
+
+/** Keep the native packet-number cursor semantics while presenting newest packets first. */
+export function newestPacketsFirst(page: CapturePage): CapturePage {
+  return { ...page, packets: page.packets.slice().sort((a, b) => b.number - a.number) };
+}
+
+export const CAPTURE_LIMITS = {
+  snapshotMin: 64,
+  snapshotMax: 262144,
+  bytesMin: 24,
+  bytesMax: 32 * 1024 * 1024,
+  packetsMin: 1,
+  packetsMax: 100000,
+} as const;
+
+export function validateCaptureOptions(snapshotLength: string, maxBytes: string, maxPackets: string): string | null {
+  const values = [snapshotLength, maxBytes, maxPackets].map(Number);
+  if (values.some((value) => !Number.isInteger(value))) return 'Snapshot length, max bytes, and max packets must be whole numbers.';
+  const [snapshot, bytes, packets] = values;
+  if (snapshot < CAPTURE_LIMITS.snapshotMin || snapshot > CAPTURE_LIMITS.snapshotMax) return `Snapshot length must be ${CAPTURE_LIMITS.snapshotMin.toLocaleString()}–${CAPTURE_LIMITS.snapshotMax.toLocaleString()} bytes.`;
+  if (bytes < CAPTURE_LIMITS.bytesMin || bytes > CAPTURE_LIMITS.bytesMax) return `Max bytes must be ${CAPTURE_LIMITS.bytesMin.toLocaleString()}–${CAPTURE_LIMITS.bytesMax.toLocaleString()}.`;
+  if (packets < CAPTURE_LIMITS.packetsMin || packets > CAPTURE_LIMITS.packetsMax) return `Max packets must be ${CAPTURE_LIMITS.packetsMin.toLocaleString()}–${CAPTURE_LIMITS.packetsMax.toLocaleString()}.`;
+  return null;
+}
+
+export const telemetryMetric = (value: number, decimals?: number, available = true) => available && Number.isFinite(value) && value >= 0
+  ? decimals === undefined ? value.toLocaleString() : value.toFixed(decimals)
+  : '—';
+
+export const captureDisplayState = (value: string) => {
+  const normalized = value.trim().toUpperCase();
+  if (normalized === 'RUNNING' || normalized === 'LIVE') return 'LIVE';
+  if (normalized === 'STALE') return 'STALE';
+  if (normalized === 'STOPPED' || normalized === 'IDLE') return 'STOPPED';
+  return normalized || 'UNAVAILABLE';
+};
+
+export const telemetryStateHasValues = (state: string) => state === 'LIVE' || state === 'STALE';
+
+/** Capture engines have used both RUNNING and LIVE for the active state. */
+export function captureIsRunning(status: string): boolean {
+  return status === 'RUNNING' || status === 'LIVE';
+}
+
 export function captureIssue(message: string) {
   if (/CAPTURE_SETUP/i.test(message)) return {
     title: 'One-time native recorder setup required',

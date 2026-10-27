@@ -17,7 +17,6 @@ export function projectCaptureInvestigation(value: CaptureInvestigation, filters
   const slice = <T,>(items: T[]) => items.slice(page * bounded, (page + 1) * bounded);
   return { conversations: slice(conversations), timeline: slice(timeline), anomalies: slice(anomalies), generated_from_packets: value.generated_from_packets, limitations: value.limitations.slice(0, 100).map(s => cap(s)), totals: { conversations: conversations.length, timeline: timeline.length, anomalies: anomalies.length }, truncated: page > 0 || [conversations, timeline, anomalies].some(items => items.length > bounded) };
 }
-export const filterCaptureInvestigation = projectCaptureInvestigation;
 export function boundedPreview(value: string, max = 240) { return cap(value, Math.max(1, max)); }
 export function exportCaptureInvestigationJson(value: CaptureInvestigation, filters: InvestigationFilters = {}) { return JSON.stringify(projectCaptureInvestigation(value, filters), null, 2); }
 export function exportCaptureInvestigationBundle(value: CaptureInvestigation, filters: InvestigationFilters = {}) {

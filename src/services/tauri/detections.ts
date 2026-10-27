@@ -1,3 +1,4 @@
+import { invoke } from '@tauri-apps/api/core';
 import { isTauriEnvironment } from './isTauri';
 
 export interface DetectionFinding {
@@ -52,7 +53,6 @@ export interface DetectionRule {
 export async function getDetections(limit = 100): Promise<DetectionFinding[]> {
   if (isTauriEnvironment()) {
     try {
-      const { invoke } = await import('@tauri-apps/api/core');
       return await invoke<DetectionFinding[]>('get_detections', { limit });
     } catch (err) {
       console.warn('Failed to get detections:', err);
@@ -67,7 +67,6 @@ export async function getDetections(limit = 100): Promise<DetectionFinding[]> {
 export async function getDetectionSummary(): Promise<DetectionSummary> {
   if (isTauriEnvironment()) {
     try {
-      const { invoke } = await import('@tauri-apps/api/core');
       return await invoke<DetectionSummary>('get_detection_summary');
     } catch (err) {
       console.warn('Failed to get detection summary:', err);
@@ -91,7 +90,6 @@ export async function getDetectionSummary(): Promise<DetectionSummary> {
 export async function getDetectionById(findingId: string): Promise<DetectionFinding | null> {
   if (isTauriEnvironment()) {
     try {
-      const { invoke } = await import('@tauri-apps/api/core');
       return await invoke<DetectionFinding | null>('get_detection_by_id', { findingId });
     } catch (err) {
       console.warn('Failed to get detection by ID:', err);
@@ -106,7 +104,6 @@ export async function getDetectionById(findingId: string): Promise<DetectionFind
 export async function acknowledgeDetection(findingId: string): Promise<boolean> {
   if (isTauriEnvironment()) {
     try {
-      const { invoke } = await import('@tauri-apps/api/core');
       return await invoke<boolean>('acknowledge_detection', { findingId });
     } catch (err) {
       console.warn('Failed to acknowledge detection:', err);
@@ -121,7 +118,6 @@ export async function acknowledgeDetection(findingId: string): Promise<boolean> 
 export async function resolveDetection(findingId: string): Promise<boolean> {
   if (isTauriEnvironment()) {
     try {
-      const { invoke } = await import('@tauri-apps/api/core');
       return await invoke<boolean>('resolve_detection', { findingId });
     } catch (err) {
       console.warn('Failed to resolve detection:', err);
@@ -136,7 +132,6 @@ export async function resolveDetection(findingId: string): Promise<boolean> {
 export async function enableDisableRule(ruleId: string, enabled: boolean): Promise<boolean> {
   if (isTauriEnvironment()) {
     try {
-      const { invoke } = await import('@tauri-apps/api/core');
       return await invoke<boolean>('enable_disable_rule', { ruleId, enabled });
     } catch (err) {
       console.warn('Failed to enable/disable rule:', err);
@@ -151,7 +146,6 @@ export async function enableDisableRule(ruleId: string, enabled: boolean): Promi
 export async function listRules(): Promise<DetectionRule[]> {
   if (isTauriEnvironment()) {
     try {
-      const { invoke } = await import('@tauri-apps/api/core');
       return await invoke<DetectionRule[]>('list_rules');
     } catch (err) {
       console.warn('Failed to list rules:', err);

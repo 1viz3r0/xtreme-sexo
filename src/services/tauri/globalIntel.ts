@@ -1,3 +1,4 @@
+import { invoke } from '@tauri-apps/api/core';
 import { isTauriEnvironment } from './isTauri';
 import type { CaptureMetrics } from './capture';
 import type { FlowRecord, FlowSummaryStats } from './flows';
@@ -32,7 +33,6 @@ export async function getGlobalIntelSnapshot(limit = 100): Promise<GlobalIntelSn
   if (!isTauriEnvironment()) {
     throw new Error('Global Intel telemetry is unavailable in browser mode. Open the native desktop app.');
   }
-  const { invoke } = await import('@tauri-apps/api/core');
   // Propagate failures: an unavailable source is not a successful empty snapshot.
   return invoke<GlobalIntelSnapshot>('get_global_intel_snapshot', { limit });
 }

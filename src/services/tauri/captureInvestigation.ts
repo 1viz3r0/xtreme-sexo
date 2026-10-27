@@ -1,3 +1,4 @@
+import { invoke } from '@tauri-apps/api/core';
 import { isTauriEnvironment } from './isTauri';
 
 export interface InvestigationConversation { id: string; source: string; destination: string; source_port: number | null; destination_port: number | null; protocol: string; packets: number; bytes: number; first_time: number | null; last_time: number | null; packet_numbers: number[] }
@@ -29,7 +30,7 @@ export async function generateCaptureInvestigation(sessionId: string): Promise<C
   let timer: ReturnType<typeof setTimeout> | undefined;
   try {
     const value = await Promise.race([
-      import('@tauri-apps/api/core').then(({ invoke }) => invoke<unknown>('buddy_investigation_model', { sessionId })),
+      invoke<unknown>('buddy_investigation_model', { sessionId }),
       new Promise<never>((_, reject) => { timer = setTimeout(() => reject(new CaptureInvestigationTimeoutError()), CAPTURE_INVESTIGATION_DEADLINE_MS); }),
     ]);
     if (!isCaptureInvestigation(value)) throw new Error('Capture Buddy returned an incompatible investigation response. Rebuild the native app so frontend and backend match.');

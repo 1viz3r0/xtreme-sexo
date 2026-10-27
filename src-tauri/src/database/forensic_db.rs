@@ -3,9 +3,21 @@ use crate::models::{
 };
 use crate::services::query_validator::validate_sql_query;
 use std::sync::Mutex;
-use std::time::{Instant, SystemTime, UNIX_EPOCH};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 static FORENSIC_QUERY_MUTEX: Mutex<()> = Mutex::new(());
+
+fn bound_query(conn: &rusqlite::Connection, duration: Duration) {
+    use rusqlite::limits::Limit;
+    conn.set_limit(Limit::SQLITE_LIMIT_LENGTH, 1024 * 1024);
+    conn.set_limit(Limit::SQLITE_LIMIT_SQL_LENGTH, 64 * 1024);
+    conn.set_limit(Limit::SQLITE_LIMIT_COLUMN, 64);
+    conn.set_limit(Limit::SQLITE_LIMIT_EXPR_DEPTH, 100);
+    conn.set_limit(Limit::SQLITE_LIMIT_ATTACHED, 0);
+    let started = Instant::now();
+    // Check inside SQLite VM execution, including work before the first row.
+    conn.progress_handler(1000, Some(move || started.elapsed() >= duration));
+}
 
 pub fn execute_forensic_query(
     sql_query: &str,
@@ -37,6 +49,7 @@ pub fn execute_forensic_query(
         rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY,
     )
     .map_err(|e| format!("Failed to open read-only database: {}", e))?;
+    bound_query(&conn, Duration::from_secs(10));
 
     let mut stmt = conn
         .prepare(sql_query)
@@ -50,6 +63,7 @@ pub fn execute_forensic_query(
 
     let mut rows_out = Vec::new();
     let mut truncated = false;
+    let mut returned_bytes = 0usize;
 
     let mut query_rows = stmt
         .query([])
@@ -79,6 +93,12 @@ pub fn execute_forensic_query(
             };
             row_vals.push(val_str);
         }
+        let row_bytes: usize = row_vals.iter().map(String::len).sum();
+        if returned_bytes.saturating_add(row_bytes) > 8 * 1024 * 1024 {
+            truncated = true;
+            break;
+        }
+        returned_bytes += row_bytes;
         rows_out.push(row_vals);
     }
 
@@ -208,4 +228,33 @@ fn current_ts_ms() -> u64 {
         .duration_since(UNIX_EPOCH)
         .map(|d| d.as_millis() as u64)
         .unwrap_or(0)
+}
+
+#[cfg(test)]
+mod safety_tests {
+    use super::*;
+
+    #[test]
+    fn deadline_interrupts_sqlite_work_before_its_first_row() {
+        let conn = rusqlite::Connection::open_in_memory().unwrap();
+        bound_query(&conn, Duration::ZERO);
+        let before = Instant::now();
+        let result = conn.query_row(
+            "WITH RECURSIVE n(x) AS (SELECT 1 UNION ALL SELECT x+1 FROM n WHERE x<100000000) SELECT sum(x) FROM n",
+            [], |row| row.get::<_, i64>(0));
+        assert!(matches!(result, Err(rusqlite::Error::SqliteFailure(error, _))
+            if error.code == rusqlite::ErrorCode::OperationInterrupted));
+        assert!(before.elapsed() < Duration::from_secs(1));
+    }
+
+    #[test]
+    fn result_value_and_column_limits_prevent_unbounded_allocations() {
+        let conn = rusqlite::Connection::open_in_memory().unwrap();
+        bound_query(&conn, Duration::from_secs(10));
+        let result = conn.query_row("SELECT randomblob(2097152)", [], |row| row.get::<_, Vec<u8>>(0));
+        assert!(result.is_err());
+        let sql = format!("SELECT {}", vec!["1"; 65].join(","));
+        assert!(conn.prepare(&sql).is_err());
+        assert_eq!(conn.query_row("SELECT 1", [], |row| row.get::<_, i64>(0)).unwrap(), 1);
+    }
 }

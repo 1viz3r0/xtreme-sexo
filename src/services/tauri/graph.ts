@@ -1,3 +1,4 @@
+import { invoke } from '@tauri-apps/api/core';
 import { isTauriEnvironment } from './isTauri';
 
 export interface GraphNode {
@@ -56,7 +57,6 @@ export interface AttackGraph {
 export async function getAttackGraph(): Promise<AttackGraph> {
   if (isTauriEnvironment()) {
     try {
-      const { invoke } = await import('@tauri-apps/api/core');
       return await invoke<AttackGraph>('get_attack_graph');
     } catch (err) {
       console.warn('Failed to get attack graph:', err);
@@ -71,7 +71,6 @@ export async function getAttackGraph(): Promise<AttackGraph> {
 export async function getStorylines(): Promise<AttackStoryline[]> {
   if (isTauriEnvironment()) {
     try {
-      const { invoke } = await import('@tauri-apps/api/core');
       return await invoke<AttackStoryline[]>('get_storylines');
     } catch (err) {
       console.warn('Failed to get storylines:', err);
@@ -86,7 +85,6 @@ export async function getStorylines(): Promise<AttackStoryline[]> {
 export async function getStorylineById(storylineId: string): Promise<AttackStoryline | null> {
   if (isTauriEnvironment()) {
     try {
-      const { invoke } = await import('@tauri-apps/api/core');
       return await invoke<AttackStoryline | null>('get_storyline_by_id', { storylineId });
     } catch (err) {
       console.warn('Failed to get storyline by ID:', err);
