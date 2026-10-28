@@ -1,6 +1,6 @@
 [package]
 name = "netoze-desktop"
-version = "2.0.0"
+version = "2.0.1"
 description = "NET0ZE Desktop NTA & IDS Cybersecurity Platform"
 authors = ["NET0ZE Team"]
 edition = "2021"
