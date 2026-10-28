@@ -1637,3 +1637,11 @@ FAILED: linux desktop build step cargo (exit 101). Inspect the build output for 
 ### 2026-10-26 02:20:12 IST (+05:30)
 
 STARTED: linux desktop build; full packaged application.
+
+### 2026-10-28 05:02:30 IST (+05:30)
+
+STARTED: linux desktop build; full packaged application.
+
+### 2026-10-28 05:07:11 IST (+05:30)
+
+FAILED: linux desktop build step node (exit 1). Inspect the build output for details.
