@@ -257,4 +257,22 @@ mod safety_tests {
         assert!(conn.prepare(&sql).is_err());
         assert_eq!(conn.query_row("SELECT 1", [], |row| row.get::<_, i64>(0)).unwrap(), 1);
     }
+
+    #[test]
+    fn execute_forensic_query_blocks_malicious_sql_before_prepare() {
+        // Regression for strix finding vuln-0001 (SQL injection via forensic query
+        // persistence replay): even if a tampered/stale saved-query row held bad SQL,
+        // the execute path must re-validate the statement before preparing anything.
+        let malicious = [
+            "SELECT src_ip FROM flow_records; DELETE FROM flow_records",
+            "SELECT src_ip FROM flow_records; PRAGMA journal_mode=WAL",
+            "ATTACH '/tmp/netoze-attack.db' AS e; SELECT * FROM e.t",
+            "UPDATE flow_records SET src_ip='1.2.3.4'",
+            "SELECT load_extension('x')",
+        ];
+        for sql in malicious {
+            let res = execute_forensic_query(sql, Some(10));
+            assert!(res.is_err(), "execute path must reject: {sql}");
+        }
+    }
 }

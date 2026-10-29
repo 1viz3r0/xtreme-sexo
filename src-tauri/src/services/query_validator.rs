@@ -57,6 +57,7 @@ pub fn validate_sql_query(raw_sql: &str) -> QueryValidationResult {
     let forbidden_functions = [
         "READ_TEXT", "READ_BLOB", "WRITE_CSV", "READ_CSV", "PARQUET_SCAN",
         "HTTP_GET", "HTTP_POST", "SYSTEM_EXEC", "SHELL", "COPY_TO",
+        "LOAD_EXTENSION", "LOAD_DATA", "LOAD_FILE",
     ];
 
     for fn_name in &forbidden_functions {
@@ -211,5 +212,20 @@ mod tests {
         let res = validate_sql_query("SELECT * FROM flow_records; DROP TABLE ja4_fingerprints;");
         assert!(!res.is_valid);
         assert_eq!(res.statement_type, "MULTIPLE_STATEMENTS");
+    }
+
+    #[test]
+    fn rejects_extension_and_bulk_loader_functions() {
+        // rusqlite also disables load_extension at connect time, but the detection
+        // layer must name it so read-only forensics never even attempt it.
+        for sql in [
+            "SELECT load_extension('x')",
+            "SELECT * FROM flow_records WHERE dst_port = LOAD_EXTENSION('x')",
+            "SELECT load_data('x')",
+            "SELECT load_file('x')",
+        ] {
+            let res = validate_sql_query(sql);
+            assert!(!res.is_valid, "validator must reject: {sql}");
+        }
     }
 }

@@ -150,6 +150,19 @@ mod tests {
     }
 
     #[test]
+    fn save_forensic_query_rejects_non_read_only_sql() {
+        use crate::commands::backend::save_forensic_query;
+        for sql in [
+            "SELECT src_ip FROM flow_records; DELETE FROM flow_records",
+            "UPDATE flow_records SET src_ip='1.2.3.4'",
+            "SELECT load_extension('x')",
+        ] {
+            let res = save_forensic_query("probe".to_string(), "try to persist".to_string(), sql.to_string());
+            assert!(res.is_err(), "save path must reject: {sql}");
+        }
+    }
+
+    #[test]
     fn test_phase10_system_auditing_and_correlations() {
         let identity = get_host_identity_info();
         assert!(!identity.hostname.is_empty());
