@@ -36,7 +36,10 @@ jobs:
           $sdkRoot = Join-Path $env:RUNNER_TEMP 'npcap-sdk'
           Invoke-WebRequest -Uri $env:NPCAP_SDK_URL -OutFile $archive
           Expand-Archive -LiteralPath $archive -DestinationPath $sdkRoot -Force
-          $wpcap = Get-ChildItem -LiteralPath $sdkRoot -Filter wpcap.lib -File -Recurse | Select-Object -First 1
+          # Link against the x64 import lib; grabbing the first recursive match
+          # used to yield Lib\wpcap.lib (x86) and fail with LNK2019 x33/LNK4272.
+          $wpcap = Get-ChildItem -LiteralPath (Join-Path $sdkRoot 'Lib\x64') -Filter wpcap.lib -File -ErrorAction SilentlyContinue | Select-Object -First 1
+          if (-not $wpcap) { $wpcap = Get-ChildItem -LiteralPath $sdkRoot -Filter wpcap.lib -File -Recurse | Select-Object -First 1 }
           if (-not $wpcap) { throw 'Npcap SDK download did not contain wpcap.lib.' }
           "NPCAP_SDK=$sdkRoot" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
           "LIBPCAP_LIBDIR=$($wpcap.DirectoryName)" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
