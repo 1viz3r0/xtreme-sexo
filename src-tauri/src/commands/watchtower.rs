@@ -45,8 +45,9 @@ pub struct ActiveLocalDiscovery {
 }
 
 /// Bounded, explicit local discovery. This is intentionally separate from the
-/// passive Watchtower snapshot: it sends one ICMP echo attempt per host in the
-/// selected local /24 (or smaller) and never expands to public/remote ranges.
+/// passive Watchtower snapshot: it attempts short bounded TCP reachability
+/// probes against each host of the selected local /24 (or smaller) and never
+/// expands to public/remote ranges.
 #[command]
 pub async fn watchtower_discover_local() -> Result<ActiveLocalDiscovery, String> {
     tokio::task::spawn_blocking(|| {
@@ -97,7 +98,7 @@ pub async fn watchtower_discover_local() -> Result<ActiveLocalDiscovery, String>
                     if let Some(existing) = devices.iter_mut().find(|device| device.ip == *ip_text) {
                         existing.mac = mac.or(existing.mac.take());
                         existing.state = state;
-                        existing.method = "ARP/neighbour cache + ICMP sweep".into();
+                        existing.method = "ARP/neighbour cache + TCP probes".into();
                     } else {
                         devices.push(ActiveLocalDevice { ip: ip_text.to_string(), mac, state, gateway: gateway.as_deref() == Some(ip_text), method: "ARP/neighbour cache".into(), observed_at: now.clone(), last_seen: now.clone(), seen_count: 1, present: true });
                     }
@@ -124,6 +125,6 @@ pub async fn watchtower_discover_local() -> Result<ActiveLocalDiscovery, String>
         }
         let mut devices = cache.values().cloned().collect::<Vec<_>>();
         devices.sort_by(|a, b| a.ip.cmp(&b.ip));
-        Ok(ActiveLocalDiscovery { interface: iface.interface_name, local_ip: local.to_string(), cidr: iface.scan_cidr, gateway, devices, warnings: vec!["Fast bounded sweep: ICMP and short TCP reachability checks run across the detected local subnet. Results are retained across refreshes. Present means observed in the latest sweep; not-seen-this-sweep is historical evidence, not proof that a device disconnected.".into()] })
+        Ok(ActiveLocalDiscovery { interface: iface.interface_name, local_ip: local.to_string(), cidr: iface.scan_cidr, gateway, devices, warnings: vec!["Fast bounded sweep: short TCP reachability probes run across the detected local subnet, enriched by the kernel neighbour (ARP) cache. Results are retained across refreshes. Present means observed in the latest sweep; not-seen-this-sweep is historical evidence, not proof that a device disconnected.".into()] })
     }).await.map_err(|error| format!("Local discovery worker failed: {error}"))?
 }
