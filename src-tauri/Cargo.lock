@@ -2040,7 +2040,7 @@ dependencies = [
 
 [[package]]
 name = "netoze-desktop"
-version = "2.0.1"
+version = "2.0.2"
 dependencies = [
  "chrono",
  "dirs 5.0.1",
