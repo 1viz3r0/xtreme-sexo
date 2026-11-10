@@ -1653,3 +1653,23 @@ STARTED: linux desktop build; full packaged application.
 ### 2026-10-30 18:58:24 IST (+05:30)
 
 FAILED: linux desktop build step node (exit 1). Inspect the build output for details.
+
+### 2026-11-10 23:22:04 IST (+05:30)
+
+STARTED: linux desktop build; full packaged application.
+
+### 2026-11-10 23:33:30 IST (+05:30)
+
+COMPLETED: linux desktop build and artifact staging. See releases/linux/ and its manifest for exact files and checksums. Runtime validation is a separate check.
+
+### 2026-11-10 23:34:51 IST (+05:30)
+
+STARTED: linux desktop build; full packaged application.
+
+### 2026-11-10 23:37:46 IST (+05:30)
+
+STARTED: linux desktop build; full packaged application.
+
+### 2026-11-10 23:44:08 IST (+05:30)
+
+COMPLETED: linux desktop build and artifact staging. See releases/linux/ and its manifest for exact files and checksums. Runtime validation is a separate check.
