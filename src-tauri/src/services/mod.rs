@@ -33,6 +33,7 @@ pub mod storyline_builder;
 pub mod system_inspector;
 pub mod telemetry_worker;
 pub mod threat_intel;
+pub mod update_gate;
 pub mod watchtower;
 
 pub use capture_service::CaptureEngine;

@@ -17,6 +17,11 @@ pub fn run() {
         .setup(|app| {
             let flows = app.state::<state::BackendState>().flows.clone();
             services::start_telemetry_worker(app.handle().clone(), flows);
+            // Signed-manifest update gate: boot check + 6h periodic worker.
+            let cache_path = crate::database::sqlite::get_app_dir().join("update-gate-state.json");
+            let current_version = app.package_info().version.to_string();
+            app.manage(services::update_gate::UpdateGateState::new(cache_path, current_version));
+            services::update_gate::spawn_worker(app.handle().clone());
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
@@ -133,6 +138,10 @@ pub fn run() {
             commands::auth::auth_my_activity,
             commands::auth::admin_list_users,
             commands::auth::admin_list_activity,
+            commands::update_gate::update_gate_status,
+            commands::update_gate::update_gate_check_now,
+            commands::update_gate::update_gate_install,
+            commands::update_gate::update_gate_open_data_folder,
         ])
         .build(tauri::generate_context!())
         .expect("Error building tauri application")

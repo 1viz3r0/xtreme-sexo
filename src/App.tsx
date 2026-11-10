@@ -2,6 +2,8 @@ import React, { lazy, Suspense, useEffect, useMemo, useRef, useState } from 'rea
 import { createLifecycle, liveDataNeeds, mergeRecent, startSerialPolling } from './lib/appLifecycle';
 import { TopNavbar } from './components/TopNavbar';
 import { Sidebar } from './components/Sidebar';
+import { UpdateBanner } from './components/UpdateBanner';
+import { UpdateGateOverlay } from './components/UpdateGateOverlay';
 import type { TabType } from './components/Sidebar';
 import { CaptureBuddy } from './components/CaptureBuddy';
 import { SystemLogs } from './components/SystemLogs';
@@ -230,6 +232,11 @@ export const App: React.FC = () => {
 
         {/* View Routing Workspace */}
         <main id="studio-workspace" aria-label="Workspace" className="studio-workspace">
+          {/* Update surfaces: banner (advisory) + gate overlay (mandatory).
+              The gate deliberately covers only the workspace, keeping the
+              sidebar's recovery/diagnostics tools reachable. */}
+          <UpdateBanner />
+          <UpdateGateOverlay />
           <Suspense fallback={<div role="status" className="p-4 text-sm text-slate-400">Loading view…</div>}>
            {activeTab === 'conversations' && (
             <div className="studio-page">

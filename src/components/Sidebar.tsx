@@ -129,7 +129,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
       <nav ref={navRef} className="studio-nav" aria-label="Primary navigation">
         {!isCollapsed && <h2 className="studio-nav-heading">Operations · Monitoring</h2>}
          <div className="studio-nav-group">
-           {renderItems(filteredMenuItems.filter(item => !item.experimental && item.id !== 'user_profile' && item.id !== 'admin_panel'))}
+           {renderItems(filteredMenuItems.filter(item => !item.experimental && item.id !== 'user_profile' && item.id !== 'admin_panel' && item.id !== 'global_intel'))}
          </div>
          <div className="studio-experimental" aria-label="Additional tools">
            <button
@@ -147,6 +147,10 @@ export const Sidebar: React.FC<SidebarProps> = ({
            >
              {isCollapsed ? <LockKeyhole size={18} aria-hidden="true" /> : <><LockKeyhole size={14} aria-hidden="true" /><span>Additional tools</span><span className="studio-locked-label">Locked</span></>}
            </button>
+           {/* Overview lives in Additional tools now: behavior-identical
+               (same component, same landing tab), a real clickable nav item
+               beside the locked Enterprise entries in expanded mode. */}
+           {!isCollapsed && renderItems(filteredMenuItems.filter(item => item.id === 'global_intel'))}
              {additionalToolsOpen && !isCollapsed && <div id="additional-tools-locked" className="studio-experimental-locked" aria-label="Locked additional tools">
               {filteredMenuItems.filter(item => item.experimental).map((item) => (
                 <div key={item.id} className="studio-locked-tool" aria-disabled="true">

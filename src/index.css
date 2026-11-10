@@ -466,3 +466,31 @@
 @media (max-width: 1100px) { .enterprise-overview-grid, .enterprise-guide-grid, .enterprise-hero-grid, .enterprise-labs-hero, .enterprise-learning-layout { grid-template-columns: 1fr; } .enterprise-learning-grid, .enterprise-tutorial-grid { grid-template-columns: repeat(2,1fr); } .enterprise-overview-metrics { grid-template-columns: repeat(3,1fr); } }
 @media (max-width: 760px) { .enterprise-page, .enterprise-overview { padding: 15px; } .enterprise-page-header, .enterprise-overview-header { flex-direction: column; } .enterprise-overview-actions { align-items: flex-start; } .enterprise-step-grid, .enterprise-topic-columns, .enterprise-learning-meta, .enterprise-learning-outcomes { grid-template-columns: repeat(2,1fr); } .enterprise-topic-layout { grid-template-columns: 1fr; } .enterprise-overview-metrics { grid-template-columns: repeat(2,1fr); } .enterprise-learning-footer { align-items: flex-start; flex-direction: column; } }
 @media (max-width: 480px) { .enterprise-learning-grid, .enterprise-tutorial-grid, .enterprise-step-grid, .enterprise-topic-columns { grid-template-columns: 1fr; } .enterprise-overview-metrics { grid-template-columns: 1fr 1fr; } .enterprise-card-actions { width: 100%; justify-content: flex-start; } }
+
+/* Update surfaces: advisory banner + mandatory-update gate overlay. The
+   gate only ever covers the workspace, never the sidebar, so recovery,
+   diagnostics and data export stay reachable while a gate is enforced. */
+.update-banner { display: flex; align-items: center; gap: 10px; padding: 8px 14px; border-bottom: 1px solid #2c2c2c; background: #131313; color: #d8d8d8; font-size: 12.5px; flex-shrink: 0; }
+.update-banner--stub { color: #9a9a9a; }
+.update-banner--informational, .update-banner--low { background: #131313; color: #c9c9c9; }
+.update-banner--moderate { background: #17140e; border-bottom-color: #4a3e21; color: #e4d9bd; }
+.update-banner--high { background: #221114; border-bottom-color: #61232e; color: #ead4d8; }
+.update-banner__message { flex: 1; min-width: 0; }
+.update-banner__meta { color: #7d7d7d; font-size: 11px; white-space: nowrap; }
+.update-banner__button, .update-gate__secondary { display: inline-flex; align-items: center; gap: 6px; padding: 6px 10px; border: 1px solid #3a3a3a; border-radius: 7px; background: #1b1b1b; color: #dcdcdc; font-size: 12px; cursor: pointer; }
+.update-banner__button:hover, .update-gate__secondary:hover { background: #242424; color: #fff; }
+.update-gate { position: absolute; inset: 0; z-index: 30; display: flex; align-items: center; justify-content: center; background: rgba(5, 5, 5, 0.9); }
+.update-gate__panel { width: min(560px, 88%); max-height: 86%; overflow-y: auto; padding: 22px 24px; border: 1px solid #61232e; border-radius: 12px; background: #160b0e; color: #ecdadd; box-shadow: 0 24px 80px rgba(0, 0, 0, 0.55); }
+.update-gate__head { display: flex; align-items: center; gap: 10px; }
+.update-gate__head h2 { font-size: 16px; font-weight: 600; }
+.update-gate__version { margin-left: auto; border: 1px solid #61232e; border-radius: 999px; padding: 2px 9px; font-size: 11px; color: #e0b9bf; }
+.update-gate__reason { margin: 12px 0 0; font-size: 13px; line-height: 1.55; color: #d8c3c6; }
+.update-gate__progress { display: inline-flex; align-items: center; gap: 8px; margin-top: 12px; font-size: 12px; color: #e0b9bf; }
+.update-gate__error { margin: 10px 0 0; font-size: 12px; color: #f0b7c1; }
+.update-gate__actions { display: flex; flex-wrap: wrap; gap: 9px; margin-top: 16px; }
+.update-gate__primary { display: inline-flex; align-items: center; gap: 7px; padding: 8px 14px; border: 1px solid #7e2d3c; border-radius: 8px; background: #7e2d3c; color: #fff; font-size: 13px; cursor: pointer; }
+.update-gate__primary:hover { background: #96374a; }
+.update-gate__primary:disabled { opacity: 0.55; cursor: wait; }
+.update-gate__secondary:disabled { opacity: 0.55; cursor: wait; }
+.update-gate__note { margin: 16px 0 0; font-size: 11px; line-height: 1.5; color: #a98d91; }
+.update-gate__link { color: #e0b9bf; }

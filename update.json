@@ -1,1 +1,55 @@
-{"force_min_version":"2.0.2","policy":"security-floor"}
+{
+  "schema": 1,
+  "app": "netoze-desktop",
+  "channel": "stable",
+  "policy": "security-floor",
+  "force_min_version": "2.0.2",
+  "min_supported_version": "2.0.2",
+  "generated_at": "2026-11-10T00:00:00Z",
+  "latest": {
+    "version": "2.0.2",
+    "severity": "moderate",
+    "mandatory": false,
+    "pub_date": "2026-10-30T13:30:13Z",
+    "notes_url": "https://github.com/1viz3r0/xtreme-sexo/releases/tag/v2.0.2"
+  },
+  "platforms": {
+    "linux-x86_64": {
+      "artifacts": [
+        {
+          "format": "deb",
+          "url": "https://github.com/1viz3r0/xtreme-sexo/releases/download/v2.0.2/NET0ZE_2.0.2_amd64.deb",
+          "bytes": 11951588,
+          "sha256": "078672312fbc7c4cdfdedb7a93286912a419bc2da4916c2ca214f3b8c8fabee9"
+        },
+        {
+          "format": "appimage",
+          "url": "https://github.com/1viz3r0/xtreme-sexo/releases/download/v2.0.2/NET0ZE_2.0.2_amd64.AppImage",
+          "bytes": 105273848,
+          "sha256": "7af45699a19e1fdb4291c32ea5ca0920cc87672738153026e51e33954e039ad0"
+        }
+      ]
+    },
+    "windows-x86_64": {
+      "artifacts": [
+        {
+          "format": "nsis-setup",
+          "url": "https://github.com/1viz3r0/xtreme-sexo/releases/download/v2.0.2/NET0ZE_2.0.2_x64-setup.exe",
+          "bytes": 10516804,
+          "sha256": "a50d7de2e38daf2ded67b42c8892ca94fcd939f7db8f2abe732f1318d2f21d06"
+        },
+        {
+          "format": "msi",
+          "url": "https://github.com/1viz3r0/xtreme-sexo/releases/download/v2.0.2/NET0ZE_2.0.2_x64_en-US.msi",
+          "bytes": 12488704,
+          "sha256": "2e87dee5deec48b7f9538867efba17b4214a8b2f9e3c8e21a11f9606595f8784"
+        }
+      ]
+    }
+  },
+  "signing": {
+    "algorithm": "minisign-ed25519",
+    "key_id": "939876411A7C0F1B",
+    "signature_reference": "update.json.sig"
+  }
+}

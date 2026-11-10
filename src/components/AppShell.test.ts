@@ -25,7 +25,10 @@ test('Studio header and monitoring navigation are accessible and concise', () =>
   assert.match(sidebar, /aria-label="Primary navigation"/);
   assert.match(sidebar, /Monitoring/);
   assert.match(sidebar, /aria-label="Overview"/);
-  assert.ok(sidebar.indexOf('Overview') < sidebar.indexOf('Watchtower'));
+  // Overview relocated into Additional tools: a real clickable item below the
+  // group trigger, no longer ahead of Watchtower in the primary group.
+  assert.ok(sidebar.indexOf('Overview') > sidebar.indexOf('Watchtower'));
+  assert.ok(sidebar.indexOf('Additional tools') < sidebar.indexOf('Overview'));
   assert.match(sidebar, /aria-label="Watchtower"/);
   assert.ok(sidebar.indexOf('Watchtower') < sidebar.indexOf('Capture Buddy'));
   assert.match(sidebar, /aria-current="page" aria-label="Capture Buddy"/);
@@ -48,7 +51,9 @@ test('Studio header and monitoring navigation are accessible and concise', () =>
   assert.match(admin, /aria-label="Users"/);
   assert.match(admin, /aria-label="Overview"/);
   const collapsed = renderToStaticMarkup(React.createElement(Sidebar, { ...sidebarProps, isCollapsed: true }));
-  assert.match(collapsed, /aria-label="Overview"/);
+  // Collapsed navigation pins only the primary tools as icons; Overview is
+  // reachable from Additional tools after expanding again.
+  assert.doesNotMatch(collapsed, /aria-label="Overview"/);
   assert.equal(renderToStaticMarkup(React.createElement(Sidebar, { ...sidebarProps, isFullyHidden: true })), '');
 });
 
@@ -111,6 +116,7 @@ test('mounted shell preserves navigation, Overview, sign-in, and location search
     assert.equal(host.querySelector('[aria-current="page"]')?.getAttribute('aria-label'), 'Scan Buddy');
     await click('Watchtower');
     assert.equal(host.querySelector('[aria-current="page"]')?.getAttribute('aria-label'), 'Watchtower');
+    await click('Additional tools');
     await click('Overview');
     assert.equal(host.querySelector('[aria-current="page"]')?.getAttribute('aria-label'), 'Overview');
     await click('Collapse navigation');
@@ -118,7 +124,6 @@ test('mounted shell preserves navigation, Overview, sign-in, and location search
      await click('Dashboard');
      assert.equal(host.querySelector('[aria-current="page"]')?.getAttribute('aria-label'), 'Dashboard');
      await click('Expand navigation');
-     await click('Additional tools');
      assert.equal(host.querySelector('button[aria-label="Additional tools"]')?.getAttribute('aria-expanded'), 'true');
      assert.ok(host.querySelector('[aria-label="Locked additional tools"]'));
      assert.equal(host.querySelector('[aria-label="Locked additional tools"] button'), null);

@@ -13,6 +13,7 @@ pub mod readiness;
 pub mod runtime_logs;
 pub mod scan_buddy;
 pub mod scan_inspection;
+pub mod update_gate;
 pub mod watchtower;
 
 #[command]
