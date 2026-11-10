@@ -221,6 +221,34 @@ pub fn evaluate_update(input: &DecisionInput) -> GateDecision {
         // Cannot reason about the local build (or remote data): fail open.
         None => return GateDecision::UpToDate,
     };
+    // The security floor is evaluated FIRST: enforcement is independent of
+    // whether a newer release exists (a build that already runs the
+    // manifest's latest version but sits below the floor must still gate)
+    // and even of whether the manifest's latest version is well-formed. The
+    // floor is sticky: the highest floor ever seen from an authenticated
+    // manifest keeps applying even if a later unsigned manifest pretends
+    // otherwise, and unsigned data can never introduce or lower it.
+    let floor = if input.authenticated {
+        stricter_floor(input.min_supported, input.cached_floor)
+    } else {
+        // Unauthenticated manifest data is ignored for the floor; only the
+        // previously authenticated sticky cache may keep biting.
+        input.cached_floor.and_then(parse_version)
+    };
+    if let Some(floor) = &floor {
+        if compare_versions(&current, floor) == Ordering::Less {
+            return GateDecision::Block {
+                gate_kind: "security_floor",
+                required_version: version_string(floor),
+                reason: format!(
+                    "This NET0ZE build ({}) is below the minimum supported version ({}) from the signed update policy.",
+                    input.current,
+                    version_string(floor)
+                ),
+            };
+        }
+    }
+
     let latest = match parse_version(input.latest) {
         Some(value) => value,
         None => return GateDecision::UpToDate,
@@ -230,29 +258,6 @@ pub fn evaluate_update(input: &DecisionInput) -> GateDecision {
     // replay protection).
     if compare_versions(&latest, &current) != Ordering::Greater {
         return GateDecision::UpToDate;
-    }
-
-    // The security floor only bites when a policy has been authenticated,
-    // and it is sticky: the highest floor ever seen from an authenticated
-    // manifest keeps applying even if a later unsigned manifest pretends
-    // otherwise.
-    let floor = if input.authenticated {
-        stricter_floor(input.min_supported, input.cached_floor)
-    } else {
-        input.cached_floor.and_then(parse_version)
-    };
-    if let Some(floor) = floor {
-        if compare_versions(&current, &floor) == Ordering::Less {
-            return GateDecision::Block {
-                gate_kind: "security_floor",
-                required_version: version_string(&floor),
-                reason: format!(
-                    "This NET0ZE build ({}) is below the minimum supported version ({}) from the signed update policy.",
-                    input.current,
-                    version_string(&floor)
-                ),
-            };
-        }
     }
 
     // Without an authenticated manifest nothing may gate or install.
@@ -1472,6 +1477,92 @@ mod tests {
     }
 
     #[test]
+    fn floor_gates_even_when_installed_matches_the_latest_version() {
+        // Regression: "up to date" must never preempt the security floor.
+        // Installed == latest but below the signed floor still gates.
+        let decision = evaluate_update(&input("2.0.1", "2.0.1", Some("moderate"), false, true, Some("2.0.2"), None, true));
+        match decision {
+            GateDecision::Block { gate_kind, required_version, .. } => {
+                assert_eq!(gate_kind, "security_floor");
+                assert_eq!(required_version, "2.0.2");
+            }
+            other => panic!("expected floor gate on installed==latest, got {other:?}"),
+        }
+
+        // The same for a build below the sticky cached floor with an
+        // unsigned fresh manifest: the cached floor keeps gating.
+        let decision = evaluate_update(&input("2.0.1", "2.0.1", Some("moderate"), false, false, Some("1.0.0"), Some("2.0.2"), true));
+        match decision {
+            GateDecision::Block { gate_kind, required_version, .. } => {
+                assert_eq!(gate_kind, "security_floor");
+                assert_eq!(required_version, "2.0.2");
+            }
+            other => panic!("expected cached floor gate on installed==latest, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn cached_floor_enforces_when_the_fresh_manifest_states_no_floor() {
+        // An authenticated manifest that stopped advertising a floor must
+        // not let the previously authenticated floor lapse.
+        let decision = evaluate_update(&input("2.0.0", "2.1.0", Some("low"), false, true, None, Some("2.0.2"), true));
+        match decision {
+            GateDecision::Block { gate_kind, required_version, .. } => {
+                assert_eq!(gate_kind, "security_floor");
+                assert_eq!(required_version, "2.0.2");
+            }
+            other => panic!("expected sticky cached floor gate, got {other:?}"),
+        }
+
+        // A malformed `latest` version cannot hide floor enforcement either.
+        let decision = evaluate_update(&input("2.0.1", "not-a-version", Some("critical"), true, true, Some("2.0.2"), None, true));
+        match decision {
+            GateDecision::Block { gate_kind, required_version, .. } => {
+                assert_eq!(gate_kind, "security_floor");
+                assert_eq!(required_version, "2.0.2");
+            }
+            other => panic!("expected floor gate despite malformed latest, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn unsigned_manifest_cannot_weaken_the_enforcement_floor() {
+        // Claims lower than the sticky cache: the cache wins and is what is
+        // reported as required.
+        let decision = evaluate_update(&input("2.0.0", "2.1.0", Some("low"), false, false, Some("2.0.1"), Some("2.0.2"), true));
+        match decision {
+            GateDecision::Block { required_version, .. } => assert_eq!(required_version, "2.0.2"),
+            other => panic!("expected sticky floor to win, got {other:?}"),
+        }
+
+        // Claims higher than reality: unsigned data never raises enforcement
+        // either — the build meets the cached floor and stays advisory only.
+        let decision = evaluate_update(&input("2.0.2", "2.1.0", Some("low"), false, false, Some("9.9.9"), Some("2.0.2"), true));
+        match decision {
+            GateDecision::Banner { kind, .. } => assert_eq!(kind, BannerKind::Informational),
+            other => panic!("expected advisory banner for an unsigned floor claim, got {other:?}"),
+        }
+
+        // Tries to introduce a floor for a build that never authenticated
+        // one: nothing enforces, nothing gates.
+        let decision = evaluate_update(&input("2.0.0", "2.1.0", Some("low"), false, false, Some("2.0.9"), None, true));
+        match decision {
+            GateDecision::Banner { kind, .. } => assert_eq!(kind, BannerKind::Informational),
+            other => panic!("expected informational banner with no cached floor, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn builds_meeting_the_floor_and_up_to_date_stay_ungated() {
+        let decision = evaluate_update(&input("2.0.2", "2.0.2", Some("moderate"), false, true, Some("2.0.2"), Some("2.0.2"), true));
+        assert!(matches!(decision, GateDecision::UpToDate));
+        // A previously higher sticky floor met by a newer build, unsigned
+        // fresh manifest: still no gate, no nag.
+        let decision = evaluate_update(&input("2.0.3", "2.0.3", Some("moderate"), false, false, Some("2.0.0"), Some("2.0.2"), true));
+        assert!(matches!(decision, GateDecision::UpToDate));
+    }
+
+    #[test]
     fn repo_manifest_verifies_with_embedded_public_key_and_tampering_fails() {
         // Pin the real, committed manifest + signature pair to the key that
         // the shipped binary embeds; a byte-flip must fail verification.
@@ -1600,5 +1691,80 @@ mod tests {
             pub_date: Some("2026-10-30T13:30:13Z"),
         });
         assert!(matches!(decision, GateDecision::UpToDate));
+    }
+
+    #[test]
+    fn status_with_manifest_keeps_the_sticky_floor_after_clearing_cached_fields() {
+        // The status builder clears previously cached gate fields and then
+        // re-derives the whole decision from the fresh manifest; the sticky
+        // floor must survive that sequence in both signature states.
+        let persisted = PersistedState {
+            schema: 1,
+            last_authenticated_at: Some(now_ms()),
+            floor_ever_seen: Some("2.0.2".into()),
+            ..PersistedState::default()
+        };
+        let builder = Builder { current_version: "2.0.1" };
+
+        // Signed manifest, installed == latest, below the floor: the answer
+        // is the floor gate, never "up to date".
+        let signed = AuthenticatedManifest {
+            manifest: UpdateManifest {
+                schema: Some(1),
+                app: Some("netoze-desktop".into()),
+                channel: Some("stable".into()),
+                force_min_version: None,
+                min_supported_version: Some("2.0.2".into()),
+                generated_at: None,
+                latest: UpdateLatest {
+                    version: "2.0.1".into(),
+                    severity: Some("moderate".into()),
+                    mandatory: false,
+                    pub_date: None,
+                    notes_url: None,
+                },
+                platforms: std::collections::HashMap::new(),
+                signing: None,
+            },
+            advisory_only: false,
+        };
+        let status = status_with_manifest(&builder, &signed, &persisted, false);
+        assert!(status.gate_active);
+        assert_eq!(status.gate_kind.as_deref(), Some("security_floor"));
+        assert_eq!(status.gate_required_version.as_deref(), Some("2.0.2"));
+
+        // The floorless UNSIGNED twin carries no floor authority of its own;
+        // the gate that remains must come from the sticky persisted floor.
+        let unsigned = AuthenticatedManifest {
+            manifest: UpdateManifest {
+                schema: Some(1),
+                app: Some("netoze-desktop".into()),
+                channel: Some("stable".into()),
+                force_min_version: None,
+                min_supported_version: None,
+                generated_at: None,
+                latest: UpdateLatest {
+                    version: "2.0.1".into(),
+                    severity: Some("moderate".into()),
+                    mandatory: false,
+                    pub_date: None,
+                    notes_url: None,
+                },
+                platforms: std::collections::HashMap::new(),
+                signing: None,
+            },
+            advisory_only: true,
+        };
+        let status = status_with_manifest(&builder, &unsigned, &persisted, false);
+        assert!(status.advisory_only);
+        assert!(status.gate_active);
+        assert_eq!(status.gate_kind.as_deref(), Some("security_floor"));
+        assert_eq!(status.gate_required_version.as_deref(), Some("2.0.2"));
+
+        // A build meeting the floor stays ungated even when everything else
+        // is unchanged.
+        let builder = Builder { current_version: "2.0.3" };
+        let status = status_with_manifest(&builder, &signed, &persisted, false);
+        assert!(!status.gate_active);
     }
 }
