@@ -21,6 +21,8 @@ import {
  * - Only the transient "checking…" banner honours the 15 s boot timeout;
  *   after that the UI stops waiting and degrades to the stale frame. The
  *   gate itself is unaffected by connectivity.
+ * - `checkNow` resolves when the explicit check is finished, so callers can
+ *   show their own pending state for user-initiated retries.
  */
 const CHECK_TIMEOUT_MS = 15_000;
 
@@ -30,7 +32,7 @@ export interface UpdateGateUi {
   progress: InstallProgress | null;
   installing: boolean;
   installError: string | null;
-  checkNow: () => void;
+  checkNow: () => Promise<void>;
   install: (event: React.MouseEvent) => void;
   openDataFolder: () => void;
 }
@@ -71,8 +73,11 @@ export function useUpdateGate(): UpdateGateUi {
     };
   }, []);
 
-  const checkNow = useCallback(() => {
-    void updateGateCheckNow();
+  const checkNow = useCallback((): Promise<void> => {
+    // Resolve once the explicit check finished (success, failure or a
+    // throttled no-op), so the banner can show its own pending state
+    // instead of a Retry click that silently appears to do nothing.
+    return updateGateCheckNow().then(() => undefined);
   }, []);
 
   const install = useCallback((event: React.MouseEvent) => {

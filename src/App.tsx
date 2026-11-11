@@ -4,6 +4,7 @@ import { TopNavbar } from './components/TopNavbar';
 import { Sidebar } from './components/Sidebar';
 import { UpdateBanner } from './components/UpdateBanner';
 import { UpdateGateOverlay } from './components/UpdateGateOverlay';
+import { UpdateGateProvider } from './lib/UpdateGateContext';
 import type { TabType } from './components/Sidebar';
 import { CaptureBuddy } from './components/CaptureBuddy';
 import { SystemLogs } from './components/SystemLogs';
@@ -234,9 +235,13 @@ export const App: React.FC = () => {
         <main id="studio-workspace" aria-label="Workspace" className="studio-workspace">
           {/* Update surfaces: banner (advisory) + gate overlay (mandatory).
               The gate deliberately covers only the workspace, keeping the
-              sidebar's recovery/diagnostics tools reachable. */}
-          <UpdateBanner />
-          <UpdateGateOverlay />
+              sidebar's recovery/diagnostics tools reachable. Both screens
+              share a single useUpdateGate frame via the provider — one
+              status/progress subscription pair for the whole window. */}
+          <UpdateGateProvider>
+            <UpdateBanner />
+            <UpdateGateOverlay />
+          </UpdateGateProvider>
           <Suspense fallback={<div role="status" className="p-4 text-sm text-slate-400">Loading view…</div>}>
            {activeTab === 'conversations' && (
             <div className="studio-page">

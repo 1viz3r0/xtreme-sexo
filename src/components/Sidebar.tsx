@@ -83,7 +83,13 @@ export const Sidebar: React.FC<SidebarProps> = ({
       aria-current={activeTab === item.id ? 'page' : undefined}
       aria-label={item.label}
       type="button"
-      title={item.label}
+      /* Native title tooltips stay in collapsed (icon-only) mode only.
+         In the expanded sidebar the label is already visible, and the
+         WebKitGTK tooltip popup renders directly over the row below the
+         hovered item, where it can swallow a click aimed at that row —
+         observed in runtime testing as a navigation click that did
+         nothing. */
+      title={isCollapsed ? item.label : undefined}
       className={`studio-nav-item ${activeTab === item.id ? 'is-active' : ''}`}
     >
       <span className="studio-nav-icon" aria-hidden="true">{item.icon}</span>

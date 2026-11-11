@@ -51,7 +51,11 @@ const MANIFEST_MAX_BYTES: usize = 256 * 1024;
 const SIGNATURE_MAX_BYTES: usize = 16 * 1024;
 const DOWNLOAD_SLACK_BYTES: u64 = 1024 * 1024;
 const PERIODIC_CHECK_INTERVAL: Duration = Duration::from_secs(6 * 60 * 60);
+/// Unforced requests (none today, kept for programmatic callers) rate-limit to
+/// one request per 60 s; an explicit manual retry (force) runs immediately but
+/// still collapses double-clicks into a single request.
 const MANUAL_CHECK_THROTTLE: Duration = Duration::from_secs(60);
+const MANUAL_RETRY_MIN_GAP: Duration = Duration::from_secs(2);
 const FIRST_CHECK_DELAY: Duration = Duration::from_secs(2);
 const INSTALL_TIMEOUT: Duration = Duration::from_secs(15 * 60);
 const STATUS_EVENT: &str = "netoze-update://status";
@@ -653,23 +657,59 @@ async fn fetch_bounded(
     Ok(body)
 }
 
+#[derive(Debug)]
 struct AuthenticatedManifest {
     manifest: UpdateManifest,
     advisory_only: bool,
 }
 
-async fn fetch_and_authenticate(client: &reqwest::Client) -> Result<AuthenticatedManifest, String> {
-    let manifest_bytes = fetch_bounded(client, UPDATE_MANIFEST_URL, MANIFEST_MAX_BYTES).await?;
-    // A missing, failing, or unverified signature downgrades the manifest to
-    // information-only; it never aborts the check itself.
-    let authenticated = match fetch_bounded(client, UPDATE_MANIFEST_SIGNATURE_URL, SIGNATURE_MAX_BYTES)
-        .await
-    {
-        Ok(signature_bytes) => verify_manifest_signature(&manifest_bytes, &signature_bytes).is_ok(),
+/// What one channel fetch produced for the gate.
+#[derive(Debug)]
+enum FetchOutcome {
+    /// A parseable manifest (possibly advisory-only when unsigned). Boxed so
+    /// the legacy snapshot variant does not drag the manifest size around.
+    Manifest(Box<AuthenticatedManifest>),
+    /// The channel is reachable but only serves the legacy unsigned
+    /// governance snapshot (no `latest` release record). Nothing is
+    /// enforceable or installable; the check itself succeeded.
+    LegacyAdvisory,
+}
+
+/// True when the bytes are the pre-hardening channel's bare unsigned
+/// governance snapshot: a JSON object that publishes only
+/// `force_min_version` / `policy` and no `latest` release record (and no
+/// `schema` marker — an unknown schema can move enforcement semantics, so it
+/// must stay an error). Such a snapshot carries nothing enforceable and
+/// nothing to install, so the honest classification is "channel reachable,
+/// nothing to report" rather than a failed check. Every other malformed
+/// shape stays an error, and the strictness required of real (signed)
+/// manifests is unchanged.
+fn legacy_snapshot_without_latest(bytes: &[u8]) -> bool {
+    match serde_json::from_slice::<serde_json::Map<String, serde_json::Value>>(bytes) {
+        Ok(fields) => {
+            !fields.contains_key("latest")
+                && !fields.contains_key("schema")
+                && (fields.contains_key("force_min_version") || fields.contains_key("policy"))
+        }
         Err(_) => false,
+    }
+}
+
+/// Parse and classify a fetched manifest. `authenticated` means the detached
+/// signature was downloaded and verified against the embedded public key.
+fn classify_manifest_bytes(
+    manifest_bytes: &[u8],
+    authenticated: bool,
+) -> Result<FetchOutcome, String> {
+    let manifest: UpdateManifest = match serde_json::from_slice(manifest_bytes) {
+        Ok(value) => value,
+        Err(parse_error) => {
+            if legacy_snapshot_without_latest(manifest_bytes) {
+                return Ok(FetchOutcome::LegacyAdvisory);
+            }
+            return Err(format!("update manifest is malformed: {parse_error}"));
+        }
     };
-    let manifest: UpdateManifest = serde_json::from_slice(&manifest_bytes)
-        .map_err(|error| format!("update manifest is malformed: {error}"))?;
     if manifest.schema.unwrap_or(0) > 1 {
         return Err("manifest schema is newer than this build understands; install decisions require a supported schema".into());
     }
@@ -678,10 +718,27 @@ async fn fetch_and_authenticate(client: &reqwest::Client) -> Result<Authenticate
             return Err("manifest is not for this application".into());
         }
     }
-    Ok(AuthenticatedManifest {
+    Ok(FetchOutcome::Manifest(Box::new(AuthenticatedManifest {
         manifest,
         advisory_only: !authenticated,
-    })
+    })))
+}
+
+async fn fetch_and_authenticate(client: &reqwest::Client) -> Result<FetchOutcome, String> {
+    let manifest_bytes = fetch_bounded(client, UPDATE_MANIFEST_URL, MANIFEST_MAX_BYTES).await?;
+    // A missing, failing, or unverified signature downgrades the manifest to
+    // information-only; it never aborts the check itself.
+    let authenticated =
+        match fetch_bounded(client, UPDATE_MANIFEST_SIGNATURE_URL, SIGNATURE_MAX_BYTES).await {
+            Ok(signature_bytes) => {
+                matches!(
+                    verify_manifest_signature(&manifest_bytes, &signature_bytes),
+                    Ok(())
+                )
+            }
+            Err(_) => false,
+        };
+    classify_manifest_bytes(&manifest_bytes, authenticated)
 }
 
 // ---------------------------------------------------------------------------
@@ -833,7 +890,9 @@ fn status_with_manifest(
 // Check flow
 // ---------------------------------------------------------------------------
 
-/// Run one check-and-publish cycle. `force` bypasses the manual throttle.
+/// Run one check-and-publish cycle. `force` marks an explicit user intent:
+/// it runs immediately (bound only by the tiny anti-double-click gap) while
+/// unforced requests obey the documented 60 s rate limit.
 async fn run_check(app: &AppHandle, force: bool) -> Result<UpdateGateStatus, String> {
     let client = http_client::client()?;
     {
@@ -841,10 +900,15 @@ async fn run_check(app: &AppHandle, force: bool) -> Result<UpdateGateStatus, Str
         let runtime = guard
             .as_mut()
             .ok_or_else(|| "Update gate is not initialised".to_string())?;
-        if !force
-            && runtime
-                .last_manual_check
-                .is_some_and(|at| at.elapsed() < MANUAL_CHECK_THROTTLE)
+        // An explicit manual retry (force) is honoured immediately — a 60 s
+        // throttle would leave the user staring at a Retry button that
+        // silently does nothing — while double-clicks inside the tiny
+        // `MANUAL_RETRY_MIN_GAP` window collapse into one request. Non-forced
+        // requests keep the documented 60 s rate limit.
+        let min_gap = if force { MANUAL_RETRY_MIN_GAP } else { MANUAL_CHECK_THROTTLE };
+        if runtime
+            .last_manual_check
+            .is_some_and(|at| at.elapsed() < min_gap)
         {
             return Ok(runtime.status.clone());
         }
@@ -867,7 +931,7 @@ async fn run_check(app: &AppHandle, force: bool) -> Result<UpdateGateStatus, Str
             .ok_or("Update gate is not initialised")?;
         let builder = Builder { current_version: &runtime.current_version };
         match &fetch_attempt {
-            Ok(authenticated) => {
+            Ok(FetchOutcome::Manifest(authenticated)) => {
                 runtime.persisted.last_check_at = Some(now_ms());
                 runtime.persisted.last_check_ok = Some(true);
                 runtime.persisted.last_error = None;
@@ -894,6 +958,16 @@ async fn run_check(app: &AppHandle, force: bool) -> Result<UpdateGateStatus, Str
                 }
                 final_status = status_with_manifest(&builder, authenticated, &runtime.persisted, runtime.install_in_progress);
             }
+            Ok(FetchOutcome::LegacyAdvisory) => {
+                // The channel answered with the unsigned legacy governance
+                // snapshot only. The check succeeded — record it as such and
+                // clear any stale error so the UI shows the truthful quiet
+                // frame instead of a standing failure banner.
+                runtime.persisted.last_check_at = Some(now_ms());
+                runtime.persisted.last_check_ok = Some(true);
+                runtime.persisted.last_error = None;
+                final_status = status_with_persisted_only(&builder, &runtime.persisted, false, runtime.install_in_progress);
+            }
             Err(error) => {
                 runtime.persisted.last_check_at = Some(now_ms());
                 // Fail-open: record the error, keep the app fully operational.
@@ -906,8 +980,12 @@ async fn run_check(app: &AppHandle, force: bool) -> Result<UpdateGateStatus, Str
         save_persisted(runtime);
         let _ = app.emit(STATUS_EVENT, &final_status);
     }
-    if let Err(error) = &fetch_attempt {
-        tracing::warn!("update gate check degraded to advisory mode: {error}");
+    match &fetch_attempt {
+        Err(error) => tracing::warn!("update gate check degraded to advisory mode: {error}"),
+        Ok(FetchOutcome::LegacyAdvisory) => {
+            tracing::info!("update channel serves only the unsigned legacy governance snapshot; informational, nothing to enforce or install");
+        }
+        Ok(FetchOutcome::Manifest(_)) => {}
     }
     Ok(final_status)
 }
@@ -1054,7 +1132,13 @@ pub async fn run_install(app: &AppHandle) -> Result<(), String> {
 
     // Fresh fetch + verification: the install decision rests on bytes
     // verified right now, not on cached UI state.
-    let authenticated = fetch_and_authenticate(&client).await?;
+    let authenticated = match fetch_and_authenticate(&client).await {
+        Ok(FetchOutcome::Manifest(authenticated)) => authenticated,
+        Ok(FetchOutcome::LegacyAdvisory) => {
+            return Err("Refusing to install: the channel carries only an unsigned governance snapshot with no installable update".into())
+        }
+        Err(error) => return Err(error),
+    };
     if authenticated.advisory_only {
         return Err("Refusing to install: the update manifest signature could not be verified".into());
     }
@@ -1292,7 +1376,10 @@ pub fn status_snapshot(app: &AppHandle) -> Result<UpdateGateStatus, String> {
 }
 
 pub async fn check_now(app: &AppHandle) -> Result<UpdateGateStatus, String> {
-    run_check(app, false).await
+    // An explicit user retry is served immediately: the old force=false path
+    // let a 60 s throttle swallow the click with no visible feedback, which
+    // read as the app being frozen. `run_check` still collapses double-clicks.
+    run_check(app, true).await
 }
 
 pub async fn install(app: &AppHandle) -> Result<(), String> {
@@ -1592,6 +1679,66 @@ mod tests {
         assert!(verify_manifest_signature(&tampered, raw_text.as_bytes()).is_err());
         // An empty signature file fails cleanly instead of panicking.
         assert!(verify_manifest_signature(&manifest, b"").is_err());
+    }
+
+    #[test]
+    fn legacy_unsigned_governance_snapshot_is_advisory_not_malformed() {
+        // The exact bytes the live master channel publishes today (no
+        // `latest` release record). The check must be recorded as OK, not as
+        // "update manifest is malformed: missing field `latest`".
+        let bytes = br#"{"force_min_version":"2.0.2","policy":"security-floor"}"#;
+        assert!(matches!(
+            classify_manifest_bytes(bytes, false),
+            Ok(FetchOutcome::LegacyAdvisory)
+        ));
+    }
+
+    #[test]
+    fn legacy_snapshot_classification_is_independent_of_signature_state() {
+        // Even a hypothetically signed legacy snapshot has no `latest`, so
+        // there is nothing to enforce or install either way.
+        let bytes = br#"{"force_min_version":"2.0.2","policy":"security-floor"}"#;
+        assert!(matches!(
+            classify_manifest_bytes(bytes, true),
+            Ok(FetchOutcome::LegacyAdvisory)
+        ));
+    }
+
+    #[test]
+    fn malformed_manifests_without_legacy_keys_stay_errors() {
+        // No `latest`, no legacy markers: not recognisable governance data.
+        assert!(classify_manifest_bytes(br#"{"channel":"stable"}"#, false).is_err());
+        // Not JSON at all.
+        assert!(classify_manifest_bytes(b"<html>rate limited</html>", false).is_err());
+        // A JSON array instead of an object.
+        assert!(classify_manifest_bytes(b"[]", false).is_err());
+        // Legacy markers present but a broken `latest` record: the strict
+        // manifest rules still apply.
+        assert!(
+            classify_manifest_bytes(br#"{"force_min_version":"2.0.2","latest":false}"#, false)
+                .is_err()
+        );
+        // A legacy-shaped manifest claiming a newer schema is still refused.
+        assert!(classify_manifest_bytes(
+            br#"{"force_min_version":"2.0.2","policy":"security-floor","schema":2}"#,
+            false
+        )
+        .is_err());
+    }
+
+    #[test]
+    fn committed_manifest_classifies_as_manifest_with_signature_state() {
+        let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("..");
+        let manifest = std::fs::read(root.join("update.json"))
+            .expect("update.json must exist in the repository root");
+        match classify_manifest_bytes(&manifest, true) {
+            Ok(FetchOutcome::Manifest(authenticated)) => assert!(!authenticated.advisory_only),
+            other => panic!("committed manifest must classify as a manifest, got {other:?}"),
+        }
+        match classify_manifest_bytes(&manifest, false) {
+            Ok(FetchOutcome::Manifest(authenticated)) => assert!(authenticated.advisory_only),
+            other => panic!("committed manifest must classify as a manifest, got {other:?}"),
+        }
     }
 
     #[test]

@@ -1,6 +1,6 @@
 import React from 'react';
 import { Download, ExternalLink, FolderDown, Loader2, RefreshCw, ShieldAlert } from 'lucide-react';
-import { useUpdateGate } from '../lib/useUpdateGate';
+import { useSharedUpdateGate } from '../lib/UpdateGateContext';
 
 /**
  * Block screen for a verified mandatory update or a security floor.
@@ -12,7 +12,7 @@ import { useUpdateGate } from '../lib/useUpdateGate';
  * same window is openable from anywhere via the data-folder command.
  */
 export const UpdateGateOverlay: React.FC = () => {
-  const { presentation, progress, installing, installError, install, checkNow, openDataFolder, status } = useUpdateGate();
+  const { presentation, progress, installing, installError, install, checkNow, openDataFolder, status } = useSharedUpdateGate();
 
   if (presentation.kind !== 'gate') {
     return null;

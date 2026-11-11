@@ -167,6 +167,9 @@ export function updatePresentation(
       required: status.gate_required_version ?? '',
     };
   }
+  // An in-flight check reports "checking" only until the boot timeout; after
+  // that the UI stops waiting and shows whatever real frame it has. Explicit
+  // Retry clicks are given their own pending feedback at the banner level.
   if (status.check_in_progress) {
     if (status.latest_version != null || status.gate_reason != null || checkingTimedOut) {
       // A previous or in-flight result already exists; fall through.

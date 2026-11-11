@@ -11,7 +11,9 @@ pub fn update_gate_status(app: AppHandle) -> Result<update_gate::UpdateGateStatu
     update_gate::status_snapshot(&app)
 }
 
-/// Manual refresh (throttled server-side to one request per 60 s).
+/// Manual refresh. An explicit user intent is served immediately (bounded by
+/// the service's tiny anti-double-click gap); unforced requests keep the
+/// documented 60 s rate limit.
 #[command]
 pub async fn update_gate_check_now(app: AppHandle) -> Result<update_gate::UpdateGateStatus, String> {
     update_gate::check_now(&app).await
