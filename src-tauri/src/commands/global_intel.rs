@@ -68,7 +68,57 @@ fn read_cache(state: &BackendState, limit: usize) -> Result<CachedIntel, String>
 
 #[command]
 pub fn get_active_flows(state: State<'_, BackendState>, limit: Option<usize>) -> Result<Vec<FlowRecord>, String> {
-    Ok(state.flows.lock().map_err(|_| "Flow engine unavailable")?.get_recent_flows(bounded(limit)))
+    let flows = state.flows.lock().map_err(|_| "Flow engine unavailable")?.get_recent_flows(bounded(limit));
+    ingest_traffic_observations(&flows);
+    Ok(flows)
+}
+
+/// Feeds live flow endpoints into the persistent IP intelligence inventory
+/// (passive "traffic" observations; never scan-authorizing). Each flow is
+/// ingested once via a bounded seen-id set so repeated polling does not
+/// inflate the counters. Flow records carry no directional byte split, so
+/// each endpoint's counters describe the flow totals it participated in.
+fn ingest_traffic_observations(flows: &[crate::models::FlowRecord]) {
+    static SEEN_FLOW_IDS: std::sync::OnceLock<std::sync::Mutex<std::collections::VecDeque<String>>> =
+        std::sync::OnceLock::new();
+    let Ok(mut seen) = SEEN_FLOW_IDS
+        .get_or_init(|| std::sync::Mutex::new(std::collections::VecDeque::new()))
+        .lock()
+    else {
+        return;
+    };
+    let mut observations = Vec::new();
+    for flow in flows {
+        if seen.contains(&flow.flow_id) {
+            continue;
+        }
+        seen.push_front(flow.flow_id.clone());
+        let activity = if flow.ts_start > 1_000_000_000_000 {
+            Some(flow.ts_start as i64)
+        } else if flow.ts_start > 1_000_000_000 {
+            Some((flow.ts_start * 1000) as i64)
+        } else {
+            None
+        };
+        for ip in [&flow.src_ip, &flow.dst_ip] {
+            observations.push(crate::services::ip_intel::IpObservation {
+                ip: ip.clone(),
+                mac: None,
+                hostname: None,
+                vendor: None,
+                interface: None,
+                source: "traffic",
+                packets: flow.packet_count,
+                bytes: flow.total_bytes,
+                flows: 1,
+                activity_at: activity,
+            });
+        }
+    }
+    while seen.len() > 4096 {
+        seen.pop_back();
+    }
+    crate::services::ip_intel::record_observations(&observations);
 }
 
 #[command]

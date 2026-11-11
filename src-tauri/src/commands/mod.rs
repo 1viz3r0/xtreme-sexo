@@ -7,6 +7,7 @@ pub mod capture_buddy;
 pub mod capture_investigation;
 pub mod enrichment;
 pub mod global_intel;
+pub mod ip_intel;
 pub mod lab_runtime;
 pub mod network_scope;
 pub mod readiness;

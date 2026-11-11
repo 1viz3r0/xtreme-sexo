@@ -51,9 +51,10 @@ test('Studio header and monitoring navigation are accessible and concise', () =>
   assert.match(admin, /aria-label="Users"/);
   assert.match(admin, /aria-label="Overview"/);
   const collapsed = renderToStaticMarkup(React.createElement(Sidebar, { ...sidebarProps, isCollapsed: true }));
-  // Collapsed navigation pins only the primary tools as icons; Overview is
-  // reachable from Additional tools after expanding again.
-  assert.doesNotMatch(collapsed, /aria-label="Overview"/);
+  // Collapsed navigation pins only the primary tools as icons; Overview stays
+  // pinned under Additional tools even when collapsed (icon-only + tooltip).
+  assert.match(collapsed, /aria-label="Overview"/);
+  assert.match(collapsed, /aria-label="Additional tools"/);
   assert.equal(renderToStaticMarkup(React.createElement(Sidebar, { ...sidebarProps, isFullyHidden: true })), '');
 });
 

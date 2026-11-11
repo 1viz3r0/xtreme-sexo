@@ -240,6 +240,96 @@ pub(crate) fn initialize_phase11_tables(conn: &Connection) -> Result<()> {
             );
         }
     }
+    initialize_watchtower_intel_tables(conn)?;
+    Ok(())
+}
+
+// ---------------------------------------------------------------
+// WATCHTOWER IP INTELLIGENCE (persistent IP inventory, scan
+// scheduling, scan history, investigation notes). Additive only:
+// every statement is CREATE TABLE IF NOT EXISTS / additive ALTER,
+// so existing user data is never touched or discarded.
+// ---------------------------------------------------------------
+
+pub(crate) fn initialize_watchtower_intel_tables(conn: &Connection) -> Result<()> {
+    conn.execute(
+        "CREATE TABLE IF NOT EXISTS watchtower_ips (
+            ip TEXT PRIMARY KEY,
+            mac TEXT,
+            hostname TEXT,
+            vendor TEXT,
+            os_guess TEXT,
+            os_confidence TEXT,
+            os_basis TEXT,
+            interface TEXT,
+            first_seen INTEGER NOT NULL,
+            last_seen INTEGER NOT NULL,
+            packet_count INTEGER NOT NULL DEFAULT 0,
+            byte_count INTEGER NOT NULL DEFAULT 0,
+            flow_count INTEGER NOT NULL DEFAULT 0,
+            last_activity_at INTEGER,
+            source TEXT NOT NULL DEFAULT 'passive',
+            origin TEXT NOT NULL DEFAULT 'observed',
+            label TEXT,
+            is_excluded INTEGER NOT NULL DEFAULT 0,
+            scan_enabled INTEGER NOT NULL DEFAULT 0,
+            scan_authorized_at INTEGER,
+            open_ports TEXT,
+            last_scan_at INTEGER,
+            scan_failures INTEGER NOT NULL DEFAULT 0,
+            last_scan_state TEXT,
+            updated_at INTEGER NOT NULL
+        )",
+        [],
+    )?;
+    conn.execute(
+        "CREATE TABLE IF NOT EXISTS watchtower_scan_config (
+            id INTEGER PRIMARY KEY CHECK (id = 1),
+            enabled INTEGER NOT NULL DEFAULT 0,
+            interval_seconds INTEGER NOT NULL DEFAULT 900,
+            intensity TEXT NOT NULL DEFAULT 'light',
+            max_runs_per_cycle INTEGER NOT NULL DEFAULT 4,
+            updated_at INTEGER NOT NULL
+        )",
+        [],
+    )?;
+    conn.execute(
+        "INSERT OR IGNORE INTO watchtower_scan_config (id, enabled, interval_seconds, intensity, max_runs_per_cycle, updated_at)
+         VALUES (1, 0, 900, 'light', 4, strftime('%s','now') * 1000)",
+        [],
+    )?;
+    conn.execute(
+        "CREATE TABLE IF NOT EXISTS watchtower_scan_history (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            ip TEXT NOT NULL,
+            trigger TEXT NOT NULL,
+            started_at INTEGER NOT NULL,
+            finished_at INTEGER,
+            state TEXT NOT NULL,
+            open_ports TEXT,
+            probe_count INTEGER,
+            error TEXT
+        )",
+        [],
+    )?;
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_watchtower_scan_history_ip ON watchtower_scan_history(ip, started_at)",
+        [],
+    )?;
+    conn.execute(
+        "CREATE TABLE IF NOT EXISTS watchtower_notes (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            ip TEXT,
+            body TEXT NOT NULL,
+            created_at INTEGER NOT NULL,
+            updated_at INTEGER NOT NULL
+        )",
+        [],
+    )?;
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_watchtower_notes_ip ON watchtower_notes(ip)",
+        [],
+    )?;
     Ok(())
 }
 
@@ -514,6 +604,63 @@ pub fn load_dns_records(limit: usize) -> Vec<crate::models::DnsQueryEntry> {
                 answers: r.get(6)?,
             })
         });
+    let Ok(rows) = rows else { return vec![]; };
+    rows.filter_map(|r| r.ok()).collect()
+}
+
+/// DNS observations involving this address, newest first (client or server side).
+pub fn load_dns_records_for_ip(ip: &str, limit: usize) -> Vec<crate::models::DnsQueryEntry> {
+    let Ok(conn) = open_conn() else {
+        return vec![];
+    };
+    ensure_phase11_tables(&conn);
+    let mut stmt = match conn.prepare(
+        "SELECT timestamp, client_ip, server_ip, qname, qtype, rcode, answers
+         FROM dns_records WHERE client_ip = ?1 OR server_ip = ?1
+         ORDER BY id DESC LIMIT ?2",
+    ) {
+        Ok(s) => s,
+        Err(_) => return vec![],
+    };
+    let rows = stmt.query_map(rusqlite::params![ip, limit as i64], |r| {
+        Ok(crate::models::DnsQueryEntry {
+            timestamp: r.get(0)?,
+            client_ip: r.get(1)?,
+            server_ip: r.get(2)?,
+            qname: r.get(3)?,
+            qtype: r.get(4)?,
+            rcode: r.get(5)?,
+            answers: r.get(6)?,
+        })
+    });
+    let Ok(rows) = rows else { return vec![]; };
+    rows.filter_map(|r| r.ok()).collect()
+}
+
+/// Recorded port-scan rows for one address, newest first.
+pub fn load_port_scan_for_ip(ip: &str, limit: usize) -> Vec<crate::models::PortScanEntry> {
+    let Ok(conn) = open_conn() else {
+        return vec![];
+    };
+    ensure_phase11_tables(&conn);
+    let mut stmt = match conn.prepare(
+        "SELECT ip, port, protocol, state, service, first_seen, last_seen
+         FROM port_scan WHERE ip = ?1 ORDER BY last_seen DESC LIMIT ?2",
+    ) {
+        Ok(s) => s,
+        Err(_) => return vec![],
+    };
+    let rows = stmt.query_map(rusqlite::params![ip, limit as i64], |r| {
+        Ok(crate::models::PortScanEntry {
+            ip: r.get(0)?,
+            port: r.get(1)?,
+            protocol: r.get(2)?,
+            state: r.get(3)?,
+            service: r.get(4)?,
+            first_seen: r.get(5)?,
+            last_seen: r.get(6)?,
+        })
+    });
     let Ok(rows) = rows else { return vec![]; };
     rows.filter_map(|r| r.ok()).collect()
 }

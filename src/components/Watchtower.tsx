@@ -12,6 +12,7 @@ import { discoverLocalNetwork, type ActiveLocalDiscovery } from '../services/tau
 import { buildWatchtowerReport, type WatchtowerExport } from '../lib/watchtowerReport';
 import { downloadTextFile } from '../lib/localDownload';
 import { ReadinessPanel } from './ReadinessPanel';
+import { WatchtowerIntel } from './WatchtowerIntel';
 
 export interface WatchtowerProps {
   flows: FlowRecord[];
@@ -338,6 +339,8 @@ export function Watchtower({ flows, events, graph, inventorySources, kernelSnaps
           </div>
           <aside className="rounded-xl border border-zinc-800 bg-[#111315] px-3.5 py-3 text-[11px] text-zinc-500"><strong className="font-medium text-zinc-300">Inventory limits</strong><span className="mx-2 text-zinc-700">/</span>No CIDR, hostname, vendor, or device details are inferred. Full port/service information requires an explicit authorized Scan Buddy job and remains unverified.</aside>
         </section>
+
+        <WatchtowerIntel />
 
         <aside aria-label="Watchtower boundary" className="flex gap-3 rounded-xl border border-zinc-800 bg-[#111315] p-3.5 text-xs text-zinc-500">
           <Network aria-hidden="true" size={16} className="mt-0.5 shrink-0 text-zinc-400" />

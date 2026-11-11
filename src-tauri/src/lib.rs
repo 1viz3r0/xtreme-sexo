@@ -13,6 +13,7 @@ pub fn run() {
         .manage(state::BackendState::new(storage))
         .manage(commands::capture_buddy::BuddyState::default())
         .manage(services::scan_buddy::ScanBuddyState::persistent())
+        .manage(services::ip_intel::IpIntelState::default())
         .manage(services::lab_runtime::LabRuntimeState::persistent())
         .setup(|app| {
             let flows = app.state::<state::BackendState>().flows.clone();
@@ -22,6 +23,7 @@ pub fn run() {
             let current_version = app.package_info().version.to_string();
             app.manage(services::update_gate::UpdateGateState::new(cache_path, current_version));
             services::update_gate::spawn_worker(app.handle().clone());
+            services::ip_intel::spawn_worker(app.handle().clone());
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
@@ -129,6 +131,18 @@ pub fn run() {
              commands::global_intel::get_devices,
              commands::save_download,
              commands::watchtower::watchtower_discover_local,
+            commands::ip_intel::watchtower_ips_list,
+            commands::ip_intel::watchtower_ip_save,
+            commands::ip_intel::watchtower_ip_remove,
+            commands::ip_intel::watchtower_ip_set_flags,
+            commands::ip_intel::watchtower_scan_config_get,
+            commands::ip_intel::watchtower_scan_config_set,
+            commands::ip_intel::watchtower_scan_status,
+            commands::ip_intel::watchtower_ip_scan_now,
+            commands::ip_intel::watchtower_ip_investigate,
+            commands::ip_intel::watchtower_notes_list,
+            commands::ip_intel::watchtower_note_save,
+            commands::ip_intel::watchtower_note_delete,
             commands::global_intel::evaluate_flows_for_threats,
             commands::enrichment::refresh_watchtower_enrichment,
             commands::auth::auth_register,
@@ -155,6 +169,8 @@ pub fn run() {
                     tracing::warn!("Passive capture shutdown did not finish within its bounded shutdown window");
                 }
                 app.state::<commands::capture_buddy::BuddyState>()
+                    .shutdown();
+                app.state::<services::ip_intel::IpIntelState>()
                     .shutdown();
                 app.state::<services::scan_buddy::ScanBuddyState>()
                     .shutdown();
