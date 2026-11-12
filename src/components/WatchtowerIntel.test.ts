@@ -45,7 +45,7 @@ const investigationBase = {
 };
 
 function fakeSources(overrides: Partial<IpIntelSources> = {}): IpIntelSources {
-  const calls = { startCapture: [] as Array<Record<string, unknown>>, scanIpNow: [] as Array<[string, boolean]>, saveNote: [] as Array<[number | null, string | null, string]> };
+  const calls = { startCapture: [] as Array<Record<string, unknown>>, scanIpNow: [] as Array<[string, boolean]>, saveNote: [] as Array<[number | null, string | null, string]>, packetDetail: [] as Array<[string, number]> };
   const sources: IpIntelSources = {
     listIps: async () => [record],
     saveIp: async () => record,
@@ -68,7 +68,7 @@ function fakeSources(overrides: Partial<IpIntelSources> = {}): IpIntelSources {
       return { id: id ?? 99, ip, body, created_at: Date.now(), updated_at: Date.now() };
     },
     deleteNote: async () => undefined,
-    listCaptureInterfaces: async () => ['wlan0'],
+    listCaptureInterfaces: async () => ['1. wlan0'],
     startCapture: async (options) => {
       calls.startCapture.push(options as unknown as Record<string, unknown>);
       return { session_id: 'session-1', path: '/tmp/capture', running: true, bytes: 0 };
@@ -79,6 +79,10 @@ function fakeSources(overrides: Partial<IpIntelSources> = {}): IpIntelSources {
       { number: 1, time: '0.000001', source: '192.168.7.10', destination: '192.168.7.1', protocol: 'TCP', length: '60', info: 'SYN' },
       { number: 2, time: '0.000002', source: '10.9.9.9', destination: '10.9.9.10', protocol: 'UDP', length: '90', info: 'noise' },
     ] as IntelPacketRow[], has_more: false }),
+    packetDetail: async (sessionId, number) => {
+      calls.packetDetail.push([sessionId, number]);
+      return { number, dissection: `Frame ${number}: Ethernet · IPv4 · TCP dissected via buddy engine` };
+    },
     exportCapture: async () => ({ path: '/tmp/out.pcap', bytes: 128 }),
     ...overrides,
   };
@@ -157,8 +161,25 @@ test('investigation panel loads and starts a host-scoped capture via the buddy e
     const calls = (sources as unknown as { calls: { startCapture: Array<Record<string, unknown>> } }).calls;
     assert.equal(calls.startCapture.length, 1);
     assert.equal(calls.startCapture[0].captureFilter, 'host 192.168.7.10', 'capture must be BPF-restricted to the selected IP');
-    assert.equal(calls.startCapture[0].interface, 'wlan0');
+    assert.equal(calls.startCapture[0].interface, '1', 'interface must be the index form the buddy engine maps back to the device (Capture Buddy contract)');
     assert.equal(calls.startCapture[0].promiscuous, false);
+  } finally { await cleanup(rendered); }
+});
+
+test('packet rows open a per-packet dissection via buddy_packet_detail', async () => {
+  const sources = fakeSources();
+  const rendered = await render({ sources });
+  try {
+    await act(async () => { button(rendered.host, 'Investigate').click(); });
+    await act(async () => { button(rendered.host, 'Start capture').click(); });
+    await act(async () => { await new Promise((resolve) => setTimeout(resolve, 2_100)); });
+    const rows = [...rendered.host.querySelectorAll('tbody tr')];
+    const synRow = rows.find((row) => (row.className || '').includes('cursor-pointer') && (row.textContent ?? '').includes('SYN'));
+    assert.ok(synRow, 'host SYN packet row should be rendered');
+    await act(async () => { (synRow as HTMLElement).click(); });
+    const calls = (sources as unknown as { calls: { packetDetail: Array<[string, number]> } }).calls;
+    assert.deepEqual(calls.packetDetail, [['session-1', 1]], 'clicking a packet row must request its dissection');
+    assert.match(rendered.host.textContent ?? '', /Frame 1: Ethernet · IPv4 · TCP dissected via buddy engine/);
   } finally { await cleanup(rendered); }
 });
 

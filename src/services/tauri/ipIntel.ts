@@ -242,6 +242,9 @@ export function closeCapture(sessionId: string): Promise<void> {
 export function listCapturePackets(sessionId: string, displayFilter = ''): Promise<IntelPacketPage> {
   return call<IntelPacketPage>('buddy_packets', { sessionId, displayFilter });
 }
+export function packetDetail(sessionId: string, number: number): Promise<{ number: number; dissection: string }> {
+  return call<{ number: number; dissection: string }>('buddy_packet_detail', { sessionId, number });
+}
 export function exportCapture(sessionId: string, destination: string): Promise<{ path: string; bytes: number }> {
   return call<{ path: string; bytes: number }>('buddy_save_file', { sessionId, destination });
 }
@@ -268,6 +271,7 @@ export interface IpIntelSources {
   stopCapture: typeof stopCapture;
   closeCapture: typeof closeCapture;
   listCapturePackets: typeof listCapturePackets;
+  packetDetail: typeof packetDetail;
   exportCapture: typeof exportCapture;
 }
 
@@ -289,5 +293,6 @@ export const ipIntelSources: IpIntelSources = {
   stopCapture,
   closeCapture,
   listCapturePackets,
+  packetDetail,
   exportCapture,
 };

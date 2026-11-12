@@ -184,8 +184,11 @@ export function WatchtowerIntel({ sources = DEFAULT_SOURCES }: WatchtowerIntelPr
   const [packetDirection, setPacketDirection] = useState<PacketDirectionFilter>('both');
   const [capture, setCapture] = useState<{ ip: string; sessionId: string; running: boolean } | null>(null);
   const [capturePackets, setCapturePackets] = useState<IntelPacketRow[]>([]);
+  const [packetDetailView, setPacketDetailView] = useState<{ number: number; dissection: string } | null>(null);
+  const [packetDetailBusy, setPacketDetailBusy] = useState(false);
   const [captureBusy, setCaptureBusy] = useState(false);
   const [captureError, setCaptureError] = useState<string | null>(null);
+  const [captureErrorIp, setCaptureErrorIp] = useState<string | null>(null);
   const [exportDestination, setExportDestination] = useState('');
   const captureRef = useRef<{ sessionId: string } | null>(null);
   const mountedRef = useRef(true);
@@ -234,7 +237,7 @@ export function WatchtowerIntel({ sources = DEFAULT_SOURCES }: WatchtowerIntelPr
   useEffect(() => {
     let alive = true;
     sources.listCaptureInterfaces().then(
-      (list) => { if (alive && list.length > 0) { setCaptureInterfaces(list); setCaptureIface(list[0]); } },
+      (list) => { if (alive && list.length > 0) { setCaptureInterfaces(list); setCaptureIface(list[0].split('.')[0]); } },
       () => { if (alive) setCaptureInterfaces([]); },
     );
     return () => { alive = false; };
@@ -403,11 +406,14 @@ export function WatchtowerIntel({ sources = DEFAULT_SOURCES }: WatchtowerIntelPr
   // Capture controls -------------------------------------------------------
   const startIpCapture = useCallback(async (ip: string) => {
     setCaptureError(null);
+    setCaptureErrorIp(null);
     setCapturePackets([]);
+    setPacketDetailView(null);
     setCaptureBusy(true);
     const filter = captureFilterForIp(ip);
     if (!captureIface || !filter) {
       setCaptureBusy(false);
+      setCaptureErrorIp(ip);
       setCaptureError(captureIface ? 'A valid interface and IP are required.' : 'Select a capture interface first.');
       return;
     }
@@ -430,6 +436,7 @@ export function WatchtowerIntel({ sources = DEFAULT_SOURCES }: WatchtowerIntelPr
     } catch (error) {
       if (mountedRef.current) {
         captureRef.current = null;
+        setCaptureErrorIp(ip);
         setCaptureError(error instanceof Error ? error.message : 'Capture could not start.');
       }
     } finally {
@@ -448,7 +455,7 @@ export function WatchtowerIntel({ sources = DEFAULT_SOURCES }: WatchtowerIntelPr
         setCapture((previous) => (previous && previous.sessionId === capture.sessionId ? { ...previous, running: false } : previous));
       }
     } catch (error) {
-      if (mountedRef.current) setCaptureError(error instanceof Error ? error.message : 'Capture could not stop cleanly.');
+      if (mountedRef.current) { setCaptureErrorIp(capture.ip); setCaptureError(error instanceof Error ? error.message : 'Capture could not stop cleanly.'); }
     } finally {
       if (mountedRef.current) setCaptureBusy(false);
     }
@@ -467,7 +474,7 @@ export function WatchtowerIntel({ sources = DEFAULT_SOURCES }: WatchtowerIntelPr
       const saved = await sources.exportCapture(capture.sessionId, destination);
       if (mountedRef.current) setNotice(`Capture exported to ${saved.path} (${saved.bytes} bytes).`);
     } catch (error) {
-      if (mountedRef.current) setCaptureError(error instanceof Error ? error.message : 'Export failed.');
+      if (mountedRef.current) { setCaptureErrorIp(capture.ip); setCaptureError(error instanceof Error ? error.message : 'Export failed.'); }
     } finally {
       if (mountedRef.current) setCaptureBusy(false);
     }
@@ -479,8 +486,23 @@ export function WatchtowerIntel({ sources = DEFAULT_SOURCES }: WatchtowerIntelPr
     captureRef.current = null;
     setCapture(null);
     setCapturePackets([]);
+    setPacketDetailView(null);
     setCaptureError(null);
+    setCaptureErrorIp(null);
   }, [sources]);
+
+  const showPacketDetail = useCallback(async (number: number) => {
+    if (!capture) return;
+    setPacketDetailBusy(true);
+    try {
+      const detail = await sources.packetDetail(capture.sessionId, number);
+      if (mountedRef.current) setPacketDetailView(detail);
+    } catch (error) {
+      if (mountedRef.current) { setCaptureErrorIp(capture.ip); setCaptureError(error instanceof Error ? error.message : 'Packet detail unavailable.'); }
+    } finally {
+      if (mountedRef.current) setPacketDetailBusy(false);
+    }
+  }, [capture, sources]);
 
   const investigationNotes = investigation?.notes ?? [];
   const capturePacketsForView = useMemo(
@@ -719,8 +741,11 @@ export function WatchtowerIntel({ sources = DEFAULT_SOURCES }: WatchtowerIntelPr
                             capture={capture && capture.ip === row.ip ? capture : null}
                             capturePackets={capture && capture.ip === row.ip ? capturePacketsForView : []}
                             packetSummary={packetSummary}
+                            packetDetail={capture && capture.ip === row.ip ? packetDetailView : null}
+                            packetDetailBusy={capture && capture.ip === row.ip ? packetDetailBusy : false}
+                            onShowPacketDetail={showPacketDetail}
                             captureBusy={captureBusy}
-                            captureError={capture && capture.ip === row.ip ? captureError : null}
+                            captureError={captureError && captureErrorIp === row.ip ? captureError : null}
                             exportDestination={exportDestination}
                             setExportDestination={setExportDestination}
                             onStartCapture={() => void startIpCapture(row.ip)}
@@ -810,6 +835,9 @@ function InvestigationPanel({
   capture,
   capturePackets,
   packetSummary,
+  packetDetail,
+  packetDetailBusy,
+  onShowPacketDetail,
   captureBusy,
   captureError,
   exportDestination,
@@ -840,6 +868,9 @@ function InvestigationPanel({
   capture: { ip: string; sessionId: string; running: boolean } | null;
   capturePackets: IntelPacketRow[];
   packetSummary: ReturnType<typeof packetStats>;
+  packetDetail: { number: number; dissection: string } | null;
+  packetDetailBusy: boolean;
+  onShowPacketDetail: (number: number) => void;
   captureBusy: boolean;
   captureError: string | null;
   exportDestination: string;
@@ -1030,7 +1061,7 @@ function InvestigationPanel({
             </p>
             <div className="mt-2 flex flex-wrap items-center gap-2">
               <select className={inputClass} value={captureIface} aria-label="Capture interface" onChange={(event) => setCaptureIface(event.target.value)}>
-                {(captureInterfaces ?? []).map((name) => <option key={name} value={name}>{name}</option>)}
+                {(captureInterfaces ?? []).map((name) => <option key={name} value={name.split('.')[0]}>{name}</option>)}
                 {captureInterfaces !== null && captureInterfaces.length === 0 && <option value="">No interfaces</option>}
               </select>
               <select className={inputClass} value={captureDirection} aria-label="Capture direction" onChange={(event) => setCaptureDirection(event.target.value as 'in' | 'out' | 'inout')}>
@@ -1101,7 +1132,11 @@ function InvestigationPanel({
                       </thead>
                       <tbody className="divide-y divide-zinc-800 text-zinc-400">
                         {capturePackets.slice(0, 300).map((packet) => (
-                          <tr key={packet.number}>
+                          <tr
+                            key={packet.number}
+                            className={`cursor-pointer hover:bg-[#0d1418] ${packetDetail?.number === packet.number ? 'bg-[#0d1a20]' : ''}`}
+                            onClick={() => onShowPacketDetail(packet.number)}
+                          >
                             <td className="px-2 py-1 font-mono">{packet.number}</td>
                             <td className="px-2 py-1 font-mono">{packet.time}</td>
                             <td className="px-2 py-1 font-mono">{packet.source}</td>
@@ -1114,6 +1149,10 @@ function InvestigationPanel({
                       </tbody>
                     </table>
                   </div>
+                )}
+                {packetDetailBusy && <p role="status" className="mt-2 text-xs text-zinc-500">Dissecting packet…</p>}
+                {packetDetail && !packetDetailBusy && (
+                  <pre className="mt-2 max-h-48 overflow-auto whitespace-pre-wrap rounded border border-cyan-900/40 bg-black p-2 font-mono text-[11px] text-cyan-200">{packetDetail.dissection}</pre>
                 )}
                 <div className="mt-2 flex flex-wrap items-center gap-2">
                   <input
