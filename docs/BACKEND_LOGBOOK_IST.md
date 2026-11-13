@@ -1713,3 +1713,27 @@ STARTED: linux desktop build; full packaged application.
 ### 2026-11-12 16:02:11 IST (+05:30)
 
 COMPLETED: linux desktop build and artifact staging. See releases/linux/ and its manifest for exact files and checksums. Runtime validation is a separate check.
+
+### 2026-11-12 17:14:27 IST (+05:30)
+
+STARTED: windows cross desktop build; full packaged application.
+
+### 2026-11-12 17:14:35 IST (+05:30)
+
+FAILED: windows desktop build step node (exit 1). Inspect the build output for details.
+
+### 2026-11-12 17:15:31 IST (+05:30)
+
+STARTED: windows cross desktop build; full packaged application.
+
+### 2026-11-12 17:15:39 IST (+05:30)
+
+FAILED: windows desktop build step node (exit 1). Inspect the build output for details.
+
+### 2026-11-12 17:16:42 IST (+05:30)
+
+STARTED: windows cross desktop build; full packaged application.
+
+### 2026-11-12 17:18:41 IST (+05:30)
+
+FAILED: windows desktop build step node (exit 1). Inspect the build output for details.
