@@ -30,6 +30,7 @@ import {
   portSummary,
   relativeAge,
   scanStateLabel,
+  searchNotes,
   sourceBadge,
   type PacketDirectionFilter,
 } from '../lib/ipIntelPresentation';
@@ -148,6 +149,7 @@ export function WatchtowerIntel({ sources = DEFAULT_SOURCES }: WatchtowerIntelPr
   const [recordsError, setRecordsError] = useState<string | null>(null);
   const [refreshing, setRefreshing] = useState(false);
   const [query, setQuery] = useState('');
+  const [noteQuery, setNoteQuery] = useState('');
   const [selected, setSelected] = useState<string | null>(null);
   const [rowBusy, setRowBusy] = useState(false);
   const [actionError, setActionError] = useState<string | null>(null);
@@ -719,6 +721,7 @@ export function WatchtowerIntel({ sources = DEFAULT_SOURCES }: WatchtowerIntelPr
                             investigating={investigating}
                             investigationError={investigationError}
                             notes={investigationNotes}
+                            noteQuery={noteQuery}
                             noteDrafts={noteDrafts}
                             noteStatus={noteStatus}
                             onNoteDraftChange={onNoteDraftChange}
@@ -785,8 +788,15 @@ export function WatchtowerIntel({ sources = DEFAULT_SOURCES }: WatchtowerIntelPr
           onDelete={() => undefined}
           disabled={rowBusy}
         />
+        <input
+          className={`${inputClass} mt-2 w-full`}
+          placeholder="Search notes by text or attached IP…"
+          value={noteQuery}
+          aria-label="Search notes"
+          onChange={(event) => setNoteQuery(event.target.value)}
+        />
         <div className="mt-2 space-y-2">
-          {(generalNotes ?? []).map((note) => (
+          {searchNotes(generalNotes ?? [], noteQuery).map((note) => (
             <NoteEditor
               key={note.id}
               scopeKey={`note-${note.id}`}
@@ -803,6 +813,9 @@ export function WatchtowerIntel({ sources = DEFAULT_SOURCES }: WatchtowerIntelPr
               disabled={rowBusy}
             />
           ))}
+          {generalNotes !== null && (generalNotes ?? []).length > 0 && searchNotes(generalNotes, noteQuery).length === 0 && (
+            <p role="status" className="text-[11px] text-zinc-600">No notes match the search.</p>
+          )}
           {generalNotes !== null && generalNotes.length === 0 && (
             <p role="status" className="text-[11px] text-zinc-600">No general notes yet.</p>
           )}
@@ -818,6 +831,7 @@ function InvestigationPanel({
   investigating,
   investigationError,
   notes,
+  noteQuery,
   noteDrafts,
   noteStatus,
   onNoteDraftChange,
@@ -851,6 +865,7 @@ function InvestigationPanel({
   investigating: boolean;
   investigationError: string | null;
   notes: IpIntelNote[];
+  noteQuery: string;
   noteDrafts: Record<string, string>;
   noteStatus: Record<string, string>;
   onNoteDraftChange: (key: string, id: number | null, ip: string | null, body: string) => void;
@@ -1030,7 +1045,7 @@ function InvestigationPanel({
                 onDelete={() => undefined}
                 disabled={rowBusy}
               />
-              {notes.map((note) => (
+              {searchNotes(notes, noteQuery).map((note) => (
                 <NoteEditor
                   key={note.id}
                   scopeKey={`note-${note.id}`}
@@ -1043,6 +1058,9 @@ function InvestigationPanel({
                   disabled={rowBusy}
                 />
               ))}
+              {notes.length > 0 && searchNotes(notes, noteQuery).length === 0 && (
+                <p className="text-[11px] text-zinc-600">No notes for this address match the search.</p>
+              )}
               {notes.length === 0 && <p className="text-[11px] text-zinc-600">No notes attached to this address yet.</p>}
             </div>
           </div>

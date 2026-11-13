@@ -240,3 +240,29 @@ test('enable auto-scan records explicit per-IP authorization through set flags',
     assert.match(rendered.host.textContent ?? '', /Auto-scan authorized for 192\.168\.7\.10\./);
   } finally { await cleanup(rendered); }
 });
+
+test('notes search filters general and per-IP notes by body text', async () => {
+  const notes: IpIntelNote[] = [
+    { id: 1, ip: null, body: 'Gateway note about router maintenance.', created_at: 1, updated_at: 1 },
+    { id: 2, ip: '192.168.7.10', body: 'A very special investigation remark.', created_at: 2, updated_at: 2 },
+  ];
+  const sources = fakeSources({ listNotes: async () => notes, investigateIp: async () => ({ ...investigationBase, notes }) });
+  const rendered = await render({ sources });
+  try {
+    const search = rendered.host.querySelector('input[aria-label="Search notes"]') as HTMLInputElement;
+    assert.ok(search, 'notes search input should render');
+    const setNativeValue = (element: HTMLInputElement, value: string) => {
+      const setter = Object.getOwnPropertyDescriptor(rendered.window.HTMLInputElement.prototype, 'value')?.set;
+      setter?.call(element, value);
+      element.dispatchEvent(new rendered.window.Event('input', { bubbles: true }));
+    };
+    await act(async () => { setNativeValue(search, 'special'); });
+    let text = rendered.host.textContent ?? '';
+    assert.match(text, /A very special investigation remark\./);
+    assert.doesNotMatch(text, /Gateway note about router maintenance\./);
+    await act(async () => { setNativeValue(search, ''); });
+    text = rendered.host.textContent ?? '';
+    assert.match(text, /Gateway note about router maintenance\./);
+    assert.match(text, /A very special investigation remark\./);
+  } finally { await cleanup(rendered); }
+});
