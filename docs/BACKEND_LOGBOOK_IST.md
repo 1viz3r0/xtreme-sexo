@@ -1737,3 +1737,19 @@ STARTED: windows cross desktop build; full packaged application.
 ### 2026-11-12 17:18:41 IST (+05:30)
 
 FAILED: windows desktop build step node (exit 1). Inspect the build output for details.
+
+### 2026-11-13 22:06:36 IST (+05:30)
+
+STARTED: linux desktop build; full packaged application.
+
+### 2026-11-13 22:11:20 IST (+05:30)
+
+COMPLETED: linux desktop build and artifact staging. See releases/linux/ and its manifest for exact files and checksums. Runtime validation is a separate check.
+
+### 2026-11-13 22:14:27 IST (+05:30)
+
+STARTED: linux desktop build; full packaged application.
+
+### 2026-11-13 22:18:36 IST (+05:30)
+
+COMPLETED: linux desktop build and artifact staging. See releases/linux/ and its manifest for exact files and checksums. Runtime validation is a separate check.
