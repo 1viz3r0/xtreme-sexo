@@ -34,5 +34,8 @@ export async function getGlobalIntelSnapshot(limit = 100): Promise<GlobalIntelSn
     throw new Error('Global Intel telemetry is unavailable in browser mode. Open the native desktop app.');
   }
   // Propagate failures: an unavailable source is not a successful empty snapshot.
-  return invoke<GlobalIntelSnapshot>('get_global_intel_snapshot', { limit });
+  // The backend validates this session token against the persisted auth store:
+  // Overview telemetry is refused to non-admin sessions.
+  const token = localStorage.getItem('netoze_token') ?? undefined;
+  return invoke<GlobalIntelSnapshot>('get_global_intel_snapshot', { limit, token });
 }

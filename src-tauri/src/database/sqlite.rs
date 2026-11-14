@@ -137,13 +137,33 @@ pub fn init_sqlite() -> Result<PathBuf> {
 // ---------------------------------------------------------------
 
 pub fn open_conn() -> rusqlite::Result<Connection> {
+    let db_path = get_app_dir().join("netoze_app.db");
+    let conn = Connection::open(&db_path)?;
     // Read paths can be exercised before the desktop startup migration (for
     // example by a standalone integration test). Ensure the same schema
     // contract before handing out a connection instead of returning an empty
     // database that later fails with "no such table".
-    init_sqlite()?;
-    let db_path = get_app_dir().join("netoze_app.db");
-    Connection::open(db_path)
+    //
+    // init_sqlite() executes dozens of DDL statements, so it is far too
+    // expensive to run on every call: cache write paths (GeoIP enrichment,
+    // notes, inventory) open connections constantly and the repeated DDL
+    // storm starves the disk under load. Probe one marker table instead and
+    // only run the full initialisation when the database is genuinely new
+    // or missing the schema.
+    let schema_present: bool = conn
+        .query_row(
+            "SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name IN ('app_config','geoip_cache','devices')",
+            [],
+            |row| row.get::<_, i64>(0),
+        )
+        .map(|count| count == 3)
+        .unwrap_or(false);
+    if !schema_present {
+        drop(conn);
+        init_sqlite()?;
+        return Connection::open(&db_path);
+    }
+    Ok(conn)
 }
 
 fn ensure_phase11_tables(conn: &Connection) {

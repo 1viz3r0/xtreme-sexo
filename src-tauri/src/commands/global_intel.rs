@@ -3,9 +3,25 @@
 use crate::{models::*, state::BackendState};
 use rusqlite::{Connection, OpenFlags, OptionalExtension};
 use serde::Serialize;
-use tauri::{command, State};
+use tauri::{command, Manager, State};
 
 fn bounded(limit: Option<usize>) -> usize { limit.unwrap_or(100).clamp(1, 500) }
+
+/// Overview is an administrator-only surface. Both Overview commands (snapshot
+/// and enrichment) validate the persisted session token backend-side: a
+/// missing, expired, or non-admin session is refused here regardless of what
+/// the frontend renders.
+pub(crate) fn require_admin_session(token: &Option<String>) -> Result<(), String> {
+    const OVERVIEW_ADMIN_ONLY: &str = "Overview is available to administrators only.";
+    match token.as_deref().map(crate::services::auth_service::require_admin) {
+        Some(Ok(_)) => Ok(()),
+        Some(Err(reason)) => {
+            tracing::debug!(reason = %reason, "overview denied to non-admin session");
+            Err(OVERVIEW_ADMIN_ONLY.into())
+        }
+        None => Err(OVERVIEW_ADMIN_ONLY.into()),
+    }
+}
 
 #[derive(Serialize)]
 pub struct SourceState {
@@ -188,25 +204,53 @@ pub fn evaluate_flows_for_threats(state: State<'_, BackendState>) -> Result<Vec<
 }
 
 #[command]
-pub fn get_global_intel_snapshot(state: State<'_, BackendState>, limit: Option<usize>) -> Result<GlobalIntelSnapshot, String> {
-    snapshot(&state, bounded(limit))
+pub async fn get_global_intel_snapshot(app_handle: tauri::AppHandle, token: Option<String>, limit: Option<usize>) -> Result<GlobalIntelSnapshot, String> {
+    // The snapshot performs synchronous engine reads and local-storage
+    // queries, and Overview polls it every few seconds. It runs on the
+    // dedicated blocking pool: inline async execution shares the reactor with
+    // provider enrichment and storage waits, and one wedged reactor task can
+    // suspend every command in the app.
+    tauri::async_runtime::spawn_blocking(move || {
+        require_admin_session(&token)?;
+        let state = app_handle.state::<BackendState>();
+        snapshot(&state, bounded(limit))
+    })
+    .await
+    .map_err(|_| "Overview snapshot worker is unavailable".to_string())?
 }
 
 fn snapshot(state: &BackendState, limit: usize) -> Result<GlobalIntelSnapshot, String> {
-    let capture = state.capture.lock().map_err(|_| "Capture state unavailable")?.get_metrics();
+    let started = std::time::Instant::now();
+    let capture = {
+        let capture = state.capture.lock().map_err(|_| "Capture state unavailable")?;
+        let metrics = capture.get_metrics();
+        tracing::debug!(stage = "capture", elapsed_ms = started.elapsed().as_millis() as u64, status = %metrics.status, "overview snapshot stage");
+        metrics
+    };
     let (flows, flow_summary) = {
         let engine = state.flows.lock().map_err(|_| "Flow engine unavailable")?;
-        (engine.get_recent_flows(limit), engine.get_summary_stats())
+        let flows = engine.get_recent_flows(limit);
+        let summary = engine.get_summary_stats();
+        tracing::debug!(stage = "flows", elapsed_ms = started.elapsed().as_millis() as u64, flows = flows.len(), "overview snapshot stage");
+        (flows, summary)
     };
     let (detections, detection_summary) = {
         let engine = state.detections.lock().map_err(|_| "Detection engine unavailable")?;
-        (engine.get_findings(limit), engine.get_summary())
+        let findings = engine.get_findings(limit);
+        let summary = engine.get_summary();
+        tracing::debug!(stage = "detections", elapsed_ms = started.elapsed().as_millis() as u64, findings = findings.len(), "overview snapshot stage");
+        (findings, summary)
     };
     let (availability, reason) = super::inspect_npcap_availability()?;
+    tracing::debug!(stage = "npcap", elapsed_ms = started.elapsed().as_millis() as u64, "overview snapshot stage");
     let (cache, storage) = match read_cache(state, limit) {
-        Ok(cache) => (cache, SourceState { state: "AVAILABLE".into(), detail: "Read-only local cache; entries retain their original observation timestamps and may be stale".into() }),
+        Ok(cache) => {
+            tracing::debug!(stage = "cache", elapsed_ms = started.elapsed().as_millis() as u64, geoip = cache.geoip.len(), "overview snapshot stage");
+            (cache, SourceState { state: "AVAILABLE".into(), detail: "Read-only local cache; entries retain their original observation timestamps and may be stale".into() })
+        },
         Err(error) => (CachedIntel { geoip: vec![], threats: vec![], devices: vec![] }, SourceState { state: "UNAVAILABLE".into(), detail: error }),
     };
+    tracing::debug!(stage = "done", elapsed_ms = started.elapsed().as_millis() as u64, "overview snapshot complete");
     Ok(GlobalIntelSnapshot {
         collected_at: chrono::Utc::now().to_rfc3339(),
         scope: "current_session_engines_and_local_cache".into(),
@@ -254,5 +298,29 @@ mod tests {
         assert_eq!(conn.query_row("SELECT COUNT(*) FROM geoip_cache", [], |r| r.get::<_, i64>(0)).unwrap(), 2);
         drop(conn);
         std::fs::remove_file(path).unwrap();
+    }
+
+    #[test]
+    fn overview_commands_accept_admin_sessions_and_refuse_everyone_else() {
+        let _isolation = crate::services::test_isolation::isolated_data("overview-admin-gate");
+        // The bootstrap account of an empty store holds the admin role, so a
+        // real session exercises the allowed path end to end.
+        let session = crate::services::auth_service::register(
+            "Overview Admin",
+            "overview-admin@example.test",
+            "Vault-Overview-2026",
+        )
+        .unwrap();
+        assert!(require_admin_session(&Some(session.token)).is_ok());
+        assert_eq!(
+            require_admin_session(&None).unwrap_err(),
+            "Overview is available to administrators only."
+        );
+        // A well-formed but unknown token is still refused; the reason is never
+        // leaked to the caller.
+        assert_eq!(
+            require_admin_session(&Some("f".repeat(64))).unwrap_err(),
+            "Overview is available to administrators only."
+        );
     }
 }

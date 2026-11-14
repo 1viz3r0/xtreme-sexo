@@ -9,6 +9,7 @@ import type { TabType } from './Sidebar';
 import { getGlobalIntelSnapshot, type GlobalIntelSnapshot } from '../services/tauri/globalIntel';
 import { isTauriEnvironment } from '../services/tauri/isTauri';
 import type { GeoIpEntry, ThreatMatchEntry } from '../services/tauri/intel';
+import { refreshWatchtowerEnrichment } from '../services/tauri/intel';
 import { getPcapInterfaces, startPacketCapture, stopPacketCapture, type NpcapInterface } from '../services/tauri/capture';
 import { captureIsRunning } from '../lib/captureBuddyPresentation';
 
@@ -47,6 +48,8 @@ export const GlobalIntelView: React.FC<GlobalIntelViewProps> = ({
   const [selectedInterface, setSelectedInterface] = useState('');
   const [captureActionError, setCaptureActionError] = useState<string | null>(null);
   const [captureActionBusy, setCaptureActionBusy] = useState(false);
+  const [enrichBusy, setEnrichBusy] = useState(false);
+  const [enrichStatus, setEnrichStatus] = useState<string | null>(null);
   const refreshRef = useRef<() => void>(() => {});
   const inFlightRef = useRef<Promise<GlobalIntelSnapshot> | null>(null);
   const captureStatus = !desktopAvailable || !snapshot ? 'UNAVAILABLE'
@@ -130,7 +133,10 @@ export const GlobalIntelView: React.FC<GlobalIntelViewProps> = ({
   };
 
   // One local-only read loop. Reuse a pending request across StrictMode effect
-  // cleanup/setup; each effect owns its timer and ignores late results.
+  // cleanup/setup; each effect owns its timer and ignores late results. A read
+  // that never settles (for example when a storage path stalls) must not kill
+  // live updates permanently: it is raced against a timeout and the next poll
+  // starts a fresh request.
   useEffect(() => {
     if (!desktopAvailable) return;
     let cancelled = false;
@@ -144,9 +150,14 @@ export const GlobalIntelView: React.FC<GlobalIntelViewProps> = ({
       try {
         const request = inFlightRef.current ?? getGlobalIntelSnapshot(100);
         inFlightRef.current = request;
-        const next = await request;
+        const next = await Promise.race([
+          request,
+          new Promise<never>((_, reject) => {
+            setTimeout(() => reject(new Error('Snapshot refresh timed out; retrying')), 12_000);
+          }),
+        ]);
         if (cancelled) return;
-        setSnapshot(next);
+        setSnapshot(next as GlobalIntelSnapshot);
         setRefreshError(null);
       } catch (error) {
         if (!cancelled) {
@@ -195,6 +206,31 @@ export const GlobalIntelView: React.FC<GlobalIntelViewProps> = ({
       setCaptureActionError(error instanceof Error ? error.message : String(error));
     } finally {
       setCaptureActionBusy(false);
+    }
+  };
+
+  // Explicit, user-triggered enrichment of observed public flow endpoints:
+  // GeoIP coordinates (provider ipwho.is), a connectivity probe, and threat-feed
+  // refresh. Private/reserved addresses are classified locally and never sent
+  // anywhere; entries land in the local geoip cache for the next snapshot.
+  const handleEnrich = async () => {
+    setEnrichBusy(true);
+    setEnrichStatus('Resolving observed endpoint locations…');
+    try {
+      const result = await refreshWatchtowerEnrichment();
+      if (!desktopAvailable) return;
+      const resolved = result.geoip.filter((entry) => !entry.stale).length;
+      const stale = result.geoip.length - resolved;
+      const suffix = result.errors.length > 0 ? ` · ${result.errors.length} provider error(s)` : '';
+      const summary = result.attempted_ips === 0
+        ? 'No public endpoints observed yet — start capture to observe traffic, then resolve again.'
+        : `Resolved locations for ${resolved} of ${result.attempted_ips} observed public endpoint(s)${stale > 0 ? `, ${stale} kept from cache` : ''}${suffix}.`;
+      setEnrichStatus(summary);
+    } catch (error) {
+      setEnrichStatus(`Location resolution failed: ${error instanceof Error ? error.message : String(error)}`);
+    } finally {
+      setEnrichBusy(false);
+      handleRefresh();
     }
   };
 
@@ -334,6 +370,22 @@ export const GlobalIntelView: React.FC<GlobalIntelViewProps> = ({
     : 'No alerts recorded in this session';
 
   const recentFindings = detections.slice(0, 5);
+  // Contacts show real observations only: geolocated endpoints first, then
+  // locally observed devices straight from the devices cache, explicitly
+  // labelled "local network" because they never receive invented coordinates.
+  const contactList = globeNodes.slice(0, 12);
+  const localContacts = globeNodes.length < 12
+    ? devices
+        .filter((device) => !globeNodes.some((node) => node.id === device.ip))
+        .slice(0, 12 - globeNodes.length)
+        .map((device) => ({
+          id: device.ip,
+          name: device.hostname || device.vendor || 'Local device',
+          ip: device.ip,
+          flows: flowAgg[device.ip]?.flows ?? 0,
+          self: device.is_self,
+        }))
+    : [];
   const globeMessage = !desktopAvailable
     ? 'Browser mode: local endpoints and telemetry are unavailable. Bundled country geography is reference data only.'
     : !snapshot
@@ -341,7 +393,7 @@ export const GlobalIntelView: React.FC<GlobalIntelViewProps> = ({
       : refreshError
         ? 'Showing the last successful endpoint snapshot; refresh is stale.'
         : globeNodes.length === 0
-          ? 'No observed endpoints with coordinates in this session.'
+          ? 'No observed endpoints with coordinates in this session. “Resolve locations” looks up observed public endpoints on demand.'
           : null;
   return (
     <div className="enterprise-overview">
@@ -351,11 +403,11 @@ export const GlobalIntelView: React.FC<GlobalIntelViewProps> = ({
       </header>
       <div className="enterprise-overview-metrics"><div><span>Endpoints</span><strong>{globeNodes.length}</strong><small>Observed with coordinates</small></div><div><span>Active destinations</span><strong>{locationNodes.length}</strong><small>Only while capture is running</small></div><div><span>Findings</span><strong>{snapshot ? sev.total_findings_count : '—'}</strong><small>Loaded session evidence</small></div><div><span>High+</span><strong>{snapshot ? sev.critical_count + sev.high_count : '—'}</strong><small>Not a risk score</small></div><div><span>Connectivity</span><strong>{connState}</strong><small>{avgRtt > 0 ? `${avgRtt.toFixed(1)} ms observed RTT` : 'No RTT reported'}</small></div></div>
       <div className="enterprise-overview-grid">
-         <section className="enterprise-map-card" aria-labelledby="map-title"><div className="enterprise-card-heading"><div><p className="enterprise-kicker">01 · OBSERVE</p><h2 id="map-title">Observed geography</h2><p>Observed endpoints and active flows over bundled reference geography.</p></div><div className="enterprise-card-actions"><button type="button" onClick={() => setIsSearchOpen(true)} aria-label="Search locations" className="enterprise-secondary-button">Search <span>⌘/CTRL+K</span></button><button type="button" onClick={() => setIsAutoRotate(!isAutoRotate)} className="enterprise-secondary-button">Rotation {isAutoRotate ? 'on' : 'off'}</button></div></div><div className="enterprise-map-stage"><Globe3D nodes={globeNodes} selectedNode={selectedNode} selectedCountry={selectedCountry} onSelectNode={(node) => { setSelectedCountry(null); setSelectedNode(node); setIsDetailPanelOpen(true); }} onSelectCountry={(country) => { setSelectedNode(null); setSelectedCountry(country); setIsDetailPanelOpen(true); }} isAutoRotate={isAutoRotate} hub={hubInfo && hasCoordinates(hubInfo) ? { lat: hubInfo.latitude, lng: hubInfo.longitude } : null} captureStatus={captureStatus} captureMetrics={captureMetrics} activeFlows={locationNodes} />{globeMessage && !selectedCountry && <div className="enterprise-map-message" role="status">{globeMessage}</div>}{isDetailPanelOpen && (selectedNode || selectedCountry) && <CountryDetailPanel node={selectedNode} country={selectedCountry} vector={countryVector} regions={regions} selectedRegion={selectedRegion} onSelectRegion={setSelectedRegion} connectivity={connectivity} stats={selectedCountry ? countryStatsFor(selectedCountry.iso) : null} onClose={() => setIsDetailPanelOpen(false)} topOffset={selectedCountry ? '3.4rem' : '0.75rem'} />}<SearchModal isOpen={isSearchOpen} onClose={() => setIsSearchOpen(false)} onSelectGeo={handleSelectGeo} /></div></section>
+         <section className="enterprise-map-card" aria-labelledby="map-title"><div className="enterprise-card-heading"><div><p className="enterprise-kicker">01 · OBSERVE</p><h2 id="map-title">Observed geography</h2><p>Observed endpoints and active flows over bundled reference geography.</p></div><div className="enterprise-card-actions"><button type="button" onClick={() => void handleEnrich()} disabled={!desktopAvailable || enrichBusy} aria-label="Resolve endpoint locations" title="Contacts public GeoIP, connectivity and threat-feed providers for observed public endpoints only; local addresses never leave the device" className="enterprise-secondary-button">{enrichBusy ? 'Resolving…' : 'Resolve locations'}</button><button type="button" onClick={() => setIsSearchOpen(true)} aria-label="Search locations" className="enterprise-secondary-button">Search <span>⌘/CTRL+K</span></button><button type="button" onClick={() => setIsAutoRotate(!isAutoRotate)} className="enterprise-secondary-button">Rotation {isAutoRotate ? 'on' : 'off'}</button></div></div><div className="enterprise-map-stage"><Globe3D nodes={globeNodes} selectedNode={selectedNode} selectedCountry={selectedCountry} onSelectNode={(node) => { setSelectedCountry(null); setSelectedNode(node); setIsDetailPanelOpen(true); }} onSelectCountry={(country) => { setSelectedNode(null); setSelectedCountry(country); setIsDetailPanelOpen(true); }} isAutoRotate={isAutoRotate} hub={hubInfo && hasCoordinates(hubInfo) ? { lat: hubInfo.latitude, lng: hubInfo.longitude } : null} captureStatus={captureStatus} captureMetrics={captureMetrics} activeFlows={locationNodes} />{globeMessage && !selectedCountry && <div className="enterprise-map-message" role="status">{globeMessage}</div>}{enrichStatus && <div className="enterprise-map-message" role="status">{enrichStatus}</div>}{isDetailPanelOpen && (selectedNode || selectedCountry) && <CountryDetailPanel node={selectedNode} country={selectedCountry} vector={countryVector} regions={regions} selectedRegion={selectedRegion} onSelectRegion={setSelectedRegion} connectivity={connectivity} stats={selectedCountry ? countryStatsFor(selectedCountry.iso) : null} onClose={() => setIsDetailPanelOpen(false)} topOffset={selectedCountry ? '3.4rem' : '0.75rem'} />}<SearchModal isOpen={isSearchOpen} onClose={() => setIsSearchOpen(false)} onSelectGeo={handleSelectGeo} /></div></section>
         <aside className="enterprise-overview-rail" aria-label="Overview controls and signals">
           <section aria-label="CAPTURE CONTROL" className="enterprise-control-card"><div className="enterprise-card-heading"><div><p className="enterprise-kicker">02 · CONTROL</p><h2>Capture control</h2></div><span className={captureRunning ? 'enterprise-state-good' : 'enterprise-muted'}>{captureStatus}</span></div><div className="enterprise-control-row"><select value={selectedInterface} onChange={(e) => setSelectedInterface(e.target.value)} disabled={!desktopAvailable || captureRunning || captureStopping || captureActionBusy} aria-label="Capture interface"><option value="">No interface available</option>{interfaces.map((item) => <option key={item.id} value={item.id}>{item.name || item.id}</option>)}</select><button type="button" onClick={() => void handleCaptureAction()} disabled={!desktopAvailable || captureActionBusy || captureStopping || (!captureRunning && !selectedInterface)} className="enterprise-primary-button">{captureActionBusy ? 'WORKING…' : captureStopping ? 'STOPPING…' : captureRunning ? 'STOP' : 'START'}</button></div>{captureStopping && <p role="status" className="enterprise-help-text">Finishing the previous capture and its final persistence before restart.</p>}{captureActionError && <p className="enterprise-error-text">{captureActionError}</p>}<div className="enterprise-control-metrics"><span><strong>{metrics?.packets_captured ?? '—'}</strong>Packets</span><span><strong>{metrics?.dropped_packets ?? '—'}</strong>Dropped</span><span><strong>{summary?.active_flows_count ?? '—'}</strong>Flows</span></div></section>
           <section className="enterprise-control-card"><div className="enterprise-card-heading"><div><p className="enterprise-kicker">03 · SIGNAL</p><h2>Observed signals</h2></div><span className="enterprise-muted">{threatStatus?.feed_state || 'Unavailable'}</span></div><div className="enterprise-signal-list"><div><span>RTT</span><strong>{avgRtt > 0 ? `${avgRtt.toFixed(1)} ms` : '—'}</strong></div><div><span>Threat feed</span><strong>{threatStatus?.feed_state || '—'}</strong></div><div><span>Scope</span><strong>{snapshot?.scope || 'Local session'}</strong></div></div></section>
-          <section className="enterprise-control-card enterprise-contacts-card"><div className="enterprise-card-heading"><div><p className="enterprise-kicker">04 · CONTACTS</p><h2>Observed endpoints</h2></div><span className="enterprise-muted">Select to track</span></div><div className="enterprise-contact-list">{globeNodes.length ? globeNodes.slice(0, 12).map((node) => <button type="button" key={node.id} onClick={() => { setSelectedCountry(null); setSelectedNode(node); setIsDetailPanelOpen(true); }}><span>{node.name}</span><small>{node.ip} · {node.activeFlowsCount} flows · {node.threatLevel}</small></button>) : <p className="enterprise-empty">{!desktopAvailable ? 'Native endpoint telemetry unavailable.' : refreshError ? 'Last endpoint snapshot is stale.' : 'No geolocated contacts in this session.'}</p>}</div></section>
+          <section className="enterprise-control-card enterprise-contacts-card"><div className="enterprise-card-heading"><div><p className="enterprise-kicker">04 · CONTACTS</p><h2>Observed endpoints</h2></div><span className="enterprise-muted">Select to track</span></div><div className="enterprise-contact-list">{contactList.map((node) => <button type="button" key={node.id} onClick={() => { setSelectedCountry(null); setSelectedNode(node); setIsDetailPanelOpen(true); }}><span>{node.name}</span><small>{node.ip} · {node.activeFlowsCount} flows · {node.threatLevel}</small></button>)}{localContacts.map((device) => <button type="button" key={device.id} disabled title="Locally observed address — no geographic placement is available or invented"><span>{device.name}{device.self ? ' (self)' : ''}</span><small>{device.ip} · local network · {device.flows} flows</small></button>)}{!contactList.length && !localContacts.length && <p className="enterprise-empty">{!desktopAvailable ? 'Native endpoint telemetry unavailable.' : refreshError ? 'Last endpoint snapshot is stale.' : 'No geolocated contacts in this session. “Resolve locations” can look up observed public endpoints.'}</p>}</div></section>
           <section className="enterprise-control-card"><div className="enterprise-card-heading"><div><p className="enterprise-kicker">05 · REVIEW</p><h2>Recent findings</h2></div><button type="button" onClick={() => setActiveTab('watchtower')} className="enterprise-text-button">Watchtower →</button></div><div className="enterprise-finding-list">{recentFindings.length ? recentFindings.map((alert) => <button type="button" key={alert.finding_id} onClick={() => setSelectedFinding(selectedFinding === alert.finding_id ? null : alert.finding_id)}><strong>{alert.severity} · {alert.title}</strong><small>{alert.source_ip} → {alert.destination_ip}</small>{selectedFinding === alert.finding_id && <span>{alert.evidence || 'No evidence text reported.'}</span>}</button>) : <span className="enterprise-empty">{emptyAlertMessage}</span>}</div></section>
         </aside>
       </div>

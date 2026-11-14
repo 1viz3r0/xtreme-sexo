@@ -25,10 +25,12 @@ test('Studio header and monitoring navigation are accessible and concise', () =>
   assert.match(sidebar, /aria-label="Primary navigation"/);
   assert.match(sidebar, /Monitoring/);
   assert.match(sidebar, /aria-label="Overview"/);
-  // Overview relocated into Additional tools: a real clickable item below the
-  // group trigger, no longer ahead of Watchtower in the primary group.
-  assert.ok(sidebar.indexOf('Overview') > sidebar.indexOf('Watchtower'));
+  // Overview is the administrator tool pinned under Additional tools: guests
+  // see it after the group trigger, muted with a visible Locked badge.
   assert.ok(sidebar.indexOf('Additional tools') < sidebar.indexOf('Overview'));
+  assert.ok(sidebar.indexOf('Watchtower') < sidebar.indexOf('Overview'));
+  assert.match(sidebar, /aria-label="Overview" aria-disabled="true"/);
+  assert.match(sidebar, /class="studio-nav-item\s*is-locked"/);
   assert.match(sidebar, /aria-label="Watchtower"/);
   assert.ok(sidebar.indexOf('Watchtower') < sidebar.indexOf('Capture Buddy'));
   assert.match(sidebar, /aria-current="page" aria-label="Capture Buddy"/);
@@ -42,7 +44,8 @@ test('Studio header and monitoring navigation are accessible and concise', () =>
    assert.doesNotMatch(sidebar, />Experimental</);
    assert.doesNotMatch(sidebar, /aria-label="Host &amp; Logs"/);
   assert.doesNotMatch(sidebar, /<details[^>]* open/);
-  assert.match(sidebar, /aria-label="Overview"/);
+  // The locked explanation only appears after an explicit click on the entry.
+  assert.doesNotMatch(sidebar, /administrators only/);
    assert.match(sidebar, /aria-label="Additional tools"/);
    assert.match(sidebar, /aria-expanded="false"/);
    assert.doesNotMatch(sidebar, /aria-label="Locked additional tools"/);
@@ -50,24 +53,33 @@ test('Studio header and monitoring navigation are accessible and concise', () =>
   const admin = renderToStaticMarkup(React.createElement(Sidebar, { ...sidebarProps, user: { name: 'Admin fixture', email: 'fixture@example.test', isVerified: true, role: 'admin' } }));
   assert.match(admin, /aria-label="Users"/);
   assert.match(admin, /aria-label="Overview"/);
+  // Administrators get the functional entry: no muted locked styling, and no
+  // disabled state on the Overview button.
+  assert.doesNotMatch(admin, /class="studio-nav-item[^"]*is-locked"/);
+  assert.doesNotMatch(admin, /aria-label="Overview" aria-disabled/);
   const collapsed = renderToStaticMarkup(React.createElement(Sidebar, { ...sidebarProps, isCollapsed: true }));
-  // Collapsed navigation pins only the primary tools as icons; Overview stays
-  // pinned under Additional tools even when collapsed (icon-only + tooltip).
+  // Collapsed navigation keeps the locked Overview entry visible as a muted
+  // icon under the locked Additional tools trigger.
   assert.match(collapsed, /aria-label="Overview"/);
   assert.match(collapsed, /aria-label="Additional tools"/);
+  assert.ok(collapsed.indexOf('Additional tools') < collapsed.indexOf('Overview'));
   assert.equal(renderToStaticMarkup(React.createElement(Sidebar, { ...sidebarProps, isFullyHidden: true })), '');
 });
 
 test('App opens Overview and keeps the live workspace routes wired', () => {
   const app = readFileSync(new URL('../App.tsx', import.meta.url), 'utf8');
-  assert.match(app, /useState<TabType>\('global_intel'\)/);
+  // Role-safe landing: Watchtower for everyone, Overview only via an
+  // administrator session (restored or fresh login).
+  assert.match(app, /useState<TabType>\('watchtower'\)/);
+  assert.match(app, /previous === 'global_intel' \? 'watchtower' : previous/);
+  assert.match(app, /previous === 'watchtower' \? 'global_intel' : previous/);
   assert.match(app, /const Watchtower = lazy\(\(\) => import\('\.\/components\/Watchtower'\)/);
   assert.match(app, /const GlobalIntelView = lazy\(\(\) => import\('\.\/components\/GlobalIntelView'\)/);
   assert.match(app, /activeTab === 'watchtower'[\s\S]*?<Watchtower flows=\{flows\} events=\{events\} graph=\{graphData\}(?:[\s\S]*?)\/>/);
   assert.match(app, /activeTab === 'global_intel'[\s\S]*?<GlobalIntelView/);
   assert.match(app, /activeTab === 'watchtower'[\s\S]*?flows: true, detections: true, graph: true/);
   assert.match(app, /activeTab === 'conversations'[\s\S]*?<CaptureBuddy \/>/);
-  assert.match(app, /userData\.role === 'admin'\) setActiveTab\('watchtower'\)/);
+  assert.match(app, /userData\.role === 'admin'\) setActiveTab\('global_intel'\)/);
   assert.match(app, /authSession\(stored\)/);
   assert.match(app, /authLogout\(stored\)/);
   assert.doesNotMatch(app, /animate-pulse/);
@@ -115,27 +127,29 @@ test('mounted shell preserves navigation, Overview, sign-in, and location search
     await act(async () => { root.render(React.createElement(ShellFixture)); });
     await click('Scan Buddy');
     assert.equal(host.querySelector('[aria-current="page"]')?.getAttribute('aria-label'), 'Scan Buddy');
-    await click('Watchtower');
-    assert.equal(host.querySelector('[aria-current="page"]')?.getAttribute('aria-label'), 'Watchtower');
-    await click('Additional tools');
+    // Guests cannot open Overview: the locked entry explains why and the
+    // active tab is untouched.
     await click('Overview');
-    assert.equal(host.querySelector('[aria-current="page"]')?.getAttribute('aria-label'), 'Overview');
+    assert.match(host.textContent, /Overview is available to administrators only\./);
+    assert.equal(host.querySelector('[aria-current="page"]')?.getAttribute('aria-label'), 'Scan Buddy');
     await click('Collapse navigation');
     assert.ok(host.querySelector('.studio-sidebar.is-collapsed'));
      await click('Dashboard');
      assert.equal(host.querySelector('[aria-current="page"]')?.getAttribute('aria-label'), 'Dashboard');
      await click('Expand navigation');
+     await click('Additional tools');
      assert.equal(host.querySelector('button[aria-label="Additional tools"]')?.getAttribute('aria-expanded'), 'true');
      assert.ok(host.querySelector('[aria-label="Locked additional tools"]'));
      assert.equal(host.querySelector('[aria-label="Locked additional tools"] button'), null);
      await click('Hide navigation');
     assert.equal(host.querySelector('aside'), null);
     await click('Show navigation');
-    await click('Overview');
-    assert.equal(host.querySelector('[aria-label="Overview"]')?.getAttribute('aria-current'), 'page');
     await click('Sign in');
     assert.ok(host.querySelector('[aria-label="Users"]'));
     assert.match(host.textContent, /Admin/);
+    // Signed-in administrators get the functional Overview entry.
+    await click('Overview');
+    assert.equal(host.querySelector('[aria-label="Overview"]')?.getAttribute('aria-current'), 'page');
     await click('Sign out');
     assert.equal(host.querySelector('[aria-label="Users"]'), null);
      assert.deepEqual(calls, ['auth', 'logout']);

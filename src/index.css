@@ -292,6 +292,9 @@
 .studio-experimental-locked { display: grid; gap: 5px; margin-top: 8px; padding: 8px; border: 1px solid #2c2c2c; border-radius: 8px; background: #0a0a0a; }
 .studio-locked-tool { display: flex; align-items: center; gap: 8px; min-height: 34px; padding: 7px 8px; border: 1px solid #242424; border-radius: 7px; color: #666; font-size: 12px; cursor: not-allowed; user-select: none; }
 .studio-locked-tool .studio-locked-label { color: #5f5f5f; font-size: 9px; }
+.studio-nav-item.is-locked { color: #6b6b6b; cursor: default; }
+.studio-nav-item.is-locked:hover { background: transparent; color: #6b6b6b; }
+.studio-locked-message { margin: 6px 3px 0; padding: 7px 9px; border: 1px solid #2c2c2c; border-radius: 8px; background: #0a0a0a; color: #9e9e9e; font-size: 11px; line-height: 1.45; }
 .studio-locked-help { margin: 2px 3px 0; color: #5f5f5f; font-size: 10px; line-height: 1.4; }
 .enterprise-page { min-height: 100%; overflow-y: auto; padding: 28px; color: #e9e9e9; background: #080808; }
 .enterprise-page-header { display: flex; align-items: flex-start; justify-content: space-between; gap: 24px; margin: 0 auto 22px; max-width: 1480px; }
