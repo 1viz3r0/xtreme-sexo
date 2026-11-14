@@ -2,6 +2,9 @@ import React, { lazy, Suspense, useEffect, useMemo, useRef, useState } from 'rea
 import { createLifecycle, liveDataNeeds, mergeRecent, startSerialPolling } from './lib/appLifecycle';
 import { TopNavbar } from './components/TopNavbar';
 import { Sidebar } from './components/Sidebar';
+import { UpdateBanner } from './components/UpdateBanner';
+import { UpdateGateOverlay } from './components/UpdateGateOverlay';
+import { UpdateGateProvider } from './lib/UpdateGateContext';
 import type { TabType } from './components/Sidebar';
 import { CaptureBuddy } from './components/CaptureBuddy';
 import { SystemLogs } from './components/SystemLogs';
@@ -32,7 +35,9 @@ const Watchtower = lazy(() => import('./components/Watchtower').then((module) =>
 const GlobalIntelView = lazy(() => import('./components/GlobalIntelView').then((module) => ({ default: module.GlobalIntelView })));
 
 export const App: React.FC = () => {
-  const [activeTab, setActiveTab] = useState<TabType>('global_intel');
+  // Overview is an administrator tool, so the role-safe landing view is
+  // Watchtower; a restored administrator session moves to Overview below.
+  const [activeTab, setActiveTab] = useState<TabType>('watchtower');
   const [isAuthOpen, setIsAuthOpen] = useState<boolean>(false);
   const [hasOpenedAuth, setHasOpenedAuth] = useState(false);
   const openAuth = () => { setHasOpenedAuth(true); setIsAuthOpen(true); };
@@ -64,6 +69,17 @@ export const App: React.FC = () => {
       });
     return () => { cancelled = true; };
   }, []);
+
+  // Role-safe navigation: guests and regular clients never rest on Overview,
+  // and a restored administrator session keeps Overview as the landing view.
+  // The guard only runs when the session identity changes, never on tab
+  // switches, so administrators can still browse Watchtower freely.
+  useEffect(() => {
+    setActiveTab((previous) => {
+      if (user?.role === 'admin') return previous === 'watchtower' ? 'global_intel' : previous;
+      return previous === 'global_intel' ? 'watchtower' : previous;
+    });
+  }, [user]);
 
   // Live Data States
   const [flows, setFlows] = useState<FlowRecord[]>([]);
@@ -230,6 +246,15 @@ export const App: React.FC = () => {
 
         {/* View Routing Workspace */}
         <main id="studio-workspace" aria-label="Workspace" className="studio-workspace">
+          {/* Update surfaces: banner (advisory) + gate overlay (mandatory).
+              The gate deliberately covers only the workspace, keeping the
+              sidebar's recovery/diagnostics tools reachable. Both screens
+              share a single useUpdateGate frame via the provider — one
+              status/progress subscription pair for the whole window. */}
+          <UpdateGateProvider>
+            <UpdateBanner />
+            <UpdateGateOverlay />
+          </UpdateGateProvider>
           <Suspense fallback={<div role="status" className="p-4 text-sm text-slate-400">Loading view…</div>}>
            {activeTab === 'conversations' && (
             <div className="studio-page">
@@ -342,7 +367,7 @@ export const App: React.FC = () => {
         onClose={() => setIsAuthOpen(false)}
         onLoginSuccess={(userData) => {
           setUser(userData);
-          if (userData.role === 'admin') setActiveTab('watchtower');
+          if (userData.role === 'admin') setActiveTab('global_intel');
           else setActiveTab('user_profile');
         }}
       />}

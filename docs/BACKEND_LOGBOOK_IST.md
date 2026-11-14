@@ -1653,3 +1653,159 @@ STARTED: linux desktop build; full packaged application.
 ### 2026-10-30 18:58:24 IST (+05:30)
 
 FAILED: linux desktop build step node (exit 1). Inspect the build output for details.
+
+### 2026-11-10 23:22:04 IST (+05:30)
+
+STARTED: linux desktop build; full packaged application.
+
+### 2026-11-10 23:33:30 IST (+05:30)
+
+COMPLETED: linux desktop build and artifact staging. See releases/linux/ and its manifest for exact files and checksums. Runtime validation is a separate check.
+
+### 2026-11-10 23:34:51 IST (+05:30)
+
+STARTED: linux desktop build; full packaged application.
+
+### 2026-11-10 23:37:46 IST (+05:30)
+
+STARTED: linux desktop build; full packaged application.
+
+### 2026-11-10 23:44:08 IST (+05:30)
+
+COMPLETED: linux desktop build and artifact staging. See releases/linux/ and its manifest for exact files and checksums. Runtime validation is a separate check.
+
+### 2026-11-11 00:28:51 IST (+05:30)
+
+STARTED: linux desktop build; full packaged application.
+
+### 2026-11-11 00:35:22 IST (+05:30)
+
+COMPLETED: linux desktop build and artifact staging. See releases/linux/ and its manifest for exact files and checksums. Runtime validation is a separate check.
+
+### 2026-11-11 01:37:57 IST (+05:30)
+
+STARTED: linux desktop build; full packaged application.
+
+### 2026-11-11 10:29:31 IST (+05:30)
+
+COMPLETED: linux desktop build and artifact staging. See releases/linux/ and its manifest for exact files and checksums. Runtime validation is a separate check.
+
+### 2026-11-11 14:30:21 IST (+05:30)
+
+STARTED: linux desktop build; full packaged application.
+
+### 2026-11-11 14:37:43 IST (+05:30)
+
+COMPLETED: linux desktop build and artifact staging. See releases/linux/ and its manifest for exact files and checksums. Runtime validation is a separate check.
+
+### 2026-11-12 15:28:11 IST (+05:30)
+
+STARTED: linux desktop build; full packaged application.
+
+### 2026-11-12 15:38:34 IST (+05:30)
+
+COMPLETED: linux desktop build and artifact staging. See releases/linux/ and its manifest for exact files and checksums. Runtime validation is a separate check.
+
+### 2026-11-12 15:54:11 IST (+05:30)
+
+STARTED: linux desktop build; full packaged application.
+
+### 2026-11-12 16:02:11 IST (+05:30)
+
+COMPLETED: linux desktop build and artifact staging. See releases/linux/ and its manifest for exact files and checksums. Runtime validation is a separate check.
+
+### 2026-11-12 17:14:27 IST (+05:30)
+
+STARTED: windows cross desktop build; full packaged application.
+
+### 2026-11-12 17:14:35 IST (+05:30)
+
+FAILED: windows desktop build step node (exit 1). Inspect the build output for details.
+
+### 2026-11-12 17:15:31 IST (+05:30)
+
+STARTED: windows cross desktop build; full packaged application.
+
+### 2026-11-12 17:15:39 IST (+05:30)
+
+FAILED: windows desktop build step node (exit 1). Inspect the build output for details.
+
+### 2026-11-12 17:16:42 IST (+05:30)
+
+STARTED: windows cross desktop build; full packaged application.
+
+### 2026-11-12 17:18:41 IST (+05:30)
+
+FAILED: windows desktop build step node (exit 1). Inspect the build output for details.
+
+### 2026-11-13 22:06:36 IST (+05:30)
+
+STARTED: linux desktop build; full packaged application.
+
+### 2026-11-13 22:11:20 IST (+05:30)
+
+COMPLETED: linux desktop build and artifact staging. See releases/linux/ and its manifest for exact files and checksums. Runtime validation is a separate check.
+
+### 2026-11-13 22:14:27 IST (+05:30)
+
+STARTED: linux desktop build; full packaged application.
+
+### 2026-11-13 22:18:36 IST (+05:30)
+
+COMPLETED: linux desktop build and artifact staging. See releases/linux/ and its manifest for exact files and checksums. Runtime validation is a separate check.
+
+### 2026-11-13 23:59:24 IST (+05:30)
+
+STARTED: linux desktop build; full packaged application.
+
+### 2026-11-14 00:06:11 IST (+05:30)
+
+COMPLETED: linux desktop build and artifact staging. See releases/linux/ and its manifest for exact files and checksums. Runtime validation is a separate check.
+
+### 2026-11-14 00:15:41 IST (+05:30)
+
+STARTED: linux desktop build; full packaged application.
+
+### 2026-11-14 00:21:55 IST (+05:30)
+
+COMPLETED: linux desktop build and artifact staging. See releases/linux/ and its manifest for exact files and checksums. Runtime validation is a separate check.
+
+### 2026-11-14 00:30:10 IST (+05:30)
+
+STARTED: linux desktop build; backend-only, reusing packaged frontend.
+
+### 2026-11-14 00:36:06 IST (+05:30)
+
+COMPLETED: linux desktop build and artifact staging. See releases/linux/ and its manifest for exact files and checksums. Runtime validation is a separate check.
+
+### 2026-11-14 00:40:46 IST (+05:30)
+
+STARTED: linux desktop build; backend-only, reusing packaged frontend.
+
+### 2026-11-14 00:48:43 IST (+05:30)
+
+COMPLETED: linux desktop build and artifact staging. See releases/linux/ and its manifest for exact files and checksums. Runtime validation is a separate check.
+
+### 2026-11-14 01:04:47 IST (+05:30)
+
+STARTED: linux desktop build; full packaged application.
+
+### 2026-11-14 01:10:34 IST (+05:30)
+
+COMPLETED: linux desktop build and artifact staging. See releases/linux/ and its manifest for exact files and checksums. Runtime validation is a separate check.
+
+### 2026-11-14 01:28:18 IST (+05:30)
+
+STARTED: linux desktop build; full packaged application.
+
+### 2026-11-14 01:34:04 IST (+05:30)
+
+COMPLETED: linux desktop build and artifact staging. See releases/linux/ and its manifest for exact files and checksums. Runtime validation is a separate check.
+
+### 2026-11-14 14:01:03 IST (+05:30)
+
+STARTED: linux desktop build; full packaged application.
+
+### 2026-11-14 14:05:26 IST (+05:30)
+
+COMPLETED: linux desktop build and artifact staging. See releases/linux/ and its manifest for exact files and checksums. Runtime validation is a separate check.

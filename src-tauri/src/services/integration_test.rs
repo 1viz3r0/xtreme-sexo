@@ -104,6 +104,11 @@ mod tests {
 
     #[test]
     fn test_forensic_workbench_security_and_execution() {
+        // Opens the default application database: hold the shared DB-env
+        // mutex so no concurrent isolated-storage test flips
+        // NETOZE_TEST_DATA_HOME mid-test (table existence and execution
+        // must observe the same database).
+        let _db_env = crate::services::test_isolation::hold_db_env();
         // Test 1: Validate SELECT query allowed
         let val_valid = validate_sql_query("SELECT src_ip, dst_ip FROM flow_records");
         assert!(val_valid.is_valid);

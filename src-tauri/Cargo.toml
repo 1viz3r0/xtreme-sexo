@@ -15,11 +15,23 @@ path = "src/lib.rs"
 # (WebView2 profile, SQLite/DuckDB) with the installed build or another instance.
 portable = []
 
+# Release hardening: fat LTO + single codegen unit, no unwind, stripped
+# symbols/debuginfo. Applies to release builds only; dev and test profiles
+# are unaffected (devtools remain auto-enabled in debug builds, and the one
+# catch_unwind in tests keeps full semantics there).
+[profile.release]
+lto = "fat"
+codegen-units = 1
+panic = "abort"
+strip = "symbols"
+debug = false
+incremental = false
+
 [build-dependencies]
 tauri-build = { version = "2", features = [] }
 
 [dependencies]
-tauri = { version = "2", features = ["devtools"] }
+tauri = { version = "2", features = [] }
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 rusqlite = { version = "0.31", features = ["bundled", "hooks", "limits"] }
@@ -47,6 +59,12 @@ reqwest = { version = "0.12", default-features = false, features = ["blocking", 
 ipnet = "2"
 sha2 = "0.10"
 getrandom = "0.3.4"
+# Base64 decode of the tauri-CLI signature container around minisign
+# signatures (see services/update_gate.rs); pure Rust, already in the tree.
+base64 = "0.22"
+# Signature verification of the release update manifest (minisign/ed25519
+# format produced by `tauri signer`); pure Rust, no TLS/native deps.
+minisign-verify = "0.2"
 
 [target.'cfg(unix)'.dependencies]
 libc = "0.2"

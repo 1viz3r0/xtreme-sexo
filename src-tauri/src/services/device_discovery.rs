@@ -95,7 +95,7 @@ mod neighbor_tests {
     }
 }
 
-fn mac_vendor_hint(mac: &str) -> Option<String> {
+pub(crate) fn mac_vendor_hint(mac: &str) -> Option<String> {
     let upper = mac.to_uppercase().replace(':', "");
     let oui = upper.get(0..6)?;
     let known: &[(&str, &str)] = &[

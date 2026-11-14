@@ -10,6 +10,7 @@
     "devUrl": "http://127.0.0.1:5173"
   },
   "app": {
+    "withGlobalTauri": false,
     "windows": [
       {
         "title": "NET0ZE — Enterprise NTA & IDS Desktop Cybersecurity Platform",
@@ -20,11 +21,13 @@
         "decorations": true,
         "transparent": false,
         "theme": "Dark",
-        "backgroundColor": "#050505"
+        "backgroundColor": "#050505",
+        "devtools": false
       }
     ],
     "security": {
-      "csp": "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self' ws://127.0.0.1:5173 http://127.0.0.1:5173 ipc: http://ipc.localhost;"
+      "csp": "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self' ipc: http://ipc.localhost",
+      "devCsp": "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self' ws://127.0.0.1:5173 http://127.0.0.1:5173 ipc: http://ipc.localhost"
     }
   },
   "bundle": {

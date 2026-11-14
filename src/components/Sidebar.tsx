@@ -57,8 +57,8 @@ export const Sidebar: React.FC<SidebarProps> = ({
 }) => {
   const navRef = useRef<HTMLElement>(null);
   const [additionalToolsOpen, setAdditionalToolsOpen] = React.useState(false);
+  const [overviewNotice, setOverviewNotice] = React.useState(false);
   const menuItems: { id: TabType; label: string; icon: React.ReactNode; adminOnly?: boolean; experimental?: boolean }[] = [
-    { id: 'global_intel', label: 'Overview', icon: <Globe2 className="w-3.5 h-3.5" /> },
     { id: 'watchtower', label: 'Watchtower', icon: <Activity className="w-3.5 h-3.5" /> },
     { id: 'conversations', label: 'Capture Buddy', icon: <MessageSquare className="w-3.5 h-3.5" /> },
     { id: 'network_engine', label: 'Scan Buddy', icon: <Cpu className="w-3.5 h-3.5" /> },
@@ -76,6 +76,15 @@ export const Sidebar: React.FC<SidebarProps> = ({
 
   const filteredMenuItems = menuItems.filter((item) => !item.adminOnly || user?.role === 'admin');
 
+  // Overview is an administrator tool pinned under Additional tools. Guests
+  // and regular clients always see the muted locked entry (clicking it
+  // explains why); signed-in administrators get the functional item. The
+  // Overview backend commands enforce the same rule against the persisted
+  // session store.
+  const isAdmin = user?.role === 'admin';
+  // A fresh session identity resets the locked-entry explanation.
+  React.useEffect(() => { setOverviewNotice(false); }, [user]);
+
   const renderItems = (items: typeof menuItems) => items.map((item) => (
     <button
       key={item.id}
@@ -83,7 +92,13 @@ export const Sidebar: React.FC<SidebarProps> = ({
       aria-current={activeTab === item.id ? 'page' : undefined}
       aria-label={item.label}
       type="button"
-      title={item.label}
+      /* Native title tooltips stay in collapsed (icon-only) mode only.
+         In the expanded sidebar the label is already visible, and the
+         WebKitGTK tooltip popup renders directly over the row below the
+         hovered item, where it can swallow a click aimed at that row —
+         observed in runtime testing as a navigation click that did
+         nothing. */
+      title={isCollapsed ? item.label : undefined}
       className={`studio-nav-item ${activeTab === item.id ? 'is-active' : ''}`}
     >
       <span className="studio-nav-icon" aria-hidden="true">{item.icon}</span>
@@ -147,6 +162,27 @@ export const Sidebar: React.FC<SidebarProps> = ({
            >
              {isCollapsed ? <LockKeyhole size={18} aria-hidden="true" /> : <><LockKeyhole size={14} aria-hidden="true" /><span>Additional tools</span><span className="studio-locked-label">Locked</span></>}
            </button>
+           {/* Overview is an administrator tool pinned under Additional tools:
+               guests and regular clients always see the muted locked entry and
+               clicking it explains why; signed-in administrators get the
+               functional navigation item. The backend refuses the Overview
+               commands to non-admin sessions as well. */}
+           <button
+             type="button"
+             aria-label="Overview"
+             aria-current={isAdmin && activeTab === 'global_intel' ? 'page' : undefined}
+             aria-disabled={isAdmin ? undefined : 'true'}
+             title={isAdmin && isCollapsed ? 'Overview' : undefined}
+             className={`studio-nav-item ${isAdmin && activeTab === 'global_intel' ? 'is-active' : ''} ${isAdmin ? '' : 'is-locked'}`}
+             onClick={() => (isAdmin ? setActiveTab('global_intel') : setOverviewNotice(true))}
+           >
+             <span className="studio-nav-icon" aria-hidden="true"><Globe2 className="w-3.5 h-3.5" /></span>
+             {!isCollapsed && <span className="truncate">Overview</span>}
+             {!isCollapsed && !isAdmin && <span className="studio-locked-label">Locked</span>}
+           </button>
+           {overviewNotice && !isAdmin && (
+             <p role="status" className="studio-locked-message">Overview is available to administrators only.</p>
+           )}
              {additionalToolsOpen && !isCollapsed && <div id="additional-tools-locked" className="studio-experimental-locked" aria-label="Locked additional tools">
               {filteredMenuItems.filter(item => item.experimental).map((item) => (
                 <div key={item.id} className="studio-locked-tool" aria-disabled="true">
