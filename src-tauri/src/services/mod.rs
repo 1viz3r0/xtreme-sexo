@@ -16,6 +16,7 @@ pub mod geoip_service;
 pub mod graph_engine;
 pub mod http_client;
 pub mod integration_test;
+pub mod ip_intel;
 pub mod ja4_canonicalizer;
 pub mod ja4_engine;
 pub mod lab_runtime;
@@ -31,8 +32,11 @@ pub mod scan_buddy_journal;
 pub mod scan_inspection;
 pub mod storyline_builder;
 pub mod system_inspector;
+#[cfg(test)]
+pub(crate) mod test_isolation;
 pub mod telemetry_worker;
 pub mod threat_intel;
+pub mod update_gate;
 pub mod watchtower;
 
 pub use capture_service::CaptureEngine;

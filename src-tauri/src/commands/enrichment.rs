@@ -4,7 +4,7 @@ use crate::services::enrichment::{
     EnrichmentSourceState, REFRESH_TIMEOUT,
 };
 use crate::state::BackendState;
-use tauri::{command, State};
+use tauri::{command, Manager};
 
 fn now() -> String {
     chrono::Utc::now().to_rfc3339()
@@ -16,10 +16,30 @@ fn cached_entry(_state: &BackendState, ip: &str) -> Option<GeoIpEntry> {
 
 #[command]
 pub async fn refresh_watchtower_enrichment(
-    state: State<'_, BackendState>,
+    app_handle: tauri::AppHandle,
+    token: Option<String>,
+) -> Result<EnrichmentRefreshResult, String> {
+    // Overview geography is an administrator surface; the session token is
+    // validated against the persisted auth store before any work happens.
+    crate::commands::global_intel::require_admin_session(&token)?;
+    // The refresh is blocking-heavy local work: sequential provider lookups
+    // plus synchronous local cache writes. It runs on the dedicated blocking
+    // pool so a stalled provider or a slow sqlite write can never starve the
+    // async reactor that Overview's polling (and every other command) shares.
+    tauri::async_runtime::spawn_blocking(move || {
+        let state = app_handle.state::<BackendState>();
+        tauri::async_runtime::block_on(refresh_watchtower_enrichment_inner(&state))
+    })
+    .await
+    .map_err(|_| "Enrichment worker is unavailable".to_string())?
+}
+
+async fn refresh_watchtower_enrichment_inner(
+    state: &BackendState,
 ) -> Result<EnrichmentRefreshResult, String> {
     // Only observed flow endpoints are eligible. This command is explicit; the
     // local snapshot command never calls it and therefore never waits on I/O.
+    let started = std::time::Instant::now();
     let observed = state
         .flows
         .lock()
@@ -29,23 +49,30 @@ pub async fn refresh_watchtower_enrichment(
         .flat_map(|f| [f.src_ip, f.dst_ip])
         .collect::<Vec<_>>();
     let ips = bounded_public_ips(observed);
+    tracing::debug!(stage = "collect", elapsed_ms = started.elapsed().as_millis() as u64, ips = ips.len(), "enrichment stage");
     let requested_ips = ips.len();
     let mut geoip = Vec::new();
     let mut errors = Vec::new();
     for ip in &ips {
+        let lookup_started = std::time::Instant::now();
         match tokio::time::timeout(REFRESH_TIMEOUT, state.geoip.lookup_checked(ip)).await {
-            Ok(Ok(entry)) => geoip.push(EnrichedGeoIpEntry {
-                entry,
-                stale: false,
-            }),
+            Ok(Ok(entry)) => {
+                tracing::debug!(stage = "geoip", ip = %ip, elapsed_ms = lookup_started.elapsed().as_millis() as u64, outcome = "ok", "enrichment stage");
+                geoip.push(EnrichedGeoIpEntry {
+                    entry,
+                    stale: false,
+                })
+            },
             Ok(Err(error)) => {
-                if let Some(entry) = cached_entry(&state, ip) {
+                tracing::debug!(stage = "geoip", ip = %ip, elapsed_ms = lookup_started.elapsed().as_millis() as u64, outcome = "error", "enrichment stage");
+                if let Some(entry) = cached_entry(state, ip) {
                     geoip.push(stale_entry(entry));
                 }
                 errors.push(format!("GeoIP {}: {}", ip, error));
             }
             Err(_) => {
-                if let Some(entry) = cached_entry(&state, ip) {
+                tracing::debug!(stage = "geoip", ip = %ip, elapsed_ms = lookup_started.elapsed().as_millis() as u64, outcome = "timeout", "enrichment stage");
+                if let Some(entry) = cached_entry(state, ip) {
                     geoip.push(stale_entry(entry));
                 }
                 errors.push(format!("GeoIP {}: refresh timed out", ip));
@@ -102,6 +129,7 @@ pub async fn refresh_watchtower_enrichment(
         crate::services::threat_intel::fetch_feeds_detailed(),
     )
     .await;
+    tracing::debug!(stage = "feeds", elapsed_ms = started.elapsed().as_millis() as u64, ok = threat_result.is_ok(), "enrichment stage");
     let threat_state = match threat_result {
         Ok(Ok(result)) => {
             let crate::services::threat_intel::FeedRefresh {
@@ -183,5 +211,9 @@ pub async fn refresh_watchtower_enrichment(
         geoip,
         sources: vec![connectivity_state, threat_state],
         errors,
+    })
+    .map(|result| {
+        tracing::debug!(stage = "done", elapsed_ms = started.elapsed().as_millis() as u64, "enrichment complete");
+        result
     })
 }

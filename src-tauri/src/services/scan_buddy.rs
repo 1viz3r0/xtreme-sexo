@@ -15,7 +15,7 @@ pub(super) const MAX_PROBES: usize = 65535;
 const CHECKPOINT_INTERVAL: Duration = Duration::from_secs(30);
 const CHECKPOINT_PROBES: usize = 1024;
 
-#[derive(Debug, Clone, Deserialize, Serialize)]
+#[derive(Debug, Clone, PartialEq, Deserialize, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ScanProfile {
     Common,

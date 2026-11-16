@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useState } from 'react';
 import {
   UserCircle,
   ShieldCheck,
@@ -7,7 +7,14 @@ import {
   Activity,
   Timer,
   Flag,
+  RefreshCw,
+  Loader2,
+  Download,
+  CheckCircle2,
+  WifiOff,
+  RotateCcw,
 } from 'lucide-react';
+import { useSharedUpdateGate } from '../lib/UpdateGateContext';
 import {
   authSession,
   authMyActivity,
@@ -29,6 +36,161 @@ const ACTION_LABELS: Record<string, string> = {
   LOGIN: 'Logged in',
   LOGIN_FAILED: 'Failed login attempt',
   LOGOUT: 'Logged out',
+};
+
+/**
+ * Settings → Updates. Mirrors the banner's honest semantics: an update is
+ * only offered after a signature-verified manifest, nothing installs without
+ * the explicit click, and failures degrade to a retry instead of blocking.
+ */
+const UpdatesCard: React.FC = () => {
+  const { status, presentation, progress, installing, installError, checkNow, install } =
+    useSharedUpdateGate();
+  const [retryPending, setRetryPending] = useState(false);
+
+  const checkVisible = useCallback(() => {
+    setRetryPending(true);
+    checkNow().finally(() => setRetryPending(false));
+  }, [checkNow]);
+
+  const checking =
+    retryPending || status?.check_in_progress === true || presentation.kind === 'checking';
+  const updateAvailable = presentation.kind === 'banner' || presentation.kind === 'gate';
+  const upToDate =
+    presentation.kind === 'idle' && status != null && status.last_check_ok === true;
+  const checkFailed =
+    presentation.kind === 'stale' || (!checking && status?.last_check_ok === false);
+  const stage = progress?.stage ?? null;
+  const downloadPct =
+    stage === 'download' && progress?.total_bytes
+      ? Math.min(100, Math.round(((progress.downloaded_bytes ?? 0) / progress.total_bytes) * 100))
+      : null;
+
+  return (
+    <div className="rounded-2xl border-2 border-slate-800 bg-slate-950 p-5 lg:col-span-3">
+      <div className="mb-3 flex items-center justify-between">
+        <h2 className="flex items-center gap-2 font-mono text-xs font-bold tracking-widest text-slate-400">
+          <RefreshCw className="h-4 w-4 text-cyan-500" /> UPDATES
+        </h2>
+        <span className="text-[11px] text-slate-600">
+          auto-check on start + every 6 hours · signed manifests only
+        </span>
+      </div>
+
+      {!status ? (
+        <p className="text-xs text-slate-500">
+          Update service unavailable — update checks run only inside the desktop runtime.
+        </p>
+      ) : (
+        <>
+          <div className="flex flex-wrap items-center gap-x-6 gap-y-2 text-xs text-slate-400">
+            <span>
+              Installed: <span className="font-mono text-slate-200">{status.app_version}</span>
+            </span>
+            <span>
+              Latest: <span className="font-mono text-slate-200">{status.latest_version ?? '—'}</span>
+            </span>
+            <span className="flex items-center gap-1.5">
+              {checking ? (
+                <>
+                  <Loader2 className="h-3 w-3 animate-spin text-cyan-400" /> Checking for updates…
+                </>
+              ) : updateAvailable ? (
+                <>
+                  <Download className="h-3 w-3 text-amber-400" /> Update available
+                  {status.severity ? ` (${status.severity})` : ''}
+                </>
+              ) : upToDate ? (
+                <>
+                  <CheckCircle2 className="h-3 w-3 text-emerald-400" /> Up to date
+                </>
+              ) : checkFailed ? (
+                <>
+                  <WifiOff className="h-3 w-3 text-amber-400" /> Last check failed
+                  {status.last_error ? ` — ${status.last_error}` : ' — the app stays fully usable.'}
+                </>
+              ) : (
+                <>No update check yet</>
+              )}
+            </span>
+            <button
+              type="button"
+              onClick={checkVisible}
+              disabled={checking || installing}
+              className="flex items-center gap-1.5 rounded-lg border border-slate-700 px-3 py-1.5 font-mono text-[11px] font-bold tracking-wider text-slate-300 transition hover:bg-slate-800 disabled:opacity-50"
+            >
+              <RefreshCw className={`h-3 w-3 ${checking ? 'animate-spin' : ''}`} /> CHECK FOR
+              UPDATES
+            </button>
+          </div>
+
+          {updateAvailable && !status.advisory_only && (
+            <div className="mt-3 flex flex-wrap items-center gap-3">
+              <button
+                type="button"
+                onClick={install}
+                disabled={installing}
+                className="flex items-center gap-2 rounded-lg bg-cyan-700 px-4 py-2 font-mono text-xs font-bold tracking-wider text-white transition hover:bg-cyan-600 disabled:opacity-50"
+              >
+                {installing ? (
+                  <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                ) : (
+                  <Download className="h-3.5 w-3.5" />
+                )}
+                {installing ? 'INSTALLING…' : 'DOWNLOAD & INSTALL'}
+              </button>
+              <span className="text-[11px] text-slate-600">
+                Nothing installs without this click; the manifest signature is verified first.
+              </span>
+            </div>
+          )}
+          {updateAvailable && status.advisory_only && (
+            <p className="mt-3 text-[11px] text-amber-300/80">
+              Unverified advisory notice — this update was not enforced or installed.
+            </p>
+          )}
+
+          {installing && stage === 'download' && (
+            <div className="mt-3">
+              <div className="h-1.5 w-full overflow-hidden rounded-full bg-slate-800">
+                <div
+                  className="h-full rounded-full bg-cyan-500 transition-all"
+                  style={{ width: `${downloadPct ?? 10}%` }}
+                />
+              </div>
+              <p className="mt-1 text-[11px] text-slate-500">
+                Downloading update{downloadPct != null ? ` — ${downloadPct}%` : '…'}
+              </p>
+            </div>
+          )}
+          {stage === 'installer_launched' && (
+            <div className="mt-3 flex items-center gap-2 rounded-lg border border-amber-800/50 bg-amber-950/20 px-3 py-2 text-[11px] text-amber-300">
+              <RotateCcw className="h-3.5 w-3.5 shrink-0" />
+              RESTART TO UPDATE — the installer is running; it restarts NET0ZE when it finishes.
+            </div>
+          )}
+          {stage === 'installed_restarting' && (
+            <div className="mt-3 flex items-center gap-2 rounded-lg border border-emerald-800/50 bg-emerald-950/20 px-3 py-2 text-[11px] text-emerald-300">
+              <CheckCircle2 className="h-3.5 w-3.5 shrink-0" />
+              Update installed — restarting into the new build…
+            </div>
+          )}
+
+          {installError && <p className="mt-3 text-[11px] text-red-300">Install failed: {installError}</p>}
+
+          <p className="mt-3 border-t border-slate-800 pt-3 text-[10px] text-slate-600">
+            {status.last_check_at
+              ? `Last check ${new Date(status.last_check_at).toLocaleString([], {
+                  dateStyle: 'short',
+                  timeStyle: 'short',
+                })}${status.last_check_ok === false ? ' (failed)' : ''} · `
+              : 'Never checked · '}
+            {status.endpoint} · key {status.signature_key_id}
+          </p>
+        </>
+      )}
+    </div>
+  );
 };
 
 export const UserProfileView: React.FC<UserProfileViewProps> = ({
@@ -217,6 +379,7 @@ export const UserProfileView: React.FC<UserProfileViewProps> = ({
             </div>
           )}
         </div>
+        <UpdatesCard />
         <div className="rounded-2xl border-2 border-amber-800/40 bg-slate-950 p-5 lg:col-span-3">
           <div className="mb-3 flex items-center justify-between"><h2 className="font-mono text-xs font-bold tracking-widest text-amber-300">FREE LAB BADGES</h2><span className="text-[11px] text-slate-600">earned locally · no purchase required</span></div>
           {labBadges.length === 0 ? <p className="text-xs text-slate-500">Complete a mastery lesson or an authorized native challenge to earn your first badge.</p> : <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">{labBadges.map(badge => <article key={badge.id} className="rounded-lg border border-amber-700/40 bg-amber-950/10 p-3"><b className="text-sm text-amber-100">{badge.title}</b><p className="mt-1 text-xs text-slate-400">{badge.description}</p><p className="mt-2 text-[10px] text-slate-600">Earned {new Date(badge.earnedAt).toLocaleDateString()}</p></article>)}</div>}

@@ -14,9 +14,20 @@ jobs:
     runs-on: windows-latest
     env:
       NPCAP_SDK_URL: https://npcap.com/dist/npcap-sdk-1.17.zip
+      # Updater artifact signing (tauri build → .sig sidecars + latest.json).
+      # The private key lives only in repository secrets, never in source.
+      TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+      TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
     steps:
       - name: Check out source
         uses: actions/checkout@v4
+
+      - name: Verify updater signing key is configured
+        shell: pwsh
+        run: |
+          if (-not $env:TAURI_SIGNING_PRIVATE_KEY) {
+            throw 'TAURI_SIGNING_PRIVATE_KEY secret is not configured. Update artifacts cannot be signed; generate a key with "tauri signer generate" and store it as a repository secret.'
+          }
 
       - name: Set up Node.js
         uses: actions/setup-node@v4
@@ -56,7 +67,8 @@ jobs:
       - name: Upload Windows installers
         uses: actions/upload-artifact@v4
         with:
-          name: NET0ZE-windows-${{ github.ref_name }}
+          # Branch refs contain slashes, which artifact names forbid.
+          name: NET0ZE-windows-${{ contains(github.ref_name, '/') && format('run-{0}', github.run_number) || github.ref_name }}
           path: releases/windows/**
           if-no-files-found: error
 

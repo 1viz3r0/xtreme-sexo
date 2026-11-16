@@ -125,6 +125,29 @@ pub async fn watchtower_discover_local() -> Result<ActiveLocalDiscovery, String>
         }
         let mut devices = cache.values().cloned().collect::<Vec<_>>();
         devices.sort_by(|a, b| a.ip.cmp(&b.ip));
+        // Persist discovered local hosts into the IP intelligence inventory.
+        // Passive observations only: they never self-authorize scanning and
+        // existing richer fields are never downgraded (dedup by address).
+        crate::services::ip_intel::record_observations(
+            &devices
+                .iter()
+                .map(|device| crate::services::ip_intel::IpObservation {
+                    ip: device.ip.clone(),
+                    mac: device.mac.clone(),
+                    hostname: None,
+                    vendor: device
+                        .mac
+                        .as_deref()
+                        .and_then(crate::services::device_discovery::mac_vendor_hint),
+                    interface: Some(iface.interface_name.clone()),
+                    source: "passive-discovery",
+                    packets: 0,
+                    bytes: 0,
+                    flows: 0,
+                    activity_at: None,
+                })
+                .collect::<Vec<_>>(),
+        );
         Ok(ActiveLocalDiscovery { interface: iface.interface_name, local_ip: local.to_string(), cidr: iface.scan_cidr, gateway, devices, warnings: vec!["Fast bounded sweep: short TCP reachability probes run across the detected local subnet, enriched by the kernel neighbour (ARP) cache. Results are retained across refreshes. Present means observed in the latest sweep; not-seen-this-sweep is historical evidence, not proof that a device disconnected.".into()] })
     }).await.map_err(|error| format!("Local discovery worker failed: {error}"))?
 }

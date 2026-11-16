@@ -512,6 +512,27 @@ pub fn snapshot() -> WatchtowerSnapshot {
     {
         warnings.push("Snapshot output was bounded; additional records were omitted".into());
     }
+    // Feed kernel neighbour observations into the persistent IP intelligence
+    // inventory. Passive only (never scan-authorizing); fields are additive
+    // and never downgrade existing knowledge.
+    crate::services::ip_intel::record_observations(
+        &neighbors
+            .iter()
+            .filter(|neighbor| neighbor.mac_address != "00:00:00:00:00:00")
+            .map(|neighbor| crate::services::ip_intel::IpObservation {
+                ip: neighbor.address.clone(),
+                mac: (!neighbor.mac_address.is_empty()).then_some(neighbor.mac_address.clone()),
+                hostname: None,
+                vendor: crate::services::device_discovery::mac_vendor_hint(&neighbor.mac_address),
+                interface: Some(neighbor.interface.clone()),
+                source: "kernel-neighbors",
+                packets: 0,
+                bytes: 0,
+                flows: 0,
+                activity_at: None,
+            })
+            .collect::<Vec<_>>(),
+    );
     WatchtowerSnapshot {
         captured_at,
         captured_at_unix_ms,

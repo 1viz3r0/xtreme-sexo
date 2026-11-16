@@ -49,10 +49,12 @@ export interface WatchtowerEnrichmentResult {
   errors: string[];
 }
 
-/** Explicit refresh only; local Watchtower snapshots never invoke this path. */
+/** Explicit refresh only; local Watchtower snapshots never invoke this path.
+ *  The backend validates the admin session before touching any provider. */
 export async function refreshWatchtowerEnrichment(): Promise<WatchtowerEnrichmentResult> {
   if (!isTauriEnvironment()) throw new Error('Enrichment refresh requires the native desktop app.');
-  return invoke<WatchtowerEnrichmentResult>('refresh_watchtower_enrichment');
+  const token = localStorage.getItem('netoze_token') ?? undefined;
+  return invoke<WatchtowerEnrichmentResult>('refresh_watchtower_enrichment', { token });
 }
 
 export interface DeviceEntry {
