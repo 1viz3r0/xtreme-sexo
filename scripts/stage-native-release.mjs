@@ -30,6 +30,19 @@ export function stageNativeRelease(root, platform, arch = process.arch, options 
   for (const extension of extensions) {
     if (!artifacts.some(({ name }) => name.endsWith(extension))) throw new Error(`Missing ${platform} ${extension} artifact for version ${config.version}`);
   }
+  // Updater sidecars: when createUpdaterArtifacts is enabled Tauri emits a
+  // minisign .sig next to every installer plus a latest.json manifest. Stage
+  // them so each release publishes the signed update metadata the client
+  // verifies; they never replace the signed update.json policy manifest.
+  const sidecars = [];
+  const seenSidecars = new Set();
+  const pushSidecar = (source, name) => {
+    if (!existsSync(source) || seenSidecars.has(name)) return;
+    seenSidecars.add(name);
+    sidecars.push({ source, name });
+  };
+  for (const { source, name } of artifacts) pushSidecar(`${source}.sig`, `${name}.sig`);
+  for (const folder of formats) pushSidecar(path.join(bundleDir, folder, 'latest.json'), 'latest.json');
   // Validate every requested format before writing anything. Defaults require
   // both installers; cross-built NSIS-only output must be explicitly requested.
   const destination = path.join(root, 'releases', platform, `${config.version}-${arch}`);
@@ -54,6 +67,7 @@ export function stageNativeRelease(root, platform, arch = process.arch, options 
     copyFileSync(path.join(destination, file.name), path.join(destination, alias));
     aliases.push({ name: alias, target: file.name, sha256: file.sha256 });
   }
+  for (const { source, name } of sidecars) copyFileSync(source, path.join(destination, name));
   if (aliases.length) {
     const lines = [...files, ...aliases.map(({ name, sha256 }) => ({ name, sha256 }))]
       .map(({ name, sha256 }) => `${sha256}  ${name}`)
